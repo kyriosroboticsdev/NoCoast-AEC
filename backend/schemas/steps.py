@@ -17,11 +17,12 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from schemas.bim import FixtureKind, RoofShape, WallMaterial
-from schemas.design import (BalconyDef, ColumnDef, Design, DoorDef, DoorKind, FixtureDef, LevelDef, PorchDef, RoofDef,
-                            RoomDef, RoomKind, Side, StairDef, WindowDef, WindowKind, guess_kind, slug)
+from schemas.design import (BalconyDef, ColumnDef, CustomShapeDef, Design, DoorDef, DoorKind, FixtureDef, LevelDef,
+                            PorchDef, RoofDef, RoomDef, RoomKind, ShapePartDef, Side, StairDef, WindowDef,
+                            WindowKind, guess_kind, slug)
 
-StepKind = Literal["building", "level", "room", "layout", "door", "window", "stair", "furniture", "balcony", "porch", "roof",
-                   "column", "material", "remove", "note"]
+StepKind = Literal["building", "level", "room", "layout", "door", "window", "stair", "furniture", "custom", "balcony",
+                   "porch", "roof", "column", "material", "remove", "note"]
 
 
 class StepError(ValueError):
@@ -40,20 +41,35 @@ class LayoutRoom(BaseModel):
         return Step._rect(v)
 
 
+class ShapePartStep(BaseModel):
+    """One solid of a `custom` step's shape: a box (min corner x,y,z; size w,d,h), or a w-diameter
+    cylinder (d ignored) when shape="round". A round top plus four box legs is a table."""
+
+    model_config = ConfigDict(extra="ignore")
+    shape: Literal["box", "round"] = "box"
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    w: float = Field(gt=0)
+    d: float = 0.1
+    h: float = Field(gt=0)
+
+
 class Step(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     step: StepKind
     id: Optional[str] = Field(None, description="Existing id to update/remove, or a new id; null = derive from name")
-    name: Optional[str] = Field(None, description="building/level/room: display name")
+    name: Optional[str] = Field(None, description="building/level/room/custom: display name")
     description: Optional[str] = Field(None, description="building only")
     level: Optional[str] = Field(None, description="room/column: storey id ('L1' ground, 'L2' above …)")
-    kind: Optional[str] = Field(None, description="room kind | door kind | window kind | furniture kind | roof kind")
+    kind: Optional[str] = Field(None, description="room kind | door kind | window kind | furniture kind | roof kind "
+                                                 "(not custom: use furniture for the fixed catalog, custom to design your own shape)")
     rect: Optional[list[float]] = Field(None, description="room: [x, y, width, depth] in metres, (x,y) = south-west corner")
     area: Optional[float] = Field(None, description="room: target m² when rect is null")
-    room: Optional[str] = Field(None, description="door/window/stair/furniture/balcony: room id")
+    room: Optional[str] = Field(None, description="door/window/stair/furniture/custom/balcony: room id")
     to: Optional[str] = Field(None, description="door: other room id, or 'outside'")
-    side: Optional[str] = Field(None, description="N|S|E|W (furniture also 'center'); porch/balcony/window side")
+    side: Optional[str] = Field(None, description="N|S|E|W (furniture/custom also 'center'); porch/balcony/window side")
     at: Optional[float] = Field(None, description="0..1 position along the wall (0 = west/south end)")
     width: Optional[float] = None
     height: Optional[float] = None
@@ -64,10 +80,13 @@ class Step(BaseModel):
     overhang: Optional[float] = Field(None, description="roof: metres")
     x: Optional[float] = Field(None, description="column")
     y: Optional[float] = Field(None, description="column")
-    rotation: Optional[float] = Field(None, description="furniture: degrees")
+    rotation: Optional[float] = Field(None, description="furniture/custom: degrees")
     material: Optional[str] = Field(None, description="material: masonry|concrete|timber|plaster|stone|glass")
     text: Optional[str] = Field(None, description="note: a remark for the user")
     rooms: Optional[list[LayoutRoom]] = Field(None, description="layout: every room of `level`, replacing the current ones")
+    parts: Optional[list[ShapePartStep]] = Field(
+        None, description="custom: 1-12 solids (box or round) that together make the shape, e.g. a round table top "
+                          "plus box legs; each part's x,y,z is its own min corner in the shape's local frame")
 
     @field_validator("id", "room", "to", "to_level", "name", mode="before")
     @classmethod
@@ -145,15 +164,18 @@ def _remove(design: Design, id_: str) -> str:
     if room is not None:
         rid = room.id
         design.rooms = [r for r in design.rooms if r.id != rid]
-        n = len(design.doors) + len(design.windows) + len(design.stairs) + len(design.fixtures) + len(design.balconies)
+        n = (len(design.doors) + len(design.windows) + len(design.stairs) + len(design.fixtures)
+            + len(design.custom_shapes) + len(design.balconies))
         design.doors = [d for d in design.doors if d.room != rid and d.to != rid]
         design.windows = [w for w in design.windows if w.room != rid]
         design.stairs = [s for s in design.stairs if s.room != rid]
         design.fixtures = [f for f in design.fixtures if f.room != rid]
+        design.custom_shapes = [cs for cs in design.custom_shapes if cs.room != rid]
         design.balconies = [b for b in design.balconies if b.room != rid]
-        n -= len(design.doors) + len(design.windows) + len(design.stairs) + len(design.fixtures) + len(design.balconies)
+        n -= (len(design.doors) + len(design.windows) + len(design.stairs) + len(design.fixtures)
+             + len(design.custom_shapes) + len(design.balconies))
         return f"removed room {rid}" + (f" and {n} item(s) in it" if n else "")
-    for attr in ("doors", "windows", "stairs", "fixtures", "balconies", "columns"):
+    for attr in ("doors", "windows", "stairs", "fixtures", "custom_shapes", "balconies", "columns"):
         items = getattr(design, attr)
         keep = [i for i in items if i.id != id_]
         if len(keep) != len(items):
@@ -316,6 +338,21 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
         d.fixtures.append(FixtureDef(id=fid, room=room.id, kind=kind, side=side, at=step.at if step.at is not None else 0.5,
                                      rotation=step.rotation, width=step.width, depth=step.depth, height=step.height))
         return d, f"{kind} {fid}: in {room.id}" + (f" against side {side}" if side != "center" else " (centre)")
+
+    if k == "custom":
+        room = d.room(_need(step, "room"))
+        if room is None:
+            raise StepError(f"custom: unknown room '{step.room}' (rooms: {', '.join(r.id for r in d.rooms)})")
+        if not step.parts:
+            raise StepError("custom needs `parts`: 1-12 box/round solids (x, y, z, w, d, h) that together make the shape")
+        side = _literal(step, step.side or "center", ("N", "S", "E", "W", "center"), "side")
+        name = step.name or "Custom object"
+        cid = step.id or d.unique_id(slug(name))
+        parts = [ShapePartDef(shape=p.shape, x=p.x, y=p.y, z=p.z, w=p.w, d=p.d, h=p.h) for p in step.parts]
+        d.custom_shapes = [x for x in d.custom_shapes if x.id != cid]
+        d.custom_shapes.append(CustomShapeDef(id=cid, room=room.id, name=name, side=side,
+                                              at=step.at if step.at is not None else 0.5, rotation=step.rotation, parts=parts))
+        return d, f"custom {cid}: \"{name}\" in {room.id} ({len(parts)} part(s))"
 
     if k == "balcony":
         room = d.room(_need(step, "room"))

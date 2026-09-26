@@ -20,9 +20,9 @@ from shapely.geometry import Polygon, box as shp_box
 from shapely.ops import unary_union
 
 from ifc.fixtures import default_size
-from schemas.bim import (Beam, BuildingSpec, Column, Door, Fixture, Level, LightFixture, Outlet, Panel, Pipe,
-                         Railing, Roof, Slab, Space, Stair, Wall, Window, Wire, is_axis_rectangle)
-from schemas.design import Design, DoorDef, FixtureDef, LevelDef, RoomDef, Side, StairDef, WindowDef
+from schemas.bim import (Beam, BuildingSpec, Column, CustomFixture, Door, Fixture, Level, LightFixture, Outlet,
+                         Panel, Pipe, Railing, Roof, ShapePart, Slab, Space, Stair, Wall, Window, Wire, is_axis_rectangle)
+from schemas.design import CustomShapeDef, Design, DoorDef, FixtureDef, LevelDef, RoomDef, Side, StairDef, WindowDef
 from solver.layout import place_rooms
 
 EXT_T, INT_T = 0.3, 0.12
@@ -276,6 +276,31 @@ def _stair(s: StairDef, design: Design, level: Level) -> Stair:
     return stair
 
 
+def _place_footprint(what: str, room: RoomDef, side: str, at: float, w: float, d: float) -> tuple[tuple[float, float], float]:
+    """Where a w x d footprint goes against `side` of a room (or centred), and which way it then
+    faces. Shared by catalog fixtures (_fixture) and model-composed ones (_custom_shape) so both
+    place against a wall or in the middle the same way."""
+    x0, y0, x1, y1 = room.box
+    rw, rd = x1 - x0, y1 - y0
+
+    def along(lo: float, hi: float, half: float) -> float:
+        if hi - lo < 2 * half + 2 * CLEAR:
+            raise DesignError(f"{what}: room '{room.id}' is too small ({rw:.1f} x {rd:.1f} m) for a {w:.1f} x {d:.1f} m piece")
+        return _r(lo + CLEAR + half + at * (hi - lo - 2 * CLEAR - 2 * half))
+
+    if side == "center":
+        if rw < w + 2 * CLEAR or rd < d + 2 * CLEAR:
+            raise DesignError(f"{what}: room '{room.id}' is too small ({rw:.1f} x {rd:.1f} m) for a {w:.1f} x {d:.1f} m piece")
+        return ((x0 + x1) / 2, (y0 + y1) / 2), 0.0
+    if side == "S":
+        return (along(x0, x1, w / 2), _r(y0 + CLEAR + d / 2)), 0.0
+    if side == "N":
+        return (along(x0, x1, w / 2), _r(y1 - CLEAR - d / 2)), 180.0
+    if side == "W":
+        return (_r(x0 + CLEAR + d / 2), along(y0, y1, w / 2)), 270.0
+    return (_r(x1 - CLEAR - d / 2), along(y0, y1, w / 2)), 90.0
+
+
 def _fixture(f: FixtureDef, design: Design, level: Level) -> Fixture:
     what = f"{f.kind} '{f.id}'"
     room = design.room(f.room)
@@ -283,29 +308,34 @@ def _fixture(f: FixtureDef, design: Design, level: Level) -> Fixture:
         raise DesignError(f"{what}: unknown room '{f.room}'")
     w, d, h = default_size(f.kind)
     w, d, h = f.width or w, f.depth or d, f.height or h
-    x0, y0, x1, y1 = room.box
-    rw, rd = x1 - x0, y1 - y0
-
-    def along(lo: float, hi: float, half: float) -> float:
-        if hi - lo < 2 * half + 2 * CLEAR:
-            raise DesignError(f"{what}: room '{room.id}' is too small ({rw:.1f} x {rd:.1f} m) for a {w:.1f} x {d:.1f} m piece")
-        return _r(lo + CLEAR + half + f.at * (hi - lo - 2 * CLEAR - 2 * half))
-
-    if f.side == "center":
-        if rw < w + 2 * CLEAR or rd < d + 2 * CLEAR:
-            raise DesignError(f"{what}: room '{room.id}' is too small ({rw:.1f} x {rd:.1f} m) for a {w:.1f} x {d:.1f} m piece")
-        pos, rot = ((x0 + x1) / 2, (y0 + y1) / 2), 0.0
-    elif f.side == "S":
-        pos, rot = (along(x0, x1, w / 2), _r(y0 + CLEAR + d / 2)), 0.0
-    elif f.side == "N":
-        pos, rot = (along(x0, x1, w / 2), _r(y1 - CLEAR - d / 2)), 180.0
-    elif f.side == "W":
-        pos, rot = (_r(x0 + CLEAR + d / 2), along(y0, y1, w / 2)), 270.0
-    else:
-        pos, rot = (_r(x1 - CLEAR - d / 2), along(y0, y1, w / 2)), 90.0
+    pos, rot = _place_footprint(what, room, f.side, f.at, w, d)
     return Fixture(id=f.id, name=f"{f.kind.replace('_', ' ')} in {room.name}", level=room.level, kind=f.kind,
                    position=(_r(pos[0]), _r(pos[1])), rotation=f.rotation if f.rotation is not None else rot,
                    width=w, depth=d, height=h)
+
+
+def _custom_shape(cs: CustomShapeDef, design: Design, level: Level) -> CustomFixture:
+    """A shape the model composed itself out of parts (box/round), instead of the fixed
+    FixtureKind catalog — placed the same way a catalog fixture would be."""
+    what = f"custom shape '{cs.id}'"
+    room = design.room(cs.room)
+    if room is None:
+        raise DesignError(f"{what}: unknown room '{cs.room}'")
+    x0 = min(p.x for p in cs.parts)
+    y0 = min(p.y for p in cs.parts)
+    x1 = max(p.x + p.w for p in cs.parts)
+    y1 = max(p.y + (p.w if p.shape == "round" else p.d) for p in cs.parts)
+    w, d, h = x1 - x0, y1 - y0, max(p.z + p.h for p in cs.parts)
+    if w <= 0 or d <= 0:
+        raise DesignError(f"{what}: parts have no footprint")
+    pos, rot = _place_footprint(what, room, cs.side, cs.at, w, d)
+    # Parts are given relative to their own min-corner bbox; re-centre them on the origin so
+    # `pos` (the bbox centre) is where the whole assembly's local frame actually sits, matching
+    # how catalog fixtures are centred (ifc/fixtures.py::_parts).
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    parts = [ShapePart(shape=p.shape, x=_r(p.x - cx), y=_r(p.y - cy), z=p.z, w=p.w, d=p.d, h=p.h) for p in cs.parts]
+    return CustomFixture(id=cs.id, name=f"{cs.name} in {room.name}", level=room.level, position=(_r(pos[0]), _r(pos[1])),
+                         rotation=cs.rotation if cs.rotation is not None else rot, parts=parts)
 
 
 def _balcony(b, design: Design, infos: dict[str, RoomInfo], level: Level, els: list) -> None:
@@ -540,6 +570,7 @@ def analyze(design: Design, prune: bool = False) -> Derived:
     each("windows", lambda w, level: _window(w, design, infos, level))
     each("stairs", lambda st, level: _stair(st, design, level))
     each("fixtures", lambda f, level: _fixture(f, design, level))
+    each("custom_shapes", lambda cs, level: _custom_shape(cs, design, level))
     each("balconies", lambda b, level: _balcony(b, design, infos, level, els))
     for c in design.columns:
         if c.level not in level_by_id:

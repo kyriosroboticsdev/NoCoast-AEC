@@ -138,6 +138,32 @@ class FixtureDef(BaseModel):
     height: Optional[float] = Field(None, gt=0)
 
 
+class ShapePartDef(BaseModel):
+    """One solid of a custom shape: a box (min corner x,y,z; size w,d,h) or, for a "round" part,
+    a w-diameter cylinder (d is ignored). Parts compose freely — a round top plus box legs is a table."""
+
+    shape: Literal["box", "round"] = "box"
+    x: float = 0.0
+    y: float = 0.0
+    z: float = Field(0.0, ge=0)
+    w: float = Field(gt=0, description="width (box) or diameter (round)")
+    d: float = Field(0.1, gt=0, description="depth; ignored for a round part")
+    h: float = Field(gt=0)
+
+
+class CustomShapeDef(BaseModel):
+    """A furniture/object piece the model designs itself, for anything schemas.bim.FixtureKind's
+    fixed catalog doesn't cover — a round table, an L-shaped bench, a plinth."""
+
+    id: str
+    room: str
+    name: str = "Custom object"
+    side: Literal["N", "S", "E", "W", "center"] = "center"
+    at: float = Field(0.5, ge=0, le=1)
+    rotation: Optional[float] = None
+    parts: list[ShapePartDef] = Field(min_length=1, max_length=12)
+
+
 class BalconyDef(BaseModel):
     id: str
     room: str
@@ -173,6 +199,7 @@ class Design(BaseModel):
     windows: list[WindowDef] = Field(default_factory=list)
     stairs: list[StairDef] = Field(default_factory=list)
     fixtures: list[FixtureDef] = Field(default_factory=list)
+    custom_shapes: list[CustomShapeDef] = Field(default_factory=list)
     balconies: list[BalconyDef] = Field(default_factory=list)
     columns: list[ColumnDef] = Field(default_factory=list)
     porch: Optional[PorchDef] = None
@@ -206,7 +233,7 @@ class Design(BaseModel):
     def all_ids(self) -> set[str]:
         ids = {r.id for r in self.rooms} | {d.id for d in self.doors} | {w.id for w in self.windows}
         ids |= {s.id for s in self.stairs} | {f.id for f in self.fixtures} | {b.id for b in self.balconies}
-        ids |= {c.id for c in self.columns} | {l.id for l in self.levels}
+        ids |= {c.id for c in self.columns} | {l.id for l in self.levels} | {cs.id for cs in self.custom_shapes}
         return ids
 
     def unique_id(self, base: str) -> str:

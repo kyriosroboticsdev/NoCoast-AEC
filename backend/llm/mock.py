@@ -15,11 +15,22 @@ import re
 from agents.template_planner import parse_requirements, template_steps
 from core.derive import DesignError, analyze
 from llm.base import LLMRequest, OnNote, OnText
+from schemas.bim import FixtureKind
 from schemas.design import Design, RoomDef, slug
 from solver.layout import place_rooms
 
 NUM = r"(\d+(?:\.\d+)?)"
 STREAM_STEPS = 8  # the mock "streams" its answer in slices so the preview path gets exercised
+
+
+def _custom_parts(item: str) -> list[dict]:
+    """A plausible shape for a furniture request that isn't in the fixed FixtureKind catalog —
+    the mock's stand-in for a real model actually designing the piece with a `custom` step."""
+    if "round" in item:  # a round top on four legs, ~1.1 m across, ~0.72 m tall (dining/coffee table height)
+        legs = [(0.05, 0.05), (0.99, 0.05), (0.05, 0.99), (0.99, 0.99)]
+        return [{"shape": "round", "x": 0.0, "y": 0.0, "z": 0.72, "w": 1.1, "h": 0.05}] + [
+            {"shape": "box", "x": x, "y": y, "z": 0.0, "w": 0.06, "d": 0.06, "h": 0.72} for x, y in legs]
+    return [{"shape": "box", "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0, "d": 0.6, "h": 0.75}]  # generic table-ish block
 
 
 class MockLLM:
@@ -125,8 +136,13 @@ class MockLLM:
 
         m = re.search(r"\bput (a |an )?([\w ]+?) in (the )?([\w -]+)", text)
         if m and design.room(m.group(4).strip()):
-            kind = m.group(2).strip().replace(" ", "_")
-            return [{"step": "furniture", "room": design.room(m.group(4).strip()).id, "kind": kind, "side": "N"}]
+            room = design.room(m.group(4).strip())
+            item = m.group(2).strip()
+            kind = item.replace(" ", "_").replace("-", "_")
+            if kind in FixtureKind.__args__:
+                return [{"step": "furniture", "room": room.id, "kind": kind, "side": "N"}]
+            # Not in the fixed catalog: compose it instead of failing outright.
+            return [{"step": "custom", "room": room.id, "name": item.title(), "side": "center", "parts": _custom_parts(item)}]
 
         if re.search(r"\badd (a |an |another )?(storey|floor|level)\b", text):
             lid = f"L{len(design.levels) + 1}"

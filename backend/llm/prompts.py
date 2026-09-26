@@ -14,9 +14,10 @@ Rules:
 - Levels: L1 = ground floor, L2 = the floor above ("upstairs" in a two-storey house). Only set `level` when the user says so.
 - Convert feet to metres (1 ft = 0.3048 m).
 - Only the kinds above exist. What the builder CAN do: up to 6 storeys, rectangular rooms, doors, windows, straight
-  stairs, furniture and appliances, balconies, a porch, flat/gable/hip roofs, exterior wall materials.
-  It CANNOT do: curved walls, split levels, basements, pools, landscaping, elevators, specific brands, HVAC,
-  interior finishes/colours. Mark such requirements supported=false and keep them in the list.
+  stairs, furniture and appliances (from a fixed catalog, or a custom shape built from box/round solids for
+  anything the catalog lacks — a round table, an odd bench), balconies, a porch, flat/gable/hip roofs, exterior
+  wall materials. It CANNOT do: curved walls, split levels, basements, pools, landscaping, elevators, specific
+  brands, HVAC, interior finishes/colours. Mark such requirements supported=false and keep them in the list.
 - Aesthetic wishes ("modern", "cozy") are kind=style; they are not checked.
 - `summary`: one sentence describing the building.
 Return only the JSON object."""
@@ -46,6 +47,10 @@ Steps (fields not listed are left null):
   {"step":"furniture","room","kind","side":"N|S|E|W|center","at"}     kind: bed|double_bed|bunk_bed|sofa|armchair|coffee_table|tv_stand|
         dining_table|chair|desk|bookshelf|wardrobe|dresser|kitchen_counter|island|fridge|oven|sink|dishwasher|washing_machine|
         toilet|shower|bathtub|washbasin|fireplace|car
+  {"step":"custom","room","name","side":"N|S|E|W|center","at","rotation","parts":[{"shape":"box|round","x","y","z","w","d","h"}, …]}
+        design your own furniture/object when the furniture catalog above has nothing close (a round table, an
+        L-shaped bench, a plinth) — 1-12 solids that together make the shape, each x,y,z its own min corner in the
+        shape's local frame (box: w×d×h; round: w-diameter cylinder, d ignored); a round top plus box legs is a table
   {"step":"balcony","room","side","depth"}     {"step":"porch","side","depth"}     {"step":"roof","kind":"flat|gable|hip","pitch"}
   {"step":"material","material":"masonry|concrete|timber|plaster|stone|glass"}      {"step":"column","level","x","y"}
   {"step":"layout","level","rooms":[{"name","kind","rect"}, …]}   replaces ALL rooms of that storey at once (rooms keep
@@ -58,6 +63,8 @@ Rules:
   room needs a window on an exterior side. Kitchens get a counter, fridge, oven and sink; bathrooms a toilet, washbasin and shower
   or bathtub; bedrooms a bed and wardrobe; living rooms a sofa; dining rooms a table; garages a car.
 - Give a garage a door to the house; the garage door itself is added automatically.
+- If the user asks for a specific piece the furniture catalog doesn't have (a round table, a built-in bench, an
+  odd-shaped counter), use a custom step instead of the closest catalog kind.
 - Two storeys need a stair, and the hall/landing it stands in must be at least 5 m long along the stair's side.
 - Satisfy every requirement in the checklist; if one is impossible, say so in a note step.
 - When EDITING an existing design: emit only the steps that change it. A room step with an existing id replaces

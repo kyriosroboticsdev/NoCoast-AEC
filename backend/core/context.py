@@ -50,6 +50,9 @@ def describe_element(el) -> str:
         return f"{head} at {_pt(el.position)} dir={el.direction:g} w={el.width:g} to={el.to_level}"
     if el.type == "fixture":
         return f"{head} kind={el.kind} at {_pt(el.position)} rot={el.rotation:g} {el.width:g}x{el.depth:g}x{el.height:g}"
+    if el.type == "custom":
+        parts = "; ".join(f"{p.shape} ({p.x:g},{p.y:g},{p.z:g}) {p.w:g}x{p.d:g}x{p.h:g}" for p in el.parts)
+        return f"{head} at {_pt(el.position)} rot={el.rotation:g} parts=[{parts}]"
     if el.type == "railing":
         return f"{head} path={_outline(el.path)} h={el.height:g}"
     if el.type == "pipe":
