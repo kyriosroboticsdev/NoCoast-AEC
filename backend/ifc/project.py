@@ -18,7 +18,10 @@ import ifcopenshell.api.spatial
 import ifcopenshell.api.style
 import ifcopenshell.api.unit
 
+from core.guids import GuidMap, ensure_guids, key_for_element, key_for_level
 from schemas.bim import BuildingSpec
+
+SPEC_PSET = "NoCoast_Spec"  # carries the element's spec JSON so our own files can be lifted back losslessly
 
 # name -> (rgb 0..1, transparency 0..1)
 STYLES = {
@@ -38,6 +41,7 @@ class BuildContext:
     model: ifcopenshell.file
     body: ifcopenshell.entity_instance
     spec: BuildingSpec
+    guids: GuidMap
     storeys: dict[str, ifcopenshell.entity_instance] = field(default_factory=dict)
     walls: dict[str, ifcopenshell.entity_instance] = field(default_factory=dict)
     styles: dict[str, ifcopenshell.entity_instance] = field(default_factory=dict)
@@ -60,9 +64,16 @@ def translate(x: float = 0, y: float = 0, z: float = 0) -> np.ndarray:
     return placement(x, y, z)
 
 
-def create_project(spec: BuildingSpec) -> BuildContext:
+def add_spec_pset(model: ifcopenshell.file, product, payload: str) -> None:
+    ps = ifcopenshell.api.pset.add_pset(model, product=product, name=SPEC_PSET)
+    ifcopenshell.api.pset.edit_pset(model, pset=ps, properties={"Json": payload})
+
+
+def create_project(spec: BuildingSpec, guids: GuidMap | None = None) -> BuildContext:
+    guids = ensure_guids(spec, guids)
     model = ifcopenshell.api.project.create_file(version="IFC4")
     project = ifcopenshell.api.root.create_entity(model, ifc_class="IfcProject", name=spec.building.name)
+    project.GlobalId = guids["project"]
 
     length = ifcopenshell.api.unit.add_si_unit(model, unit_type="LENGTHUNIT")
     area = ifcopenshell.api.unit.add_si_unit(model, unit_type="AREAUNIT")
@@ -75,19 +86,24 @@ def create_project(spec: BuildingSpec) -> BuildContext:
     )
 
     site = ifcopenshell.api.root.create_entity(model, ifc_class="IfcSite", name="Site")
+    site.GlobalId = guids["site"]
     building = ifcopenshell.api.root.create_entity(model, ifc_class="IfcBuilding", name=spec.building.name)
+    building.GlobalId = guids["building"]
     if spec.building.description:
         building.Description = spec.building.description
+    add_spec_pset(model, building, spec.building.model_dump_json())
     ifcopenshell.api.aggregate.assign_object(model, products=[site], relating_object=project)
     ifcopenshell.api.aggregate.assign_object(model, products=[building], relating_object=site)
     for product in (site, building):
         ifcopenshell.api.geometry.edit_object_placement(model, product=product, matrix=placement())
 
-    ctx = BuildContext(model=model, body=body, spec=spec)
+    ctx = BuildContext(model=model, body=body, spec=spec, guids=guids)
 
     for level in spec.levels:
         storey = ifcopenshell.api.root.create_entity(model, ifc_class="IfcBuildingStorey", name=level.name)
+        storey.GlobalId = guids[key_for_level(level.id)]
         storey.Elevation = level.elevation
+        add_spec_pset(model, storey, level.model_dump_json())
         ifcopenshell.api.geometry.edit_object_placement(model, product=storey, matrix=translate(z=level.elevation))
         ifcopenshell.api.aggregate.assign_object(model, products=[storey], relating_object=building)
         ctx.storeys[level.id] = storey
@@ -114,9 +130,16 @@ def finish_element(
     kind: str,
     level_id: str | None = None,
     pset: tuple[str, dict] | None = None,
+    item=None,
 ) -> None:
-    """Attach geometry, placement, style, material, container and an optional property set."""
+    """Attach geometry, placement, style, material, container, the stable GlobalId,
+    the spec pset and an optional standard property set."""
     m = ctx.model
+    if item is not None:
+        element.GlobalId = ctx.guids[key_for_element(item.id)]
+        if hasattr(element, "Tag"):  # IfcSpace has no Tag; its Name already carries the id
+            element.Tag = item.id
+        add_spec_pset(m, element, item.model_dump_json())
     ifcopenshell.api.geometry.edit_object_placement(m, product=element, matrix=matrix)
     ifcopenshell.api.geometry.assign_representation(m, product=element, representation=representation)
     if kind in ctx.styles:
