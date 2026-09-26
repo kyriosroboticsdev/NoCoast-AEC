@@ -32,12 +32,12 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return res.json();
 }
 
-export const plan = (prompt: string) => post<PlanResult>("/plan", { prompt });
+export const plan = (prompt: string, planner?: string) => post<PlanResult>("/plan", { prompt, planner });
 export const build = (spec: PlanResult["spec"]) => post<BuildResult>("/build", { spec });
 
 export async function fetchBytes(url: string): Promise<Uint8Array> {
-  // "/models/x.ifc" is a backend path; anything else is already a full URL.
-  const res = await fetch(url.startsWith("/") ? `${BACKEND}${url}` : url);
+  // "/models/x.ifc" is a backend path; anything else is resolved against the page.
+  const res = await fetch(url.startsWith("/") ? `${BACKEND}${url}` : new URL(url, location.href).href);
   if (!res.ok) throw new Error(`download failed: ${res.status}`);
   return new Uint8Array(await res.arrayBuffer());
 }
@@ -51,11 +51,15 @@ export async function waitForBackend(timeoutMs = 20000): Promise<void> {
   }
 }
 
-export async function health(): Promise<boolean> {
+export async function info(): Promise<{ ok: boolean; planners: string[] }> {
   try {
     const res = await fetch(`${BACKEND}/health`, { signal: AbortSignal.timeout(1500) });
-    return res.ok;
+    return res.ok ? await res.json() : { ok: false, planners: [] };
   } catch {
-    return false;
+    return { ok: false, planners: [] };
   }
+}
+
+export async function health(): Promise<boolean> {
+  return (await info()).ok;
 }

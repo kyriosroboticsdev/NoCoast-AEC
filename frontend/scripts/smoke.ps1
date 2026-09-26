@@ -6,8 +6,11 @@ param(
     [string]$Autoload,
     [string]$Prompt,
     [string]$Select,
+    [string]$Tab,
     [string]$Out = "$env:TEMP\bim-smoke.png",
-    [int]$TimeoutSec = 120
+    [int]$TimeoutSec = 120,
+    # Use the app's real browser profile (sessions persist) instead of a throwaway one.
+    [switch]$SharedProfile
 )
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
@@ -29,6 +32,11 @@ $env:BIM_SMOKE_HOLD = "4"
 $env:BIM_AUTOLOAD = $Autoload
 $env:BIM_PROMPT = $Prompt
 $env:BIM_SMOKE_SELECT = $Select
+$env:BIM_SMOKE_TAB = $Tab
+if (-not $SharedProfile) {
+    # Throwaway WebView2 profile so test sessions never show up in the real app.
+    $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $env:TEMP "bim-smoke-webview"
+}
 
 $sw = [Diagnostics.Stopwatch]::StartNew()
 $proc = Start-Process -FilePath (Resolve-Path $Exe) -PassThru
