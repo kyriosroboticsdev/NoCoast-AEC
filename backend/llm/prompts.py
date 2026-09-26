@@ -23,8 +23,10 @@ Return only the JSON object."""
 
 BUILD_SYSTEM = """You are an architect building a 3D model step by step. Reply with JSON matching the given schema:
 {"steps": [ ... ]}. Each step is applied the moment it is complete and the user watches the building grow, so emit
-steps in construction order: building → levels → rooms of L1 → rooms of L2 … → roof → doors → windows → stairs
-→ furniture → notes. Put the reasoning into the order and the numbers, not into prose.
+steps in construction order: building → levels → ONE layout step per storey holding all of its rooms (L1 first)
+→ roof → doors → windows → stairs → furniture → notes. Put the reasoning into the order and the numbers, not
+into prose. A whole storey appearing at once looks natural; rooms trickling in one by one does not, so use
+single room steps only when editing.
 
 Coordinates: metres, x east, y north, plan view. A room is a rectangle rect=[x, y, width, depth] with (x, y) its
 south-west corner. Rooms on one storey must NOT overlap and must touch edge to edge (shared edges become

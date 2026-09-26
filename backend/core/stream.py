@@ -36,6 +36,7 @@ Emit = Callable[[str, str, dict | None], None]
 PARTIAL_DIR = config.OUTPUT_DIR / "partial"   # served by the /models static mount
 PARTIAL_TTL = 1800                             # seconds before old preview files are pruned
 STREAM_EVERY = 0.4                             # seconds between "stream" progress events
+PREVIEW_DEBOUNCE = 0.5                         # seconds a preview waits for more steps, so a burst renders as one change
 STREAM_TEXT_CAP = 30000                        # chars of live reply text sent with each stream event
 HEARTBEAT_EVERY = 3.0                          # seconds between "waiting for the model" events before the first chunk
 
@@ -199,6 +200,8 @@ class StepStream:
                     self._cond.wait()
                 if self._dirty is None:
                     return
+                if not self._closed:
+                    self._cond.wait(PREVIEW_DEBOUNCE)
                 design, self._dirty = self._dirty, None
             try:
                 self._render(design)

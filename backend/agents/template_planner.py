@@ -132,7 +132,7 @@ def template_steps(prompt: str) -> list[dict]:
         for r in defs:
             r.rect = rects[r.id]
             design.rooms.append(r)
-            steps.append({"step": "room", "name": r.name, "level": level, "kind": r.kind, "rect": list(r.rect)})
+        steps.append({"step": "layout", "level": level, "rooms": [{"name": r.name, "kind": r.kind, "rect": list(r.rect)} for r in defs]})
     m = re.search(r"(gable|pitched|hip(ped)?)\s*roof", text)
     if m:
         steps.append({"step": "roof", "kind": {"pitched": "gable", "hipped": "hip"}.get(m.group(1), m.group(1))})

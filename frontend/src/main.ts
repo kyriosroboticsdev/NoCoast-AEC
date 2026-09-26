@@ -25,6 +25,7 @@ const stepsVerbose = $<HTMLInputElement>("steps-verbose");
 const layerSlider = $<HTMLInputElement>("layerSlider");
 const layerLabel = $<HTMLSpanElement>("layerLabel");
 const layerSnaps = $<HTMLDataListElement>("layerSnaps");
+const followBuild = $<HTMLInputElement>("followBuild");
 
 let projectId = "";
 let head: api.Version | null = null;
@@ -95,8 +96,55 @@ layerSlider.oninput = () => {
   const near = sectionSnaps.find((s) => Math.abs(s.z - z) <= 0.2);
   if (near) z = near.z;
   sectionCut = z >= modelTop ? null : z;
+  following = false; // the user took over the cut for this build
   applySection();
 };
+
+// "Follow build": while a request runs, the section cut sits just under the ceiling of the storey the
+// current steps are working on (a dollhouse view, roof and upper storeys hidden), and releases to full
+// height when the roof lands or the request finishes. Dragging the slider takes over for that build.
+let following = false;
+let followLevel: string | null = null; // level id the latest step worked on
+const roomLevels: Record<string, string> = {}; // room id → level id, learned from room/layout steps
+followBuild.checked = localStorage.getItem("nocoast.follow") !== "0";
+followBuild.onchange = () => localStorage.setItem("nocoast.follow", followBuild.checked ? "1" : "0");
+
+function applyFollow() {
+  if (!following) return;
+  if (followLevel === null) {
+    sectionCut = null;
+  } else {
+    const storey = viewer.storeys().find((st) => st.id === followLevel);
+    if (!storey) return; // not in the model yet; the next preview will have it
+    sectionCut = Math.round((storey.top - 0.3) * 10) / 10;
+  }
+  applySection();
+}
+
+const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+/** Remember room names and levels from an accepted step, and which level the build is working on. */
+function learnStep(step: Record<string, unknown>) {
+  const k = step.step;
+  if (k === "room" && typeof step.name === "string") {
+    const id = typeof step.id === "string" ? step.id : slug(step.name);
+    roomNames[id] = roomNames[slug(step.name)] = step.name;
+    if (typeof step.level === "string") roomLevels[id] = step.level;
+  }
+  if (k === "layout" && Array.isArray(step.rooms)) {
+    for (const r of step.rooms as { name?: string }[]) {
+      if (typeof r.name !== "string") continue;
+      roomNames[slug(r.name)] = r.name;
+      if (typeof step.level === "string") roomLevels[slug(r.name)] = step.level;
+    }
+  }
+  if (k === "roof") {
+    followLevel = null;
+    return;
+  }
+  const level = typeof step.level === "string" ? step.level : typeof step.room === "string" ? roomLevels[step.room] : undefined;
+  if (level && k !== "building" && k !== "level") followLevel = level;
+}
 
 // The camera is framed on the first model of a project and then left alone: previews and new
 // versions load into the same view, so the building grows in place instead of jumping around.
@@ -106,6 +154,7 @@ async function loadIntoViewer(bytes: Uint8Array) {
   await viewer.load(bytes, framed);
   framed = true;
   refreshSection(); // the section cut survives reloads; the range follows the new model's extent
+  applyFollow();
 }
 
 async function showVersion(v: api.Version | null) {
@@ -181,12 +230,14 @@ function friendlyStep(step: Record<string, unknown>, ok: boolean, message: strin
     case "building": return name ? `Calling the building “${name}”` : "Describing the building";
     case "level": return `Adding ${levelName(step.id ?? step.level)}${step.height ? `, ${step.height} m high` : ""}`;
     case "room": {
-      if (name && typeof step.id === "string") roomNames[step.id] = name;
-      if (name) roomNames[name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")] = name;
       const verb = message.includes("updated") ? "Moving" : "Adding";
       return `${verb} the ${name || roomName(step.id).replace(/^the /, "")} on ${levelName(step.level)}${size}`;
     }
-    case "layout": return `Rearranging the rooms on ${levelName(step.level)}`;
+    case "layout": {
+      const names = Array.isArray(step.rooms) ? (step.rooms as { name?: string }[]).map((r) => r.name).filter(Boolean) : [];
+      const verb = message.includes("; removed") || message.includes("updated") ? "Rearranging" : "Laying out";
+      return `${verb} ${levelName(step.level)}${names.length ? ": " + names.join(", ") : ""}`;
+    }
     case "door": {
       const to = String(step.to ?? "outside");
       if (to === "outside" || to === "exterior") return `${step.kind === "garage" ? "Garage door" : "Entrance door"} on the ${side(step.side) || "outer"} side of ${roomName(step.room)}`;
@@ -420,6 +471,14 @@ const onEvent = (e: api.StageEvent) => {
   }
   events.push(e);
   streamRow = null;
+  if (e.stage === "step" && e.data?.ok !== false && e.data?.step) {
+    learnStep(e.data.step as Record<string, unknown>);
+    applyFollow();
+  }
+  if (e.stage === "done") {
+    followLevel = null;
+    applyFollow();
+  }
   const row = appendRow(e);
   if (e.stage === "partial" && typeof e.data?.ifc_url === "string") {
     queuePreview({ url: e.data.ifc_url, label: `preview ${e.data.preview} · ${e.data.elements} elements`, row });
@@ -432,6 +491,8 @@ async function run(work: () => Promise<api.Version>) {
   if (busy) return;
   setBusy(true);
   finalArrived = false;
+  following = followBuild.checked;
+  followLevel = null;
   resetSteps();
   try {
     const version = await work();

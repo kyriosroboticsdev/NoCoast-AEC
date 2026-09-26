@@ -423,8 +423,14 @@ id in `localStorage` (`?project=<id>` deep-links another, `?prompt=…` sends a 
 the step log, and offers Undo, Import IFC and Download IFC. A slim section slider above the prompt sweeps a
 clipping plane through the model in 0.1 m steps over its own extent (previews included), with sticky snap
 points at every storey's floor and just under its ceiling, read from the IFC's `IfcBuildingStorey` elevations
-and wall tops in the browser; the cut survives reloads. The server-side slices and live-build endpoints
-exist in the backend but have no UI. The Tauri shell (`src-tauri/`) spawns
+and wall tops in the browser; the cut survives reloads. While a request runs and "follow build" is on, the
+cut follows the storey the current steps work on (just under its ceiling, a dollhouse view: roof and upper
+storeys hidden) and releases to full height when the roof lands or the request finishes; dragging the slider
+takes over for that build. Every reload diffs the new IFC against the old one by GlobalId: new elements
+fade in over 300 ms, removed ones fade out over 200 ms, and the camera stays put. New buildings arrive one
+storey at a time (one `layout` step per storey, then openings and furniture one by one); the preview worker
+waits 0.5 s after a step so a burst of steps renders as one change. The server-side slices and live-build
+endpoints exist in the backend but have no UI. The Tauri shell (`src-tauri/`) spawns
 `python main.py` on startup (skip with `BIM_NO_BACKEND=1`) and kills it on exit.
 
 ## 4.14 Troubleshooting
