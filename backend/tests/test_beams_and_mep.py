@@ -53,6 +53,33 @@ def test_kitchen_or_bathroom_gets_a_water_riser_others_dont():
     assert len(water) == 1 and water[0].bottom_level == "L1"
 
 
+def test_every_wet_room_gets_its_own_riser_not_just_the_first():
+    d = analyze(_design(rooms=[
+        RoomDef(id="a", name="Kitchen", kind="kitchen", rect=(0, 0, 5, 4)),
+        RoomDef(id="b", name="Bathroom 1", kind="bathroom", rect=(5, 0, 4, 4)),
+        RoomDef(id="c", name="Bathroom 2", kind="bathroom", rect=(9, 0, 4, 4)),
+    ]))
+    water = [e for e in d.spec.elements if isinstance(e, Pipe) and e.kind == "water"]
+    assert len(water) == 3
+    assert len({w.position for w in water}) == 3  # each riser taps its own room, not a shared point
+
+
+def test_panel_prefers_a_utility_or_garage_room_over_the_first_room_found():
+    d = analyze(_design(rooms=[
+        RoomDef(id="a", name="Living Room", kind="living", rect=(0, 0, 5, 4)),
+        RoomDef(id="b", name="Garage", kind="garage", rect=(5, 0, 5, 5)),
+    ]))
+    panel = next(e for e in d.spec.elements if isinstance(e, Panel))
+    assert 5 <= panel.position[0] <= 10 and 0 <= panel.position[1] <= 5  # inside the garage, not the living room
+
+
+def test_outlet_wire_ends_at_the_outlet_height_not_the_ceiling():
+    d = analyze(_design(rooms=[RoomDef(id="a", name="A", kind="living", rect=(0, 0, 5, 4))]))
+    outlet = next(e for e in d.spec.elements if isinstance(e, Outlet))
+    wire = next(e for e in d.spec.elements if isinstance(e, Wire) and e.id.startswith(f"{outlet.level}-wire-a-outlet"))
+    assert wire.elevation == outlet.height  # the run reaches the outlet instead of floating at ceiling height
+
+
 def test_electrical_riser_and_panel_always_present_and_span_every_storey():
     d = analyze(_design(levels=[LevelDef(id="L1"), LevelDef(id="L2"), LevelDef(id="L3")],
                         rooms=[RoomDef(id="a", name="A", level="L1", kind="office", rect=(0, 0, 5, 4)),

@@ -724,19 +724,24 @@ def _free(e: FreeDef, design: Design, levels: dict[str, Level], els: list, free_
 def _mep(design: Design, levels: list[Level], infos: dict[str, RoomInfo], els: list) -> None:
     """Electrical and plumbing rough-in — always added, on top of whatever furniture/fixtures the
     design already specified: every enclosed room gets a ceiling light and two outlets, wired back to
-    one riser; a kitchen or bathroom also gets a plumbing riser. Not a routed network, see ifc/mep.py."""
+    one riser; every kitchen or bathroom also gets its own plumbing riser. Not a routed network, see
+    ifc/mep.py."""
     if not design.rooms:
         return  # nothing to wire yet
     ground = next((l for l in levels if design.level(l.id).index >= 0), levels[0])
     ground_rooms = design.rooms_on(ground.id)
-    if ground_rooms:
-        gx0, gy0, _, _ = ground_rooms[0].box
+    # A utility/garage/storage room is where a panel actually belongs; only fall back to "the first
+    # room's corner" when the design has none of those, so the panel doesn't land in a bedroom or
+    # living room.
+    utility = next((r for r in ground_rooms if r.kind in ("utility", "garage", "storage")), None)
+    corner_of = utility or (ground_rooms[0] if ground_rooms else None)
+    if corner_of:
+        gx0, gy0, _, _ = corner_of.box
         riser_xy = (_r(gx0 + 0.3), _r(gy0 + 0.3))
     else:
         riser_xy = (0.3, 0.3)
 
-    wet_pos: tuple[float, float] | None = None
-    wet_level: str | None = None
+    wet_risers: list[tuple[tuple[float, float], str]] = []
     for level in levels:
         for room in design.rooms_on(level.id):
             if not room.roofed:
@@ -753,24 +758,31 @@ def _mep(design: Design, levels: list[Level], infos: dict[str, RoomInfo], els: l
                 for pos in ((_r(x0 + inset), _r(y0 + inset)), (_r(x1 - inset), _r(y1 - inset))):
                     if poly.contains(ShpPoint(pos)):
                         outlets.append(pos)
+            outlet_objs: list[Outlet] = []
             for i, pos in enumerate(outlets, 1):
-                els.append(Outlet(id=f"{level.id}-outlet-{sid}-{i}", name=f"{room.name} outlet", level=level.id, position=pos))
+                outlet = Outlet(id=f"{level.id}-outlet-{sid}-{i}", name=f"{room.name} outlet", level=level.id, position=pos)
+                outlet_objs.append(outlet)
+                els.append(outlet)
             # A run whose device sits exactly at the riser tap (the ground-floor reference room's own
             # corner can coincide with riser_xy) would be a zero-length path; skip it, nothing to draw.
             if math.dist(riser_xy, (cx, cy)) > 0.05:
                 els.append(Wire(id=f"{level.id}-wire-{sid}-light", level=level.id, path=[riser_xy, (cx, cy)]))
-            for i, pos in enumerate(outlets, 1):
-                if math.dist(riser_xy, pos) > 0.05:
-                    els.append(Wire(id=f"{level.id}-wire-{sid}-outlet-{i}", level=level.id, path=[riser_xy, pos]))
-            if room.kind in ("kitchen", "bathroom") and wet_pos is None:
-                wet_pos, wet_level = (cx, cy), level.id
+            for i, outlet in enumerate(outlet_objs, 1):
+                if math.dist(riser_xy, outlet.position) > 0.05:
+                    # Run at the outlet's own height, not the ceiling: a ceiling-height run reads as a
+                    # wire floating with no connection down to an outlet mounted near the floor.
+                    els.append(Wire(id=f"{level.id}-wire-{sid}-outlet-{i}", level=level.id,
+                                    path=[riser_xy, outlet.position], elevation=outlet.height))
+            if room.kind in ("kitchen", "bathroom"):
+                wet_risers.append(((cx, cy), level.id))
 
     els.append(Panel(id="electrical-panel", name="Electrical panel", level=ground.id, position=riser_xy))
     els.append(Pipe(id="electrical-riser", name="Electrical riser", kind="electrical", bottom_level=ground.id,
                     top_level=levels[-1].id, position=riser_xy, diameter=0.08))
-    if wet_pos:
-        els.append(Pipe(id="plumbing-riser", name="Main riser", kind="water", bottom_level=ground.id,
-                        top_level=wet_level or levels[-1].id, position=wet_pos))
+    for i, (pos, wet_level) in enumerate(wet_risers, 1):
+        suffix = "" if i == 1 else f"-{i}"
+        els.append(Pipe(id=f"plumbing-riser{suffix}", name="Main riser" if i == 1 else f"Riser {i}", kind="water",
+                        bottom_level=ground.id, top_level=wet_level, position=pos))
 
 
 def _porch(design: Design, polys: list[Polygon], els: list, ground: str = "L1") -> None:
