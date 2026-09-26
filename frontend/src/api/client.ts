@@ -35,6 +35,44 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 export const plan = (prompt: string, planner?: string) => post<PlanResult>("/plan", { prompt, planner });
 export const build = (spec: PlanResult["spec"]) => post<BuildResult>("/build", { spec });
 
+export type StreamEvent =
+  | ({ type: "step" } & import("../state/sessions").TraceStep)
+  | { type: "plan"; plan: PlanResult }
+  | { type: "build"; build: BuildResult }
+  | { type: "error"; message: string };
+
+/** Thrown when the backend predates /generate/stream (an older process still running). */
+export class StreamUnsupported extends Error {}
+
+/** POST /generate/stream and hand each Server-Sent Event to `onEvent` as it arrives. */
+export async function generateStream(prompt: string, planner: string | undefined, onEvent: (e: StreamEvent) => void) {
+  const res = await fetch(`${BACKEND}/generate/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    body: JSON.stringify({ prompt, planner }),
+  });
+  if (res.status === 404 || res.status === 405) throw new StreamUnsupported();
+  if (!res.ok || !res.body) {
+    const detail = await res.json().then((j) => j.detail, () => res.statusText);
+    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let cut: number;
+    while ((cut = buffer.indexOf("\n\n")) >= 0) {
+      const frame = buffer.slice(0, cut);
+      buffer = buffer.slice(cut + 2);
+      const data = frame.split("\n").filter((l) => l.startsWith("data: ")).map((l) => l.slice(6)).join("\n");
+      if (data) onEvent(JSON.parse(data));
+    }
+  }
+}
+
 export async function fetchBytes(url: string): Promise<Uint8Array> {
   // "/models/x.ifc" is a backend path; anything else is resolved against the page.
   const res = await fetch(url.startsWith("/") ? `${BACKEND}${url}` : new URL(url, location.href).href);

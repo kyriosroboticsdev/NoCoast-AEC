@@ -1,5 +1,7 @@
 """End-to-end backend checks: prompt → spec → IFC that reopens and tessellates."""
 
+import json
+
 import ifcopenshell
 import pytest
 from fastapi.testclient import TestClient
@@ -69,3 +71,27 @@ def test_build_from_handwritten_spec():
     r = client.post("/build", json={"spec": spec.model_dump()})
     assert r.status_code == 200, r.text
     assert r.json()["summary"]["counts"] == {"IfcColumn": 1, "IfcDoor": 1, "IfcRoof": 1, "IfcSlab": 1, "IfcWall": 1}
+
+
+def test_generate_stream_narrates_layer_by_layer():
+    events = []
+    with client.stream("POST", "/generate/stream", json={"prompt": SPEC_PROMPT}) as r:
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("text/event-stream")
+        for line in r.iter_lines():
+            if line.startswith("data: "):
+                events.append(json.loads(line[6:]))
+    types = [e["type"] for e in events]
+    assert "error" not in types, events[-1]
+    assert types.index("plan") < types.index("build") == len(types) - 1
+    steps = [e for e in events if e["type"] == "step"]
+    done = {e["title"]: e for e in steps if e["status"] == "done"}
+    # every step that started also finished, with a duration
+    assert {e["id"] for e in steps if e["status"] == "running"} == {e["id"] for e in done.values()}
+    assert all("ms" in e for e in done.values())
+    layers = [e["title"] for e in done.values() if e["layer"]]
+    assert layers == ["Building Ground Floor", "Building Level 2", "Building Roof"]
+    assert {"Reading the prompt", "Validating the structured instructions", "Checking geometry", "Writing the IFC file"} <= set(done)
+    # children point at a real parent
+    ids = {e["id"] for e in steps}
+    assert all(e["parent"] in ids for e in steps if e["parent"])

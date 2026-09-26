@@ -9,6 +9,7 @@ import math
 import re
 
 from agents.base import PlanResult
+from agents.progress import NO_PROGRESS, Progress
 from schemas.bim import BuildingSpec, Column, Door, Level, Roof, Slab, Space, Wall, Window
 
 NUMBERS = {"one": 1, "a": 1, "an": 1, "single": 1, "two": 2, "double": 2, "three": 3, "four": 4,
@@ -45,7 +46,24 @@ def _count(text: str, noun: str) -> int | None:
 class TemplatePlanner:
     name = "template"
 
-    def plan(self, prompt: str) -> PlanResult:
+    def plan(self, prompt: str, progress: Progress = NO_PROGRESS) -> PlanResult:
+        with progress.step("Reading the prompt", phase="plan", detail="rule-based: keywords and counts") as read:
+            notes, floors, width, depth, garage, porch, bright = self._interpret(prompt)
+            for n in notes:
+                progress.note(n[0].upper() + n[1:], phase="plan", parent=read)
+            read.detail = f"{len(notes)} findings"
+
+        with progress.step("Laying out the floor plan", phase="plan") as lay:
+            spec = self._layout(floors, width, depth, garage, porch, bright)
+            for level, rooms in zip(spec.levels, floors):
+                mine = [e for e in spec.elements if getattr(e, "level", None) == level.id]
+                walls = sum(e.type == "wall" for e in mine)
+                progress.note(f"{level.name}: {len(rooms)} rooms on a {math.ceil(len(rooms) / 2)} × 2 grid",
+                              phase="plan", parent=lay, detail=f"{walls} walls, {', '.join(rooms)}")
+            lay.detail = f"{width:.1f} × {depth:.1f} m footprint · {len(spec.levels)} levels · {len(spec.elements)} elements"
+        return PlanResult(spec=spec, planner=self.name, notes=notes)
+
+    def _interpret(self, prompt: str):
         text = prompt.lower()
         notes: list[str] = []
 
@@ -71,14 +89,13 @@ class TemplatePlanner:
         if re.search(r"gable|pitched|hip(ped)?\s*roof|sloped", text):
             notes.append("only flat roofs are supported so far — used a flat roof")
 
-        spec = self._layout(floors, width, depth, garage, porch, bright)
         if garage:
             notes.append("attached single garage on the east side")
         if porch:
             notes.append("front porch with columns")
         if bright:
             notes.append("larger windows for natural light")
-        return PlanResult(spec=spec, planner=self.name, notes=notes)
+        return notes, floors, width, depth, garage, porch, bright
 
     # --- interpretation -------------------------------------------------
 

@@ -5,11 +5,27 @@ import type { BuildResult, PlanResult } from "../api/client";
 
 export type Stage = "planning" | "building" | "loading" | "done" | "error";
 
+/** One line of the live reasoning trace (from the backend stream, or the viewer's load steps). */
+export interface TraceStep {
+  id: string;
+  parent: string | null;
+  phase: "plan" | "validate" | "build" | "load";
+  title: string;
+  detail: string | null;
+  status: "running" | "done" | "error";
+  ms?: number;
+  layer?: boolean;
+  error?: string;
+}
+
 export interface Run {
   stage: Stage;
   error?: string;
   plan?: PlanResult;
   build?: BuildResult;
+  steps?: TraceStep[];
+  startedAt?: number;
+  endedAt?: number;
 }
 
 export interface Message {
@@ -44,7 +60,11 @@ function load(): Session[] {
     // A run interrupted by closing the app can't resume.
     for (const s of list)
       for (const m of s.messages)
-        if (m.run && m.run.stage !== "done" && m.run.stage !== "error") m.run = { ...m.run, stage: "error", error: "Interrupted" };
+        if (m.run && m.run.stage !== "done" && m.run.stage !== "error")
+          m.run = {
+            ...m.run, stage: "error", error: "Interrupted",
+            steps: m.run.steps?.map((st) => (st.status === "running" ? { ...st, status: "error" as const } : st)),
+          };
     return list;
   } catch {
     return [];
@@ -88,4 +108,16 @@ export const addMessage = (m: Message) => (s: Session): Session => ({ ...s, mess
 export const patchRun = (msgId: string, patch: Partial<Run>) => (s: Session): Session => ({
   ...s,
   messages: s.messages.map((m) => (m.id === msgId ? { ...m, run: { ...(m.run ?? { stage: "planning" }), ...patch } } : m)),
+});
+
+/** Insert or update a trace step on a run (steps arrive as running, then done/error). */
+export const upsertStep = (msgId: string, step: TraceStep) => (s: Session): Session => ({
+  ...s,
+  messages: s.messages.map((m) => {
+    if (m.id !== msgId || !m.run) return m;
+    const steps = m.run.steps ?? [];
+    const i = steps.findIndex((x) => x.id === step.id);
+    const next = i < 0 ? [...steps, step] : steps.map((x, j) => (j === i ? { ...x, ...step } : x));
+    return { ...m, run: { ...m.run, steps: next } };
+  }),
 });

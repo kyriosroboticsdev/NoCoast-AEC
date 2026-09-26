@@ -6,7 +6,7 @@ import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { Workspace, type Tab } from "./components/Workspace";
 import * as platform from "./platform";
-import { addMessage, patchRun, uid, useSessions } from "./state/sessions";
+import { addMessage, patchRun, uid, upsertStep, useSessions, type TraceStep } from "./state/sessions";
 import {
   BimViewer, type ElementRow, type ElementSummary, type LevelNode, type ModelStats, type PropertyGroup,
 } from "./viewer/BimViewer";
@@ -95,7 +95,7 @@ export default function App() {
 
   // --- loading models into the viewer -----------------------------------------
 
-  const showModel = useCallback(async (bytes: Uint8Array, name: string, key: string) => {
+  const showModel = useCallback(async (bytes: Uint8Array, name: string, key: string, onProgress?: (p: number) => void) => {
     const v = viewerRef.current!;
     loadedKey.current = key;
     setLoadError(null);
@@ -105,14 +105,16 @@ export default function App() {
     setProperties([]);
     setStats(null);
     setRows(null);
-    await v.loadIfc(bytes, name, setProgress);
+    await v.loadIfc(bytes, name, (p) => { setProgress(p); onProgress?.(p); });
     const head = new TextDecoder().decode(bytes.subarray(0, 4000));
     const schema = head.match(/FILE_SCHEMA\s*\(\s*\(\s*'([^']+)'/i)?.[1] ?? "";
     setLevels(await v.levels());
     setTreeVersion((n) => n + 1);
     setLoaded({ key, name, schema, bytes });
     setProgress(null);
-    setStats(await v.stats());
+    const s = await v.stats();
+    setStats(s);
+    return s ?? { elements: 0, levels: 0, triangles: 0, extent: [0, 0, 0] as [number, number, number] };
   }, []);
 
   const clearModel = useCallback(async () => {
@@ -164,25 +166,84 @@ export default function App() {
   const generate = useCallback(async (sid: string, prompt: string) => {
     const aid = uid();
     update(sid, addMessage({ id: uid(), role: "user", text: prompt }));
-    update(sid, addMessage({ id: aid, role: "assistant", text: "", run: { stage: "planning" } }));
+    update(sid, addMessage({ id: aid, role: "assistant", text: "", run: { stage: "planning", steps: [], startedAt: Date.now() } }));
     setBusy(true);
+
+    // Client-side steps join the backend's trace so the user sees the whole journey.
+    const step = (title: string, detail: string | null = null) => {
+      const base: TraceStep = { id: uid(), parent: null, phase: "load", title, detail, status: "running" };
+      const t0 = performance.now();
+      update(sid, upsertStep(aid, base));
+      return {
+        update: (d: string) => update(sid, upsertStep(aid, { ...base, detail: d })),
+        done: (d?: string) => update(sid, upsertStep(aid, { ...base, detail: d ?? detail, status: "done", ms: Math.round(performance.now() - t0) })),
+        fail: (msg: string) => update(sid, upsertStep(aid, { ...base, status: "error", error: msg, ms: Math.round(performance.now() - t0) })),
+      };
+    };
+
+    let current: ReturnType<typeof step> | null = null;
     try {
-      await api.waitForBackend();
-      const plan = await api.plan(prompt, planner);
-      update(sid, patchRun(aid, { plan, stage: "building" }));
-      const build = await api.build(plan.spec);
-      update(sid, patchRun(aid, { build, stage: "loading" }));
+      if (!(await api.health())) {
+        current = step("Waiting for the backend", "starting Python + IfcOpenShell");
+        await api.waitForBackend();
+        current.done();
+      }
+
+      let plan: api.PlanResult | undefined;
+      let build: api.BuildResult | undefined;
+      let failure: string | undefined;
+      try {
+        await api.generateStream(prompt, planner, (ev) => {
+          if (ev.type === "step") {
+            const { type: _, ...s } = ev;
+            update(sid, upsertStep(aid, s));
+          } else if (ev.type === "plan") {
+            plan = ev.plan;
+            update(sid, patchRun(aid, { plan, stage: "building" }));
+          } else if (ev.type === "build") {
+            build = ev.build;
+            update(sid, patchRun(aid, { build, stage: "loading" }));
+          } else if (ev.type === "error") {
+            failure = ev.message;
+          }
+        });
+      } catch (e) {
+        if (!(e instanceof api.StreamUnsupported)) throw e;
+        // An older backend is still running: no live trace, same result.
+        current = step("Planning and building", "restart the backend to see a live trace");
+        plan = await api.plan(prompt, planner);
+        update(sid, patchRun(aid, { plan, stage: "building" }));
+        build = await api.build(plan.spec);
+        update(sid, patchRun(aid, { build, stage: "loading" }));
+        current.done();
+      }
+      if (failure) throw new Error(failure);
+      if (!plan || !build) throw new Error("The backend stream ended without a model.");
+
       const name = `${build.id}.ifc`;
       if (activeRef.current === sid) {
         setTab("model");
-        await showModel(await api.fetchBytes(build.ifc_url), name, `${sid}:${name}`);
+        current = step("Downloading the IFC", build.ifc_url);
+        const bytes = await api.fetchBytes(build.ifc_url);
+        current.done(`${name} · ${Math.round(bytes.length / 1024)} KB`);
+
+        current = step("Loading into the 3D viewer", "converting IFC to fragments");
+        const load = current;
+        let shown = -1;
+        const loaded = await showModel(bytes, name, `${sid}:${name}`, (p) => {
+          const pct = Math.round(p * 100);
+          if (pct >= shown + 10) { shown = pct; load.update(`converting IFC to fragments · ${pct}%`); }
+        });
+        current.done(`${loaded.levels} levels · ${loaded.elements} elements · ${loaded.triangles.toLocaleString()} triangles`);
+        current = null;
       }
-      update(sid, (s) => ({ ...patchRun(aid, { stage: "done" })(s), model: { name, url: build.ifc_url } }));
+      update(sid, (s) => ({ ...patchRun(aid, { stage: "done", endedAt: Date.now() })(s), model: { name, url: build!.ifc_url } }));
       return true;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      current?.fail(msg);
       setProgress(null);
-      update(sid, patchRun(aid, { stage: "error", error: msg }));
+      update(sid, patchRun(aid, { stage: "error", error: msg, endedAt: Date.now() }));
       platform.report({ status: "error", error: msg });
       return false;
     } finally {
@@ -251,6 +312,7 @@ export default function App() {
       if (select) await viewerRef.current!.selectFirstOf(select);
       if (smokeTab === "model" || smokeTab === "elements" || smokeTab === "data") setTab(smokeTab);
       if (smokeTab === "levels") setTreeOpen(true);
+      if (smokeTab === "trace") (document.querySelector(".reasoning-head") as HTMLElement | null)?.click();
       await new Promise((r) => setTimeout(r, 800));
       platform.report({
         status: "ready",

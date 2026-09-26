@@ -1,7 +1,8 @@
-import { Check, ChevronDown, ChevronUp, Code, Database, LoaderCircle, Sparkles, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Code, Database, Sparkles, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { Message, Run, Session } from "../state/sessions";
+import type { Message, Session } from "../state/sessions";
 import { Composer } from "./Composer";
+import { Reasoning } from "./Reasoning";
 
 interface Props {
   session: Session;
@@ -47,22 +48,16 @@ function UserBubble({ m }: { m: Message }) {
   return <div className="bubble">{m.text}</div>;
 }
 
-const STEPS: [Run["stage"], string][] = [
-  ["planning", "Interpreting the prompt"],
-  ["building", "Building IFC with IfcOpenShell"],
-  ["loading", "Loading the model"],
-];
-
 function AssistantMessage({ m }: { m: Message }) {
   const run = m.run;
   if (!run) return <div className="answer"><p>{m.text}</p></div>;
-  const idx = STEPS.findIndex(([s]) => s === run.stage);
 
   return (
     <div className="answer">
       {m.text && <p>{m.text}</p>}
+      <Reasoning run={run} />
 
-      {run.plan && (
+      {run.plan && !run.steps?.length && ( // older sessions without a live trace
         <Collapsible icon={<Sparkles size={16} />} title={`Interpreted with the ${run.plan.planner} planner`}>
           <ul className="notes">{run.plan.notes.map((n) => <li key={n}>{n}</li>)}</ul>
         </Collapsible>
@@ -71,17 +66,6 @@ function AssistantMessage({ m }: { m: Message }) {
         <Collapsible icon={<Code size={16} />} title="Structured BIM instructions">
           <pre className="code">{JSON.stringify(run.plan.spec, null, 2)}</pre>
         </Collapsible>
-      )}
-
-      {run.stage !== "done" && run.stage !== "error" && (
-        <ol className="progress">
-          {STEPS.map(([s, label], i) => (
-            <li key={s} className={i < idx ? "done" : i === idx ? "active" : ""}>
-              {i < idx ? <Check size={15} /> : i === idx ? <LoaderCircle size={15} className="spin" /> : <span className="dot-sm" />}
-              {label}
-            </li>
-          ))}
-        </ol>
       )}
 
       {run.build && (

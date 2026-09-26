@@ -8,6 +8,7 @@ from pathlib import Path
 import ifcopenshell
 import ifcopenshell.geom
 
+from agents.progress import NO_PROGRESS, Progress
 from ifc.openings import add_opening
 from ifc.project import create_project
 from ifc.roofs import add_roof
@@ -16,31 +17,54 @@ from ifc.walls import add_wall
 from schemas.bim import BuildingSpec, Column, Door, Roof, Slab, Space, Wall, Window
 
 BUILDERS = [  # order matters: openings need their host walls
-    (Wall, add_wall),
-    (Slab, add_slab),
-    (Space, add_space),
-    (Column, add_column),
-    (Roof, add_roof),
-    ((Door, Window), add_opening),
+    (Wall, add_wall, ("wall", "walls")),
+    (Slab, add_slab, ("slab", "slabs")),
+    (Space, add_space, ("room", "rooms")),
+    (Column, add_column, ("column", "columns")),
+    (Roof, add_roof, ("roof", "roofs")),
+    ((Door, Window), add_opening, ("door/window", "doors & windows")),
 ]
 
 
-def build_ifc(spec: BuildingSpec) -> ifcopenshell.file:
-    ctx = create_project(spec)
-    for kinds, build in BUILDERS:
-        for el in spec.elements:
-            if isinstance(el, kinds):
-                build(ctx, el)
+def build_ifc(spec: BuildingSpec, progress: Progress = NO_PROGRESS) -> ifcopenshell.file:
+    with progress.step("Setting up the IFC project", phase="build") as s:
+        ctx = create_project(spec)
+        s.detail = f"IfcProject → IfcSite → IfcBuilding · {len(spec.levels)} storeys · metres · IFC4"
+
+    # Build storey by storey so the model grows the way a building does. Doors and windows
+    # belong to their host wall's storey; roofs form their own final layer.
+    wall_level = {e.id: e.level for e in spec.elements if isinstance(e, Wall)}
+    def layer_of(el) -> str:
+        if isinstance(el, Roof):
+            return "roof"
+        return wall_level[el.wall] if isinstance(el, (Door, Window)) else el.level
+
+    layers = [(lv.id, lv.name, f"elevation {lv.elevation:g} m · {lv.height:g} m tall") for lv in spec.levels]
+    layers.append(("roof", "Roof", "on top of the storeys below"))
+    for layer_id, name, detail in layers:
+        items = [e for e in spec.elements if layer_of(e) == layer_id]
+        if not items:
+            continue
+        with progress.step(f"Building {name}", phase="build", detail=detail, layer=True) as lay:
+            for kinds, build, label in BUILDERS:
+                group = [e for e in items if isinstance(e, kinds)]
+                if not group:
+                    continue
+                with progress.step(f"{len(group)} {label[len(group) != 1]}", phase="build", parent=lay):
+                    for el in group:
+                        build(ctx, el)
+            lay.detail = f"{detail} · {len(items)} elements"
     return ctx.model
 
 
-def check_geometry(model: ifcopenshell.file) -> list[str]:
+def check_geometry(model: ifcopenshell.file, on_progress=None) -> list[str]:
     """Tessellate every product; return the ones that fail. Catches bad geometry before the viewer does."""
     settings = ifcopenshell.geom.settings()
     failures = []
-    for product in model.by_type("IfcProduct"):
-        if not product.Representation or product.is_a("IfcOpeningElement"):
-            continue
+    products = [p for p in model.by_type("IfcProduct") if p.Representation and not p.is_a("IfcOpeningElement")]
+    for i, product in enumerate(products):
+        if on_progress and i % 10 == 0:
+            on_progress(i, len(products))
         try:
             shape = ifcopenshell.geom.create_shape(settings, product)
             if not shape.geometry.verts:
@@ -62,11 +86,16 @@ def summarize(model: ifcopenshell.file) -> dict:
     }
 
 
-def write_ifc(spec: BuildingSpec, path: Path) -> dict:
-    model = build_ifc(spec)
-    failures = check_geometry(model)
-    if failures:
-        raise ValueError("geometry check failed: " + "; ".join(failures[:10]))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    model.write(str(path))
+def write_ifc(spec: BuildingSpec, path: Path, progress: Progress = NO_PROGRESS) -> dict:
+    model = build_ifc(spec, progress)
+    with progress.step("Checking geometry", phase="build", detail="tessellating every element with IfcOpenShell") as s:
+        failures = check_geometry(model, lambda i, n: s.update(f"tessellating {i}/{n} elements"))
+        if failures:
+            raise ValueError("geometry check failed: " + "; ".join(failures[:10]))
+        n = sum(1 for p in model.by_type("IfcProduct") if p.Representation and not p.is_a("IfcOpeningElement"))
+        s.detail = f"{n} elements tessellated, no failures"
+    with progress.step("Writing the IFC file", phase="build") as s:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        model.write(str(path))
+        s.detail = f"{path.name} · {path.stat().st_size / 1024:.0f} KB"
     return summarize(model)
