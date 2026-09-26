@@ -3,12 +3,28 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Content-Security-Policy"
-      content="default-src 'self' app:; script-src 'self' 'wasm-unsafe-eval' app:; worker-src 'self' blob: app:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' app: blob: data: http://127.0.0.1:* http://localhost:* ws://localhost:*" />
-    <title>Generative BIM</title>
+    <title>NoCoast AEC</title>
+    <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <canvas id="viewport"></canvas>
+
+    <div id="topbar">
+      <span id="project"></span>
+      <button id="undo" disabled>Undo</button>
+      <a id="download" hidden>Download IFC</a>
+      <label class="btn">Import IFC<input id="import" type="file" accept=".ifc" hidden /></label>
+      <button id="new">New project</button>
+      <span id="picked"></span>
+    </div>
+
+    <div id="prompt">
+      <textarea id="text" rows="2" placeholder="Describe a building, or a change to the current one…"></textarea>
+      <button id="send">Send</button>
+      <div id="status"></div>
+      <pre id="notes"></pre>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

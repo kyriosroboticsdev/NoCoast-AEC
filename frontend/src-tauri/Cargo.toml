@@ -1,0 +1,15 @@
+[package]
+name = "nocoast-aec"
+version = "0.2.0"
+description = "NoCoast AEC desktop shell: web-ifc viewer + prompt, launches the Python backend"
+edition = "2021"
+
+[lib]
+name = "nocoast_aec_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }

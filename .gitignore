@@ -7,15 +7,19 @@ __pycache__/
 # Node / frontend
 node_modules/
 dist/
-dist-electron/
-release/
+frontend/public/wasm/
 
-# Generated output
+# Tauri
+frontend/src-tauri/target/
+frontend/src-tauri/gen/
+
+# Generated output (IFC files, SQLite db)
 backend/output/
 
 # Env / secrets
 .env
 .env.*
+!.env.example
 
 # OS / editor
 .DS_Store

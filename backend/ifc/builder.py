@@ -8,6 +8,7 @@ from pathlib import Path
 import ifcopenshell
 import ifcopenshell.geom
 
+from core.guids import GuidMap, ensure_guids
 from ifc.openings import add_opening
 from ifc.project import create_project
 from ifc.roofs import add_roof
@@ -25,8 +26,8 @@ BUILDERS = [  # order matters: openings need their host walls
 ]
 
 
-def build_ifc(spec: BuildingSpec) -> ifcopenshell.file:
-    ctx = create_project(spec)
+def build_ifc(spec: BuildingSpec, guids: GuidMap | None = None) -> ifcopenshell.file:
+    ctx = create_project(spec, guids)
     for kinds, build in BUILDERS:
         for el in spec.elements:
             if isinstance(el, kinds):
@@ -62,11 +63,22 @@ def summarize(model: ifcopenshell.file) -> dict:
     }
 
 
-def write_ifc(spec: BuildingSpec, path: Path) -> dict:
-    model = build_ifc(spec)
+class GeometryError(ValueError):
+    pass
+
+
+def compile_ifc(spec: BuildingSpec, guids: GuidMap | None = None) -> tuple[ifcopenshell.file, GuidMap]:
+    """Build and geometry-check. Returns the model and the (possibly extended) guid map."""
+    guids = ensure_guids(spec, guids)
+    model = build_ifc(spec, guids)
     failures = check_geometry(model)
     if failures:
-        raise ValueError("geometry check failed: " + "; ".join(failures[:10]))
+        raise GeometryError("geometry check failed: " + "; ".join(failures[:10]))
+    return model, guids
+
+
+def write_ifc(spec: BuildingSpec, path: Path, guids: GuidMap | None = None) -> dict:
+    model, _ = compile_ifc(spec, guids)
     path.parent.mkdir(parents=True, exist_ok=True)
     model.write(str(path))
     return summarize(model)

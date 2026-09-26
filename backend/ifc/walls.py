@@ -20,13 +20,12 @@ def wall_matrix(ctx: BuildContext, wall: Wall):
 def add_wall(ctx: BuildContext, wall: Wall) -> None:
     height = wall.height or ctx.level(wall.level).height
     element = ifcopenshell.api.root.create_entity(ctx.model, ifc_class="IfcWall", name=wall.name or wall.id)
-    element.Tag = wall.id
     rep = ifcopenshell.api.geometry.add_wall_representation(
         ctx.model, context=ctx.body, length=wall.length, height=height,
         thickness=wall.thickness, offset=-wall.thickness / 2,
     )
     finish_element(
         ctx, element, rep, wall_matrix(ctx, wall), "Wall", wall.level,
-        pset=("Pset_WallCommon", {"IsExternal": wall.external, "LoadBearing": wall.external}),
+        pset=("Pset_WallCommon", {"IsExternal": wall.external, "LoadBearing": wall.external}), item=wall,
     )
     ctx.walls[wall.id] = element

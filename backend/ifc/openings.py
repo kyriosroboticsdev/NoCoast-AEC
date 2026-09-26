@@ -6,6 +6,7 @@ import ifcopenshell.api.feature
 import ifcopenshell.api.geometry
 import ifcopenshell.api.root
 
+from core.guids import key_for_opening
 from ifc.project import BuildContext, finish_element, translate
 from ifc.walls import wall_matrix
 from schemas.bim import Door, Wall, Window
@@ -23,6 +24,7 @@ def add_opening(ctx: BuildContext, item: Door | Window) -> None:
     frame = wall_matrix(ctx, wall)
 
     opening = ifcopenshell.api.root.create_entity(m, ifc_class="IfcOpeningElement", name=f"{item.id} opening")
+    opening.GlobalId = ctx.guids[key_for_opening(item.id)]
     opening_rep = ifcopenshell.api.geometry.add_wall_representation(
         m, context=ctx.body, length=item.width, height=item.height, thickness=t + 2 * CLEARANCE
     )
@@ -48,7 +50,6 @@ def add_opening(ctx: BuildContext, item: Door | Window) -> None:
             lining_properties={"LiningDepth": t, "LiningThickness": 0.05}, unit_scale=1.0,
         )
         kind, pset = "Window", ("Pset_WindowCommon", {"IsExternal": wall.external})
-    element.Tag = item.id
 
-    finish_element(ctx, element, rep, frame @ translate(item.offset, -t / 2, sill), kind, level, pset=pset)
+    finish_element(ctx, element, rep, frame @ translate(item.offset, -t / 2, sill), kind, level, pset=pset, item=item)
     ifcopenshell.api.feature.add_filling(m, opening=opening, element=element)

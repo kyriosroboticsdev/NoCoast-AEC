@@ -3,5 +3,7 @@ uvicorn[standard]>=0.30
 pydantic>=2.7
 ifcopenshell>=0.8.5
 numpy
-pytest
+python-dotenv
+python-multipart
 httpx
+pytest
