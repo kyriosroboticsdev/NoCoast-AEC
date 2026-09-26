@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { IfcViewerProvider } from "@nocoast/ifc-viewer";
 import * as api from "./api/client";
 import { Assistant } from "./components/Assistant";
+import { ExportDialog } from "./components/ExportDialog";
 import { Home } from "./components/Home";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
@@ -67,6 +68,7 @@ export default function App() {
   const [assistantOpen, setAssistantOpen] = useState(true);
   const [treeOpen, setTreeOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("model");
+  const [exporting, setExporting] = useState<api.Version | null>(null);
   const localFiles = useRef(new Map<string, Uint8Array>()); // session id → bytes of a file opened from disk
 
   useEffect(() => {
@@ -380,6 +382,16 @@ export default function App() {
     ?? (!loaded && active ? "No model in this session yet." : null);
   const v = viewerRef.current;
 
+  // The version shown in the workspace, when it is one of this session's project versions (not a file
+  // opened from disk). Export then goes through the validated, stamped export; otherwise it saves as is.
+  const shownNumber = Number(loaded?.name.match(/^v(\d+)\.ifc$/)?.[1] ?? NaN);
+  const shownVersion = active?.project && loaded?.key.startsWith(`${active.id}:`)
+    ? active.messages.map((m) => m.run?.version).find((ver) => ver?.number === shownNumber) ?? null
+    : null;
+  const onExport = shownVersion
+    ? () => setExporting(shownVersion)
+    : loaded ? () => platform.saveIfc(loaded.name, loaded.bytes) : null;
+
   return (
     <IfcViewerProvider runtime={runtime}>
     <div className="app">
@@ -392,7 +404,7 @@ export default function App() {
         <TopBar title={active?.title ?? null} sidebarOpen={sidebarOpen} assistantOpen={assistantOpen}
           showAssistantToggle={!!active} onHome={() => setActiveId(null)}
           onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} onToggleAssistant={() => setAssistantOpen(!assistantOpen)}
-          onExport={loaded ? () => platform.saveIfc(loaded.name, loaded.bytes) : null}
+          onExport={onExport}
           onDelete={active ? () => removeSession(active.id) : null} />
         <div className="content">
           <Workspace hostRef={hostRef} viewer={viewerReady ? v : null}
@@ -418,6 +430,9 @@ export default function App() {
           )}
         </div>
       </div>
+      {exporting && (
+        <ExportDialog projectId={exporting.project_id} version={exporting} onClose={() => setExporting(null)} />
+      )}
     </div>
     </IfcViewerProvider>
   );

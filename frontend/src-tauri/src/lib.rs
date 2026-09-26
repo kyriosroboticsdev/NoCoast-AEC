@@ -128,6 +128,14 @@ fn read_ifc(path: PathBuf) -> Result<Response, String> {
     std::fs::read(&path).map(Response::new).map_err(|e| e.to_string())
 }
 
+/// Saving also allows `.zip`, for the export bundle (IFC + snapshots + reports).
+fn check_save_path(path: &Path) -> Result<(), String> {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some(ext) if ext.eq_ignore_ascii_case("ifc") || ext.eq_ignore_ascii_case("zip") => Ok(()),
+        _ => Err(format!("can only save .ifc or .zip files: {}", path.display())),
+    }
+}
+
 /// Write raw bytes to the path chosen in the save dialog (passed in the `path` header).
 #[tauri::command]
 fn write_ifc(request: Request<'_>) -> Result<(), String> {
@@ -137,7 +145,7 @@ fn write_ifc(request: Request<'_>) -> Result<(), String> {
         .and_then(|v| v.to_str().ok())
         .map(PathBuf::from)
         .ok_or("missing path header")?;
-    check_ifc_path(&path)?;
+    check_save_path(&path)?;
     let InvokeBody::Raw(bytes) = request.body() else {
         return Err("expected raw bytes".into());
     };

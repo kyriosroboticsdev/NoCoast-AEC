@@ -65,6 +65,7 @@ backend/
                         fixtures/railings/beams, geometry helpers; lifter (IFC → spec + design)
   store/db.py           SQLite projects/versions (spec + design + checks); IFC files under backend/output/projects/<id>/vN.ifc
   api/routes.py         HTTP API; api/sse.py streams pipeline progress as Server-Sent Events
+  export/               final deliverable: validate, stamp provenance, zip bundle (route: api/export.py)
   agents/               stateless planners for /plan and /generate (template regex → steps, llm)
   tests/                pytest; runs entirely on the mock LLM; tests/evals/prompts.json = accuracy set
   tools/eval.py         score the configured model on the evaluation set
@@ -413,12 +414,32 @@ History is linear; `revert/{n}` appends a copy of *n*; `base_version` gives opti
 | `GET /projects/{id}/versions/{n}/ifc` | | the IFC file |
 | `GET /projects/{id}/versions/{n}/spec` | | `{version, spec, design, guids}` |
 | `GET /projects/{id}/versions/{n}/context` | | text — exactly what the LLM sees when editing |
+| `GET /projects/{id}/versions/{n}/validate` | `?thorough=true` adds schema rules | validation report |
+| `POST /projects/{id}/versions/{n}/export` | multipart `options` (JSON) + `snapshots` (PNG) | stamped `.ifc` or `.zip` bundle |
 | `GET /projects/{id}/versions/{n}/slices`, `…/gcode` | `?layer_height=` | horizontal slices of the compiled IFC in construction-phase order; slicer-style preview G-code (`slicer/`) |
 | `POST /projects/{id}/versions/{n}/construction`, `GET …/construction/{job}` | | live-build job: one IFC per element in construction order, polled by the viewer (`core/construction.py`) |
 | `POST /plan`, `/build`, `/generate` | | stateless one-shots (scripts, tests) |
 
 SSE events: `event: <stage>` + `data: {"seq", "t", "stage", "message", "data"}`, stages as in §4.5.
 `done.data` is the version record incl. `ifc_url` and `checks`.
+
+**Export** (`backend/export/`, route in `api/export.py`) turns a version into a deliverable. The stored
+version is never modified; every export works on a fresh copy.
+
+1. **Validate.** IfcOpenShell schema validation, plus the schema's WHERE rules when `thorough` (a few
+   seconds). Structural checks: one project with units, building storeys, unique GlobalIds, and
+   elements with geometry placed in a storey. Errors block export when `strict` (the default) and the
+   route returns 422 with the report. Warnings never block.
+2. **Stamp.** The STEP header gets author, organization, originating system and file name.
+   `IfcProject` gets the project name and a `NoCoast_Export` property set: export time, source project
+   and version, validation status, and the prompt history that produced this version (walked through
+   the version parents). GlobalIds are unchanged. The stamped file is validated again before it is sent.
+3. **Bundle** (`format: "zip"`): `<name>-vN/` containing the IFC, a `README.md` (counts, checks, issues,
+   prompt history, snapshots), `validation.json`, `snapshots/*.png` rendered by the app, and a
+   `manifest.json` with every file's SHA-256.
+
+`options`: `{format: "ifc"|"zip", project_name?, author?, organization?, strict = true, thorough = true}`.
+The file name comes back in `X-Export-Filename`, and `X-Validation-Status` is `passed` or `failed`.
 
 ### 4.13 Frontend
 

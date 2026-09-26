@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 import config
+from api import export
 from api.routes import OUTPUT_DIR, router
 from logsetup import log
 
@@ -16,8 +17,10 @@ log.info("config: provider=%s model=%r base_url=%r output=%s", config.LLM_PROVID
          config.LLM_BASE_URL or None, OUTPUT_DIR)
 
 app = FastAPI(title="NoCoast generative BIM")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+                   expose_headers=export.EXPOSED_HEADERS)
 app.include_router(router)
+app.include_router(export.router)
 app.mount("/models", StaticFiles(directory=OUTPUT_DIR), name="models")
 
 if __name__ == "__main__":

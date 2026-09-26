@@ -163,3 +163,62 @@ export async function info(): Promise<HealthInfo> {
 export async function health(): Promise<boolean> {
   return (await info()).ok;
 }
+
+// --- Final-deliverable export ------------------------------------------------
+
+export interface ValidationIssue { level: "error" | "warning"; code: string; message: string; count: number }
+export interface ValidationReport {
+  ok: boolean;
+  schema_name: string;
+  thorough: boolean;
+  seconds: number;
+  checks: { name: string; status: "pass" | "warn" | "fail" }[];
+  issues: ValidationIssue[];
+  counts: Record<string, number>;
+}
+
+export interface ExportOptions {
+  format: "ifc" | "zip";
+  project_name?: string;
+  author?: string;
+  organization?: string;
+  /** Refuse to export a version that fails validation (default true on the backend). */
+  strict?: boolean;
+  /** Include the schema's WHERE rules; takes a few seconds. */
+  thorough?: boolean;
+}
+
+export interface ExportResult { bytes: Uint8Array; filename: string; validation: "passed" | "failed" }
+
+/** Thrown when strict export refuses a version; carries the report that explains why. */
+export class ExportRefused extends Error {
+  constructor(message: string, readonly report: ValidationReport) {
+    super(message);
+  }
+}
+
+export const validateVersion = (id: string, n: number, thorough = false) =>
+  getJson<ValidationReport>(`/projects/${id}/versions/${n}/validate?thorough=${thorough}`);
+
+export async function exportVersion(
+  id: string,
+  n: number,
+  options: ExportOptions,
+  snapshots: { name: string; png: Uint8Array }[] = [],
+): Promise<ExportResult> {
+  const form = new FormData();
+  form.append("options", JSON.stringify(options));
+  for (const s of snapshots) form.append("snapshots", new Blob([s.png as BlobPart], { type: "image/png" }), s.name);
+  const res = await fetch(`${BACKEND}/projects/${id}/versions/${n}/export`, { method: "POST", body: form });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    const detail = body?.detail;
+    if (res.status === 422 && detail?.report) throw new ExportRefused(detail.message, detail.report);
+    throw new Error(typeof detail === "string" ? detail : `export failed: ${res.status}`);
+  }
+  return {
+    bytes: new Uint8Array(await res.arrayBuffer()),
+    filename: res.headers.get("X-Export-Filename") ?? `export-v${n}.${options.format}`,
+    validation: res.headers.get("X-Validation-Status") === "failed" ? "failed" : "passed",
+  };
+}
