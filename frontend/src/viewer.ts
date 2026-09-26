@@ -78,8 +78,9 @@ export class Viewer {
     this.camera.updateProjectionMatrix();
   }
 
-  /** Replace the whole model. Small models parse in milliseconds, so incremental mesh patching is deferred (see README). */
-  async load(data: Uint8Array): Promise<void> {
+  /** Replace the whole model. Small models parse in milliseconds, so incremental mesh patching is deferred (see README).
+   *  With `keepCamera` the current view is left alone, so previews and new versions grow in place. */
+  async load(data: Uint8Array, keepCamera = false): Promise<void> {
     await this.ready;
     this.clear();
     const modelID = this.ifc.OpenModel(data, { COORDINATE_TO_ORIGIN: false });
@@ -119,7 +120,8 @@ export class Viewer {
     });
     console.log(`[nocoast:viewer] model ${modelID}: ${products} products, ${geometries} meshes`);
     if (!geometries) console.warn("[nocoast:viewer] no geometry produced — is the IFC empty or unsupported?");
-    this.frame();
+    if (keepCamera) this.root.updateMatrixWorld(true);
+    else this.frame();
   }
 
   /** Reveal the model built up to (and including) `z` — the layer-by-layer construction walkthrough. Pass `Infinity` for everything. */

@@ -23,18 +23,20 @@
     <aside id="steps">
       <div id="steps-head">
         <span>Steps</span>
-        <label><input id="steps-json" type="checkbox" /> show model output</label>
+        <span class="toggles">
+          <label title="Every event with stage, timing and raw details"><input id="steps-verbose" type="checkbox" /> verbose</label>
+          <label><input id="steps-json" type="checkbox" /> model output</label>
+        </span>
       </div>
       <ol id="steps-list"></ol>
       <pre id="steps-text" hidden></pre>
     </aside>
 
     <div id="dock">
-      <div id="layerbar">
-        <button id="layerPlay" disabled>▶ Play</button>
+      <div id="layerbar" title="Cross-section: hide everything above a height">
+        <span class="lbl">section</span>
         <input id="layerSlider" type="range" min="0" max="0" value="0" disabled />
         <span id="layerLabel"></span>
-        <button id="liveBuild" disabled>⏺ Live build</button>
       </div>
 
       <div id="prompt">

@@ -14,6 +14,16 @@ html, body { margin: 0; height: 100%; background: #0f1115; color: #e6e6e6; font:
 #steps { position: fixed; top: 8px; right: 8px; bottom: 140px; width: 372px; display: flex; flex-direction: column; background: rgba(20, 24, 32, 0.88); border: 1px solid #2a2f3a; border-radius: 6px; font-size: 12px; }
 #steps-head { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; border-bottom: 1px solid #2a2f3a; font-weight: 600; }
 #steps-head label { font-weight: 400; opacity: 0.8; }
+#steps-head .toggles { display: flex; gap: 10px; }
+/* Friendly mode: assistant-style lines, no stage/timing columns */
+#steps-list.friendly li { padding: 4px 10px; line-height: 1.45; }
+#steps-list.friendly li.muted { opacity: 0.6; font-style: italic; }
+#steps-list.friendly li .detail { margin-left: 12px; font-family: inherit; font-size: 11.5px; opacity: 0.75; }
+#steps-list.friendly li.step { border-left-color: transparent; }
+#steps-list.friendly li.step::before { content: "· "; opacity: 0.5; }
+#steps-list.friendly li.step.bad::before { content: "✗ "; opacity: 0.9; }
+#steps-list.friendly li.step.bad { border-left-color: transparent; }
+#steps-list.friendly li.done { font-weight: 600; }
 #steps-list { flex: 1; margin: 0; padding: 4px 0; overflow-y: auto; list-style: none; }
 #steps-list li { padding: 3px 10px; border-left: 3px solid transparent; white-space: pre-wrap; word-break: break-word; }
 #steps-list li .t { display: inline-block; width: 46px; opacity: 0.55; font-family: ui-monospace, monospace; }
@@ -30,11 +40,13 @@ html, body { margin: 0; height: 100%; background: #0f1115; color: #e6e6e6; font:
 #steps-list li.stream { opacity: 0.85; }
 #steps-text { margin: 0; max-height: 40%; overflow: auto; padding: 8px 10px; border-top: 1px solid #2a2f3a; font: 11px/1.35 ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; color: #b9c2d0; }
 
-#dock { position: fixed; left: 8px; right: 8px; bottom: 8px; display: flex; flex-direction: column; gap: 6px; }
+#dock { position: fixed; left: 8px; right: 388px; bottom: 8px; display: flex; flex-direction: column; gap: 4px; }
 
-#layerbar { display: flex; gap: 8px; align-items: center; background: #1a1d24; border: 1px solid #333; border-radius: 4px; padding: 6px 10px; }
-#layerbar input[type="range"] { flex: 1; }
-#layerLabel { min-width: 10em; opacity: 0.8; font-family: ui-monospace, monospace; }
+/* Cross-section slider: one slim line above the prompt */
+#layerbar { display: flex; gap: 8px; align-items: center; height: 16px; font-size: 11px; opacity: 0.8; padding: 0 2px; }
+#layerbar .lbl { opacity: 0.7; }
+#layerbar input[type="range"] { flex: 1; height: 12px; margin: 0; }
+#layerLabel { min-width: 7em; font-family: ui-monospace, monospace; }
 
 #prompt { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
 #text { grid-column: 1; resize: vertical; background: #1a1d24; color: inherit; border: 1px solid #333; border-radius: 4px; padding: 8px; font: inherit; }

@@ -298,9 +298,13 @@ unsupported items flagged), `build` (which round and why: rejected steps / unmet
 `step` (one per step: applied with its effect, or rejected with the reason and the raw step), `partial`
 (diff against the previous preview, rooms per level, counts, compile time, how many elements were
 re-checked), `verify` (every requirement with met/unmet/unsupported and the detail), `compile`, `done`,
-`error`. The UI renders these as a timeline on the right; preview rows are clickable to re-show any
-intermediate render, an overlay says what the viewer is showing, a checkbox reveals the raw model output,
-and the notes under the prompt list unsupported / unmet requirements for the version.
+`error`. The UI renders these on the right in one of two modes: **friendly** (default) reads like an assistant
+thinking aloud ("I understood 6 things to build", "Adding the Kitchen on the ground floor (4 × 5 m)",
+"Skipped: window on the north wall of the Kitchen — that side is shared with the Hall", "Checked the result:
+15 of 16 requirements met"); **verbose** shows every event with stage, timing, raw steps and preview rows
+(clickable to re-show any intermediate render). A second checkbox reveals the raw model output, an overlay says
+what the viewer is showing, and the notes under the prompt list unsupported / unmet requirements. The camera is
+framed once per project and then kept, so previews and versions grow in place.
 
 ### 4.6 BuildingSpec — the geometric IR
 
@@ -416,9 +420,9 @@ Vanilla TypeScript + Vite. `viewer.ts` opens the IFC bytes with `web-ifc` (`IfcA
 and frames the model. Clicking an element shows `IfcType <spec id> <GlobalId>`. After every preview and
 every accepted version the whole IFC is reloaded (milliseconds for a house). `main.ts` keeps one project
 id in `localStorage` (`?project=<id>` deep-links another, `?prompt=…` sends a prompt on load), renders
-the step log, and offers Undo, Import IFC and Download IFC. A layer slider / Play button sweeps a clipping plane
-through the finished model along the server-computed slices, and *Live build* replays a version element by element
-in construction order from the backend job. The Tauri shell (`src-tauri/`) spawns
+the step log, and offers Undo, Import IFC and Download IFC. A slim section slider above the prompt sweeps a
+clipping plane through the finished model along the server-computed slices (the live-build endpoints exist in
+the backend but have no UI). The Tauri shell (`src-tauri/`) spawns
 `python main.py` on startup (skip with `BIM_NO_BACKEND=1`) and kills it on exit.
 
 ## 4.14 Troubleshooting
