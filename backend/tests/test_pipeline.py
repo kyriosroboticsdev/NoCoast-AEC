@@ -97,3 +97,24 @@ def test_build_new_element_kinds():
     bad = spec.model_dump()
     bad["elements"][1]["outline"] = [[0, 0], [8, 0], [8, 6], [4, 6], [4, 3], [0, 3]]
     assert client.post("/build", json={"spec": bad}).status_code == 422  # gable needs a rectangle
+
+
+def test_focus_describes_selection_and_mock_acts_on_it(tmp_path):
+    from core.context import describe_focus
+    from schemas.design import Design, LevelDef, RoomDef, DoorDef
+
+    d = Design(levels=[LevelDef(id="L1")], rooms=[RoomDef(id="hall", name="Hall", level="L1", kind="hall", rect=(0, 0, 4, 6)),
+                                                RoomDef(id="kitchen", name="Kitchen", level="L1", kind="kitchen", rect=(4, 0, 4, 6))],
+               doors=[DoorDef(id="door-kitchen-hall", room="kitchen", to="hall")])
+    assert describe_focus(d, "L1-wall-hall-W") == "the west exterior wall of the Hall (L1) (wall id L1-wall-hall-W; side=W)"
+    assert describe_focus(d, "L1-wall-hall+kitchen").startswith("the partition wall between the Hall (L1) and the Kitchen (L1)")
+    assert describe_focus(d, "L1-space-kitchen") == "the room the Kitchen (L1) (room id kitchen)"
+    assert describe_focus(d, "door-kitchen-hall") == "the door door-kitchen-hall of the Kitchen (L1) to the Hall (L1)"
+    assert describe_focus(d, "L1-floor") == "the floor slab of level L1"
+    assert describe_focus(d, "something-else") == "the element something-else"
+
+    from llm.mock import MockLLM
+    steps = MockLLM()._edit("add a window", d, describe_focus(d, "L1-wall-hall-W"))
+    assert steps == [{"step": "window", "room": "hall", "side": "W", "kind": "standard"}]
+    steps = MockLLM()._edit("remove this", d, describe_focus(d, "door-kitchen-hall"))
+    assert steps == [{"step": "remove", "id": "door-kitchen-hall"}]

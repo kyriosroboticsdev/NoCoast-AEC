@@ -9,9 +9,15 @@ export interface Picked {
   expressID: number;
   type: string;
   name: string;
-  tag: string;
+  tag: string; // spec element id (the IFC Tag, or the Name for spaces)
   globalId: string;
+  point: { x: number; y: number; z: number }; // hit point in IFC coordinates (metres, z up)
 }
+
+export interface PropertySet { name: string; props: [string, string][] }
+
+const HIGHLIGHT = new THREE.Color(0x2f6bff);
+const tagOf = (line: Record<string, { value?: string } | undefined>) => line.Tag?.value ?? (line.LongName ? line.Name?.value ?? "" : "");
 
 /** One building storey as read from the IFC: its elevation and the top of its walls (both in metres, three.js Y). */
 export interface Storey { id: string; name: string; elevation: number; top: number }
@@ -100,7 +106,6 @@ export class Viewer {
     const previous = this.byGuid;
     const old = this.live();
     if (this.modelID !== null) this.ifc.CloseModel(this.modelID);
-    this.onPick(null);
     const modelID = this.ifc.OpenModel(data, { COORDINATE_TO_ORIGIN: false });
     this.modelID = modelID;
     this.byGuid = new Map();
@@ -138,7 +143,9 @@ export class Viewer {
         m.userData.expressID = mesh.expressID;
         m.userData.typeCode = typeCode;
         m.userData.guid = guid;
+        m.userData.tag = tagOf(line);
         m.userData.opacity = w;
+        if (this.highlighted && m.userData.tag === this.highlighted) this.applyHighlight(m, true);
         this.root.add(m);
         const list = this.byGuid.get(guid);
         if (list) list.push(m); else this.byGuid.set(guid, [m]);
@@ -204,6 +211,63 @@ export class Viewer {
     this.box.makeEmpty();
     const bb = new THREE.Box3();
     for (const m of this.live()) this.box.union(bb.setFromObject(m));
+  }
+
+  private highlighted: string | null = null;
+
+  /** Tint every mesh of the element with this spec id (survives reloads); null clears. */
+  highlight(tag: string | null) {
+    if (this.highlighted) for (const m of this.live()) if (m.userData.tag === this.highlighted) this.applyHighlight(m, false);
+    this.highlighted = tag;
+    if (tag) for (const m of this.live()) if (m.userData.tag === tag) this.applyHighlight(m, true);
+  }
+
+  private applyHighlight(m: THREE.Mesh, on: boolean) {
+    const mat = m.material as THREE.MeshLambertMaterial;
+    const base = m.userData.opacity as number;
+    if (on) {
+      mat.emissive.copy(HIGHLIGHT);
+      mat.emissiveIntensity = base < 0.5 ? 0.9 : 0.45;
+      if (base < 0.5) { mat.opacity = 0.45; mat.transparent = true; } // spaces: make the selected room visible
+    } else {
+      mat.emissive.setHex(0);
+      mat.emissiveIntensity = 1;
+      if (base < 0.5) mat.opacity = base;
+    }
+    mat.needsUpdate = true;
+  }
+
+  /** Property sets of an element (IfcPropertySet → [name, value] pairs), plus its direct attributes as a first set. */
+  async properties(expressID: number): Promise<PropertySet[]> {
+    if (this.modelID === null) return [];
+    const val = (v: unknown): string => {
+      if (v === null || v === undefined) return "";
+      if (typeof v === "object" && v !== null && "value" in (v as Record<string, unknown>)) return val((v as { value: unknown }).value);
+      if (Array.isArray(v)) return v.map(val).join(", ");
+      return String(v);
+    };
+    const out: PropertySet[] = [];
+    const line = this.ifc.GetLine(this.modelID, expressID) as Record<string, unknown>;
+    const attrs: [string, string][] = [];
+    for (const k of ["GlobalId", "Name", "Tag", "ObjectType", "PredefinedType", "Description", "LongName"]) {
+      const v = val(line[k]);
+      if (v) attrs.push([k, v]);
+    }
+    out.push({ name: this.ifc.GetNameFromTypeCode(this.ifc.GetLineType(this.modelID, expressID)), props: attrs });
+    try {
+      const sets = (await this.ifc.properties.getPropertySets(this.modelID, expressID, true)) as Record<string, unknown>[];
+      for (const ps of sets) {
+        const props: [string, string][] = [];
+        for (const p of (ps.HasProperties as Record<string, unknown>[] | undefined) ?? []) {
+          const name = val(p.Name);
+          if (name) props.push([name, val(p.NominalValue ?? p.Value ?? p.EnumerationValues)]);
+        }
+        if (props.length) out.push({ name: val(ps.Name) || "properties", props });
+      }
+    } catch (err) {
+      console.warn("[nocoast:viewer] property sets unavailable:", err);
+    }
+    return out;
   }
 
   /** Vertical extent of the loaded model in metres, or null when nothing is loaded. */
@@ -276,18 +340,23 @@ export class Viewer {
     if (this.modelID === null) return;
     const ndc = new THREE.Vector2((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
-    // Spaces are translucent volumes that would otherwise swallow every click.
-    const hits = this.raycaster.intersectObjects(this.live()).filter((h) => (h.object.userData.opacity as number) > 0.5);
+    // Spaces are translucent volumes that would swallow every click, and geometry above the section cut is
+    // invisible (the raycaster ignores clipping planes), so both are skipped.
+    const hits = this.raycaster.intersectObjects(this.live())
+      .filter((h) => (h.object.userData.opacity as number) > 0.5 && h.point.y <= this.clipPlane.constant);
     const hit = hits[0];
     if (!hit) return this.onPick(null);
     const id = hit.object.userData.expressID as number;
     const line = this.ifc.GetLine(this.modelID, id) as Record<string, { value?: string } | undefined>;
+    // web-ifc relabels IFC (x, y, z-up) to three.js (x, z, -y): undo it so the point is in plan coordinates.
+    const p = hit.point;
     this.onPick({
       expressID: id,
       type: this.ifc.GetNameFromTypeCode(this.ifc.GetLineType(this.modelID, id)),
       name: line.Name?.value ?? line.LongName?.value ?? "",
-      tag: line.Tag?.value ?? (line.LongName ? line.Name?.value ?? "" : ""),
+      tag: tagOf(line),
       globalId: line.GlobalId?.value ?? "",
+      point: { x: p.x, y: -p.z, z: p.y },
     });
   }
 }

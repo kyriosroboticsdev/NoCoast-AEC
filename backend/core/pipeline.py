@@ -23,7 +23,7 @@ from pydantic import ValidationError
 
 import config
 from core.checks import CheckResult, check, score, unmet_lines
-from core.context import describe_design
+from core.context import describe_design, describe_focus
 from core.derive import DesignError, analyze, derive
 from core.guids import GuidMap, prune_guids
 from core.ops import OpError, apply_ops
@@ -97,12 +97,12 @@ def _call(llm: LLM, request: LLMRequest, emit: Emit = _noop, stream: StepStream 
 
 # --- requirements -------------------------------------------------------------
 
-def request_requirements(llm: LLM, prompt: str, emit: Emit = _noop) -> RequirementsResponse:
+def request_requirements(llm: LLM, prompt: str, emit: Emit = _noop, focus: str | None = None) -> RequirementsResponse:
     errors: list[str] = []
     for attempt in range(config.MAX_REPAIRS + 1):
         emit("requirements", "extracting a checklist from the request" if not attempt else f"repair attempt {attempt}", {"errors": errors})
-        raw = _call(llm, LLMRequest(system=REQUIREMENTS_SYSTEM, user=requirements_user_message(prompt, errors),
-                                    schema=REQUIREMENTS_SCHEMA, schema_name="requirements", meta={"prompt": prompt}), emit)
+        raw = _call(llm, LLMRequest(system=REQUIREMENTS_SYSTEM, user=requirements_user_message(prompt, errors, focus),
+                                    schema=REQUIREMENTS_SCHEMA, schema_name="requirements", meta={"prompt": prompt, "focus": focus}), emit)
         try:
             resp = RequirementsResponse.model_validate(raw)
             unsupported = [r.text for r in resp.requirements if not r.supported]
@@ -125,7 +125,7 @@ def checklist_lines(reqs: list[Requirement]) -> list[str]:
 
 def build_round(llm: LLM, prompt: str, design: Design, checklist: list[str], emit: Emit, *, guids: GuidMap,
                 first_index: int, problems: list[str] | None = None, unmet: list[str] | None = None,
-                editing: bool = False) -> StepStream:
+                editing: bool = False, focus: str | None = None) -> StepStream:
     context = None
     if design.rooms or editing or problems or unmet:
         try:
@@ -135,8 +135,9 @@ def build_round(llm: LLM, prompt: str, design: Design, checklist: list[str], emi
     what = "fixing rejected steps" if problems else "fixing unmet requirements" if unmet else "editing the design" if editing else "building the design"
     emit("build", f"{what}: asking the model for steps", {"problems": problems or [], "unmet": unmet or []})
     stream = StepStream(emit, design, guids, first_index)
-    meta = {"prompt": prompt, "design": design.model_dump(mode="json"), "problems": problems or [], "unmet": unmet or [], "editing": editing}
-    raw = _call(llm, LLMRequest(system=BUILD_SYSTEM, user=build_user_message(prompt, checklist, context, problems, unmet),
+    meta = {"prompt": prompt, "design": design.model_dump(mode="json"), "problems": problems or [], "unmet": unmet or [],
+            "editing": editing, "focus": focus}
+    raw = _call(llm, LLMRequest(system=BUILD_SYSTEM, user=build_user_message(prompt, checklist, context, problems, unmet, focus),
                                 schema=STEPS_SCHEMA, schema_name="build", meta=meta), emit, stream)
     # Anything the streaming parser did not see (non-streaming adapters, or a reply that only parsed whole).
     try:
@@ -176,11 +177,11 @@ def _persist(store: Store, project_id: str, spec: BuildingSpec, guids: GuidMap, 
 
 
 def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_version: int | None = None,
-               emit: Emit = _noop) -> VersionData:
+               emit: Emit = _noop, focus: str | None = None) -> VersionData:
     if not prompt.strip():
         raise PipelineError("prompt is empty")
     head = store.head(project_id)
-    log.info("project %s: prompt %r (head=%s, base=%s, llm=%s)", project_id, prompt[:120], head.number if head else None, base_version, llm.name)
+    log.info("project %s: prompt %r (head=%s, base=%s, llm=%s, focus=%s)", project_id, prompt[:120], head.number if head else None, base_version, llm.name, focus)
     if base_version is not None and head is not None and head.number != base_version:
         raise ConflictError(f"project is at version {head.number}, you edited version {base_version}")
     editing = head is not None and head.design is not None
@@ -189,13 +190,17 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
     notes: list[str] = []
     if head is not None and not editing:
         notes.append("the previous version had no design record (older pipeline); the model started from an empty design")
+    # A viewer selection travels as a spec element id; the model sees it in words, with the ids it can act on.
+    focus_text = describe_focus(design, focus) if focus and focus.strip() and editing else None
+    if focus_text:
+        emit("focus", f"selected: {focus_text}", {"id": focus, "text": focus_text})
     try:
-        reqs = request_requirements(llm, prompt, emit)
+        reqs = request_requirements(llm, prompt, emit, focus_text)
         checklist = checklist_lines(reqs.requirements)
         notes += [f"not supported: {r.text}" for r in reqs.requirements if not r.supported]
 
         steps_total, accepted_total = 0, 0
-        stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=0, editing=editing)
+        stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=0, editing=editing, focus=focus_text)
         design, guids = stream.design, stream.guids
         steps_total += stream.applied
         accepted_total += len(stream.accepted)
@@ -203,7 +208,7 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
             if not stream.rejected:
                 break
             stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=steps_total,
-                                 problems=_problem_lines(stream), editing=editing)
+                                 problems=_problem_lines(stream), editing=editing, focus=focus_text)
             design, guids = stream.design, stream.guids
             steps_total += stream.applied
             accepted_total += len(stream.accepted)

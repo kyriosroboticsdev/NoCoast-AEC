@@ -26,14 +26,19 @@ const layerSlider = $<HTMLInputElement>("layerSlider");
 const layerLabel = $<HTMLSpanElement>("layerLabel");
 const layerSnaps = $<HTMLDataListElement>("layerSnaps");
 const followBuild = $<HTMLInputElement>("followBuild");
+const focusChip = $<HTMLDivElement>("focus");
+const focusLabel = $<HTMLSpanElement>("focus-label");
+const inspector = $<HTMLDivElement>("inspector");
+const inspectorTitle = $<HTMLSpanElement>("inspector-title");
+const inspectorDesign = $<HTMLTableElement>("inspector-design");
+const inspectorPsets = $<HTMLDivElement>("inspector-psets");
 
 let projectId = "";
 let head: api.Version | null = null;
 let busy = false;
 
-const viewer = new Viewer($<HTMLCanvasElement>("viewport"), (p) => {
-  picked.textContent = p ? `${p.type} ${p.tag || p.name} ${p.globalId}` : "";
-});
+const viewer = new Viewer($<HTMLCanvasElement>("viewport"), (p) => onPick(p));
+(window as unknown as { nocoast: unknown }).nocoast = { viewer }; // for DevTools and the headless smoke tests
 
 function setStatus(msg: string, error = false) {
   status.textContent = msg;
@@ -146,6 +151,110 @@ function learnStep(step: Record<string, unknown>) {
   if (level && k !== "building" && k !== "level") followLevel = level;
 }
 
+// --- selection --------------------------------------------------------------------------------------
+// One element at a time. Clicking a wall, door, window, stair or piece of furniture selects it; clicking a
+// floor selects the room under the click. The selection is shown as a chip above the prompt, sent with the
+// next prompt as `focus` (the spec element id, which the backend describes to the model), and detailed in
+// the inspector: design-level facts first, the IFC attributes and property sets underneath.
+
+let design: api.Design | null = null; // the head version's design record (null before the first version, or for imports without one)
+let focus: { id: string; label: string } | null = null;
+
+const SIDE_NAMES: Record<string, string> = { N: "north", S: "south", E: "east", W: "west" };
+const roomLabel = (id: string) => { const r = design?.rooms.find((x) => x.id === id); return r ? `the ${r.name}` : `the ${id}`; };
+const levelLabel = (id: string) => { const l = design?.levels.find((x) => x.id === id); return l?.name ?? levelName(id).replace(/^the /, ""); };
+
+/** Design-level facts about a spec element id: a title and key/value rows, or null when the id is unknown. */
+function describeElement(id: string): { title: string; rows: [string, string][]; roomId?: string } | null {
+  if (!design) return null;
+  let m = id.match(/^(\w+?)-wall-([\w-]+)\+([\w-]+)$/);
+  if (m) return { title: `Wall between ${roomLabel(m[2])} and ${roomLabel(m[3])}`, rows: [["level", levelLabel(m[1])], ["type", "partition wall, 0.12 m"], ["rooms", `${roomLabel(m[2])}, ${roomLabel(m[3])}`]] };
+  m = id.match(/^(\w+?)-wall-([\w-]+)-([NSEW])$/);
+  if (m) return { title: `${SIDE_NAMES[m[3]]} wall of ${roomLabel(m[2])}`, rows: [["level", levelLabel(m[1])], ["type", `exterior wall, 0.3 m${design.wall_material ? ", " + design.wall_material : ""}`], ["room", roomLabel(m[2])], ["side", SIDE_NAMES[m[3]]]], roomId: m[2] };
+  m = id.match(/^(\w+?)-space-([\w-]+)$/);
+  const room = m ? design.rooms.find((r) => r.id === m![2]) : design.rooms.find((r) => r.id === id);
+  if (room) {
+    const rect = room.rect;
+    return { title: `${room.name}`, rows: [["level", levelLabel(room.level)], ["kind", room.kind], ...(rect ? [["size", `${rect[2]} × ${rect[3]} m (${(rect[2] * rect[3]).toFixed(1)} m²)`], ["position", `x ${rect[0]}, y ${rect[1]}`]] as [string, string][] : []),
+      ["doors", design.doors.filter((d) => d.room === room.id || d.to === room.id).map((d) => d.to === "outside" ? "entrance" : d.room === room.id ? roomLabel(d.to) : roomLabel(d.room)).join(", ") || "none"],
+      ["windows", String(design.windows.filter((w) => w.room === room.id).length)],
+      ["furniture", design.fixtures.filter((f) => f.room === room.id).map((f) => f.kind.replace(/_/g, " ")).join(", ") || "none"]], roomId: room.id };
+  }
+  m = id.match(/^(\w+?)-(floor|slab)$/);
+  if (m) return { title: `Floor slab of ${levelLabel(m[1])}`, rows: [["level", levelLabel(m[1])]] };
+  if (id === "roof" || id.endsWith("-roof")) return { title: id.startsWith("porch") ? "Porch roof" : "Roof", rows: [["kind", design.roof.kind], ...(design.roof.kind !== "flat" ? [["pitch", `${design.roof.pitch}°`]] as [string, string][] : []), ["overhang", `${design.roof.overhang} m`]] };
+  const door = design.doors.find((d) => d.id === id);
+  if (door) return { title: door.to === "outside" ? `Entrance door of ${roomLabel(door.room)}` : `Door between ${roomLabel(door.room)} and ${roomLabel(door.to)}`, rows: [["kind", door.kind], ...(door.width && door.height ? [["size", `${door.width} × ${door.height} m`]] as [string, string][] : []), ...(door.side ? [["side", SIDE_NAMES[door.side]]] as [string, string][] : []), ["position", `${Math.round(door.at * 100)}% along the wall`]], roomId: door.room };
+  const win = design.windows.find((w) => w.id === id);
+  if (win) return { title: `Window on the ${SIDE_NAMES[win.side]} wall of ${roomLabel(win.room)}`, rows: [["kind", win.kind], ...(win.width && win.height ? [["size", `${win.width} × ${win.height} m`]] as [string, string][] : []), ...(win.sill !== null ? [["sill", `${win.sill} m`]] as [string, string][] : []), ["position", `${Math.round(win.at * 100)}% along the wall`]], roomId: win.room };
+  const stair = design.stairs.find((s) => s.id === id);
+  if (stair) return { title: `Stair in ${roomLabel(stair.room)}`, rows: [["along", `${SIDE_NAMES[stair.side]} wall`], ["width", `${stair.width} m`], ["to", stair.to_level ? levelLabel(stair.to_level) : "the level above"]], roomId: stair.room };
+  const fx = design.fixtures.find((f) => f.id === id);
+  if (fx) return { title: `${fx.kind.replace(/_/g, " ")} in ${roomLabel(fx.room)}`.replace(/^\w/, (c) => c.toUpperCase()), rows: [["kind", fx.kind.replace(/_/g, " ")], ["placement", fx.side === "center" ? "middle of the room" : `against the ${SIDE_NAMES[fx.side]} wall`], ...(fx.width && fx.depth ? [["size", `${fx.width} × ${fx.depth}${fx.height ? " × " + fx.height : ""} m`]] as [string, string][] : [])], roomId: fx.room };
+  const bal = design.balconies.find((b) => b.id === id);
+  if (bal) return { title: `Balcony of ${roomLabel(bal.room)}`, rows: [["side", SIDE_NAMES[bal.side]], ["depth", `${bal.depth} m`]], roomId: bal.room };
+  if (id.startsWith("porch")) return { title: "Porch", rows: design.porch ? [["side", SIDE_NAMES[design.porch.side]], ["depth", `${design.porch.depth} m`]] : [] };
+  const col = design.columns.find((c) => c.id === id);
+  if (col) return { title: "Column", rows: [["level", levelLabel(col.level)], ["position", `x ${col.x}, y ${col.y}`]] };
+  return null;
+}
+
+/** The room whose rectangle contains plan point (x, y) on `level`. */
+function roomAt(level: string, x: number, y: number) {
+  return design?.rooms.find((r) => r.level === level && r.rect && x >= r.rect[0] && x <= r.rect[0] + r.rect[2] && y >= r.rect[1] && y <= r.rect[1] + r.rect[3]) ?? null;
+}
+
+function setFocus(id: string | null, label?: string) {
+  focus = id ? { id, label: label ?? describeElement(id)?.title ?? id } : null;
+  focusChip.hidden = !focus;
+  focusLabel.textContent = focus?.label ?? "";
+  viewer.highlight(id);
+}
+
+async function showInspector(p: import("./viewer").Picked, id: string) {
+  const d = describeElement(id);
+  inspectorTitle.textContent = d?.title ?? `${p.type.replace(/^Ifc/, "")} ${id}`;
+  inspectorDesign.replaceChildren(...(d?.rows ?? []).map(([k, v]) => {
+    const tr = document.createElement("tr");
+    tr.append(Object.assign(document.createElement("td"), { textContent: k }), Object.assign(document.createElement("td"), { textContent: v }));
+    return tr;
+  }));
+  inspector.hidden = false;
+  const sets = await viewer.properties(p.expressID);
+  inspectorPsets.replaceChildren(...sets.flatMap((ps) => {
+    const h = Object.assign(document.createElement("h4"), { textContent: ps.name });
+    const table = document.createElement("table");
+    for (const [k, v] of ps.props) {
+      const tr = document.createElement("tr");
+      tr.append(Object.assign(document.createElement("td"), { textContent: k }), Object.assign(document.createElement("td"), { textContent: v }));
+      table.append(tr);
+    }
+    return [h, table];
+  }));
+}
+
+function onPick(p: import("./viewer").Picked | null) {
+  picked.textContent = p ? `${p.type} ${p.tag || p.name} ${p.globalId}` : "";
+  if (!p) {
+    setFocus(null);
+    inspector.hidden = true;
+    return;
+  }
+  let id = p.tag || p.name;
+  // A click on a floor slab selects the room under it.
+  const slab = id.match(/^(\w+?)-(floor|slab)$/);
+  if (slab) {
+    const room = roomAt(slab[1], p.point.x, p.point.y);
+    if (room) id = `${slab[1]}-space-${room.id}`;
+  }
+  log("picked", p.type, id, "at", p.point);
+  setFocus(id);
+  void showInspector(p, id);
+}
+
+$<HTMLButtonElement>("focus-clear").onclick = () => { setFocus(null); inspector.hidden = true; };
+$<HTMLButtonElement>("inspector-close").onclick = () => (inspector.hidden = true);
+
 // The camera is framed on the first model of a project and then left alone: previews and new
 // versions load into the same view, so the building grows in place instead of jumping around.
 let framed = false;
@@ -167,6 +276,12 @@ async function showVersion(v: api.Version | null) {
     const checks = (v.checks ?? []).filter((c) => c.status !== "met").map((c) => `${c.status === "unmet" ? "✗" : "–"} ${c.text}: ${c.detail}`);
     notes.textContent = [...v.notes, ...checks, `elements: ${JSON.stringify(v.summary.counts)}`].join("\n");
     log("version", v.number, v.mode, "fetching", v.ifc_url);
+    try {
+      design = (await api.fetchSpec(projectId, v.number)).design;
+    } catch (err) {
+      log("design record unavailable:", String(err));
+      design = null;
+    }
     const bytes = await api.fetchIfc(v.ifc_url);
     log("ifc fetched:", bytes.length, "bytes; loading into web-ifc");
     const t = performance.now();
@@ -177,10 +292,13 @@ async function showVersion(v: api.Version | null) {
     setShowing(`v${v.number} · final · ${v.summary.elements} elements`, false);
   } else {
     notes.textContent = "";
+    design = null;
     viewer.clear();
     setShowing("", false);
     refreshSection();
   }
+  setFocus(null);
+  inspector.hidden = true;
   setBusy(false);
 }
 
@@ -295,6 +413,7 @@ function friendly(e: api.StageEvent): { text: string; detail?: string; muted?: b
       return { text: `Checked the result: ${met} of ${checkable} requirements met`, detail: unmet.length ? unmet.map((r) => `✗ ${r.text} — ${r.detail}`).join("\n") : undefined };
     }
     case "compile": return { text: "Finishing the model…", muted: true };
+    case "focus": return { text: `Working on ${String(d.text ?? "the selection").replace(/ \((wall|room) id [^)]*\)/, "")}`, muted: true };
     case "done": {
       const v = d as unknown as api.Version;
       return { text: `Done — version ${v.number}, ${v.summary?.elements ?? "?"} elements` };
@@ -511,7 +630,7 @@ async function run(work: () => Promise<api.Version>) {
 send.onclick = () => {
   const prompt = text.value.trim();
   if (!prompt) return;
-  run(() => api.sendPrompt(projectId, prompt, head?.number ?? null, onEvent)).then(() => (text.value = ""));
+  run(() => api.sendPrompt(projectId, prompt, head?.number ?? null, onEvent, focus?.id ?? null)).then(() => (text.value = ""));
 };
 text.onkeydown = (e) => {
   if (e.key === "Enter" && !e.shiftKey) {

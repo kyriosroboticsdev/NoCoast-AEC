@@ -72,21 +72,29 @@ FIX_INTRO = "SOME STEPS WERE REJECTED. The current design is shown above; emit O
 UNMET_INTRO = "The design does not yet satisfy every requirement. The current design is shown above; emit ONLY steps that fix these:"
 
 
-def requirements_user_message(prompt: str, errors: list[str] | None = None) -> str:
+FOCUS_INTRO = "SELECTED IN THE VIEWER: "
+FOCUS_RULE = " — the request refers to this element unless it clearly says otherwise."
+
+
+def requirements_user_message(prompt: str, errors: list[str] | None = None, focus: str | None = None) -> str:
     parts = ["REQUEST:\n" + prompt.strip()]
+    if focus:
+        parts.append(FOCUS_INTRO + focus + FOCUS_RULE)
     if errors:
         parts.append("YOUR PREVIOUS ANSWER WAS REJECTED. Fix these problems and answer again:\n- " + "\n- ".join(errors))
     return "\n\n".join(parts)
 
 
 def build_user_message(prompt: str, checklist: list[str], context: str | None, problems: list[str] | None = None,
-                       unmet: list[str] | None = None) -> str:
+                       unmet: list[str] | None = None, focus: str | None = None) -> str:
     parts = []
     if context:
         parts.append("CURRENT DESIGN:\n" + context)
     else:
         parts.append("CURRENT DESIGN: empty (new building)")
     parts.append("REQUEST:\n" + prompt.strip())
+    if focus:
+        parts.append(FOCUS_INTRO + focus + FOCUS_RULE)
     if checklist:
         parts.append("CHECKLIST:\n- " + "\n- ".join(checklist))
     if problems:

@@ -33,7 +33,7 @@ class MockLLM:
             if request.meta.get("problems") or request.meta.get("unmet"):
                 reply = {"steps": self._fix(prompt, request.meta)}
             elif request.meta.get("editing"):
-                reply = {"steps": self._edit(prompt, Design.model_validate(request.meta["design"]))}
+                reply = {"steps": self._edit(prompt, Design.model_validate(request.meta["design"]), request.meta.get("focus"))}
             else:
                 reply = {"steps": template_steps(prompt)}
         else:
@@ -52,9 +52,29 @@ class MockLLM:
 
     # --- edits -----------------------------------------------------------------
 
-    def _edit(self, prompt: str, design: Design) -> list[dict]:
+    def _edit(self, prompt: str, design: Design, focus: str | None = None) -> list[dict]:
         text = prompt.lower().strip()
         steps: list[dict] = []
+
+        # A viewer selection (see core.context.describe_focus) stands in for the place the prompt leaves out.
+        if focus:
+            room = side = item = None
+            m = re.search(r"wall id (\S+?); side=([NSEW])", focus)
+            if m:
+                room, side = re.sub(r"^\w+-wall-", "", m.group(1)).rsplit("-", 1)[0], m.group(2)
+            m = m or re.search(r"room id ([\w-]+)", focus)
+            if m and room is None:
+                room = m.group(1)
+            m = re.search(r"\b(door|window|stair|balcony|[a-z_]+) ([\w-]+) (of|on|in) the", focus)
+            if m and design.room(m.group(2)) is None:
+                item = m.group(2)
+            if room and re.match(r"^(add|put) (a |an |another )?(large |big )?(window|door)( here| there| to it| on it)?$", text):
+                kind = "large" if re.search(r"large|big", text) else "standard"
+                if "window" in text:
+                    return [{"step": "window", "room": room, "side": side or "S", "kind": kind}]
+                return [{"step": "door", "room": room, "to": "outside", "side": side or "S"}]
+            if item and re.match(r"^(remove|delete|drop)( this| it| that| the selected \w+)?$", text):
+                return [{"step": "remove", "id": item}]
 
         m = re.search(r"\b(rename|call|name) (the )?(building|house|project) (to )?['\"]?([^'\"]+?)['\"]?$", text)
         if m:

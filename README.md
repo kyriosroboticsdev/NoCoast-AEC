@@ -293,7 +293,8 @@ browser ────────────────────────
 - preview files are served by the `/models` static mount and pruned after 30 minutes.
 
 **Step log (transparency).** Every SSE event carries `seq` and `t`; stages: `requirements` (the checklist,
-unsupported items flagged), `build` (which round and why: rejected steps / unmet requirements listed),
+unsupported items flagged), `focus` (what the viewer selection resolved to, when one was sent), `build`
+(which round and why: rejected steps / unmet requirements listed),
 `llm` (what was sent to which model; then chars, seconds, steps applied/rejected, previews), `stream`,
 `step` (one per step: applied with its effect, or rejected with the reason and the raw step), `partial`
 (diff against the previous preview, rooms per level, counts, compile time, how many elements were
@@ -399,7 +400,7 @@ History is linear; `revert/{n}` appends a copy of *n*; `base_version` gives opti
 | `GET /health` | | `{ok, llm: {provider, model}}` |
 | `POST /projects` | `{name}` | project |
 | `GET /projects/{id}` | | `{project, head, versions}` |
-| `POST /projects/{id}/prompt` | `{prompt, base_version?}` | **SSE** — design or edit |
+| `POST /projects/{id}/prompt` | `{prompt, base_version?, focus?}` | **SSE** — design or edit; `focus` is the spec element id selected in the viewer (`L1-wall-hall-W`, `door-kitchen-hall`, `L1-space-hall`, …), described to the model in words by `core/context.py::describe_focus` ("SELECTED IN THE VIEWER: the west exterior wall of the Hall (L1) …") |
 | `POST /projects/{id}/ops` | `{ops, base_version?}` | **SSE** — raw element ops (stored as overrides) |
 | `POST /projects/{id}/revert/{n}` | | **SSE** |
 | `POST /projects/{id}/import` | multipart `file` (.ifc) | **SSE** |
@@ -417,7 +418,13 @@ SSE events: `event: <stage>` + `data: {"seq", "t", "stage", "message", "data"}`,
 
 Vanilla TypeScript + Vite. `viewer.ts` opens the IFC bytes with `web-ifc` (`IfcAPI.OpenModel` →
 `StreamAllMeshes`), builds one three.js mesh per placed geometry with the IFC surface colour/transparency,
-and frames the model. Clicking an element shows `IfcType <spec id> <GlobalId>`. After every preview and
+and frames the model. **Selection:** clicking a wall, door, window, stair or piece of furniture selects it
+(tinted blue; clicking a floor selects the room under the click by point-in-rectangle on the version's
+design record). The selection shows as a removable chip above the prompt and is sent with the next prompt
+as `focus`, so "add a window" with the west wall of the Hall selected means that wall. The **inspector**
+under the top bar shows the design-level facts (room size, kind, doors, windows, furniture; door kind and
+position; wall side and thickness) and, folded underneath, the IFC attributes and property sets read
+through `web-ifc`. Read-only: edits go through the prompt. After every preview and
 every accepted version the whole IFC is reloaded (milliseconds for a house). `main.ts` keeps one project
 id in `localStorage` (`?project=<id>` deep-links another, `?prompt=…` sends a prompt on load), renders
 the step log, and offers Undo, Import IFC and Download IFC. A slim section slider above the prompt sweeps a

@@ -20,6 +20,13 @@
 
     <div id="showing"></div>
 
+    <!-- Inspector: what the selected element is in design terms, then its IFC attributes and property sets -->
+    <div id="inspector" hidden>
+      <div id="inspector-head"><span id="inspector-title"></span><button id="inspector-close" title="Close">×</button></div>
+      <table id="inspector-design"></table>
+      <details id="inspector-ifc"><summary>IFC properties</summary><div id="inspector-psets"></div></details>
+    </div>
+
     <aside id="steps">
       <div id="steps-head">
         <span>Steps</span>
@@ -42,6 +49,7 @@
       </div>
 
       <div id="prompt">
+        <div id="focus" hidden title="The selected element is sent along with the prompt"><span id="focus-label"></span><button id="focus-clear" title="Clear selection">×</button></div>
         <textarea id="text" rows="2" placeholder="Describe a building, or a change to the current one…"></textarea>
         <button id="send">Send</button>
         <div id="status"></div>

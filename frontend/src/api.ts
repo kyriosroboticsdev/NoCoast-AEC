@@ -101,8 +101,27 @@ async function stream(path: string, init: RequestInit, onEvent: (e: StageEvent) 
 
 const post = (body: unknown): RequestInit => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
-export const sendPrompt = (id: string, prompt: string, baseVersion: number | null, onEvent: (e: StageEvent) => void) =>
-  stream(`/projects/${id}/prompt`, post({ prompt, base_version: baseVersion }), onEvent);
+export const sendPrompt = (id: string, prompt: string, baseVersion: number | null, onEvent: (e: StageEvent) => void, focus: string | null = null) =>
+  stream(`/projects/${id}/prompt`, post({ prompt, base_version: baseVersion, focus }), onEvent);
+
+/** The design record (rooms, doors, windows, …) and the derived spec of a version; `design` is null for pre-design-layer versions. */
+export const fetchSpec = (id: string, number: number) =>
+  json<{ design: Design | null; spec: { elements: Record<string, unknown>[]; levels: { id: string; name: string; elevation: number; height: number }[] } }>(`/projects/${id}/versions/${number}/spec`);
+
+export interface Design {
+  name: string;
+  levels: { id: string; name: string | null; height: number }[];
+  rooms: { id: string; name: string; level: string; kind: string; rect: [number, number, number, number] | null; area: number | null }[];
+  doors: { id: string; room: string; to: string; side: string | null; at: number; kind: string; width: number; height: number }[];
+  windows: { id: string; room: string; side: string; at: number; kind: string; width: number; height: number; sill: number | null }[];
+  stairs: { id: string; room: string; side: string; to_level: string | null; width: number }[];
+  fixtures: { id: string; room: string; kind: string; side: string; at: number; rotation: number | null; width: number | null; depth: number | null; height: number | null }[];
+  balconies: { id: string; room: string; side: string; depth: number }[];
+  columns: { id: string; level: string; x: number; y: number }[];
+  porch: { side: string; depth: number } | null;
+  roof: { kind: string; pitch: number; overhang: number };
+  wall_material: string | null;
+}
 
 export const revert = (id: string, to: number, onEvent: (e: StageEvent) => void) =>
   stream(`/projects/${id}/revert/${to}`, { method: "POST" }, onEvent);

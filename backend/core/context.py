@@ -8,6 +8,8 @@ endpoint and for raw element ops.
 
 from __future__ import annotations
 
+import re
+
 from core.derive import Derived
 from schemas.bim import BuildingSpec
 from schemas.design import Design
@@ -73,6 +75,59 @@ def describe_spec(spec: BuildingSpec) -> str:
             lines.append("  " + describe_element(el))
             shown += 1
     return "\n".join(lines)
+
+
+SIDE_WORDS = {"N": "north", "S": "south", "E": "east", "W": "west"}
+
+
+def describe_focus(design: Design, focus: str) -> str:
+    """What the user has selected in the viewer, in words the model can act on. `focus` is a spec
+    element id (`L1-wall-hall-W`, `door-kitchen-hall`, `L1-space-hall`, …) or a design id."""
+    fid = focus.strip()
+
+    def room_name(rid: str) -> str:
+        r = design.room(rid)
+        return f'the {r.name} ({r.level})' if r else f"room {rid}"
+
+    m = re.match(r"^(?P<level>[A-Za-z]\w*?)-wall-(?P<a>[\w-]+)\+(?P<b>[\w-]+)$", fid)
+    if m:
+        return f"the partition wall between {room_name(m['a'])} and {room_name(m['b'])} (wall id {fid})"
+    m = re.match(r"^(?P<level>[A-Za-z]\w*?)-wall-(?P<room>[\w-]+)-(?P<side>[NSEW])$", fid)
+    if m:
+        return f"the {SIDE_WORDS[m['side']]} exterior wall of {room_name(m['room'])} (wall id {fid}; side={m['side']})"
+    m = re.match(r"^(?P<level>[A-Za-z]\w*?)-space-(?P<room>[\w-]+)$", fid)
+    if m and design.room(m["room"]):
+        return f"the room {room_name(m['room'])} (room id {m['room']})"
+    m = re.match(r"^(?P<level>[A-Za-z]\w*?)-(floor|slab)$", fid)
+    if m:
+        return f"the floor slab of level {m['level']}"
+    if fid in ("roof",) or fid.endswith("-roof"):
+        return "the roof"
+    r = design.room(fid)
+    if r:
+        return f"the room {room_name(r.id)} (room id {r.id})"
+    for d in design.doors:
+        if d.id == fid:
+            where = f"to outside on side {d.side}" if d.to == "outside" else f"to {room_name(d.to)}"
+            return f"the door {fid} of {room_name(d.room)} {where}"
+    for w in design.windows:
+        if w.id == fid:
+            return f"the window {fid} on the {SIDE_WORDS.get(w.side, w.side)} wall of {room_name(w.room)}"
+    for st in design.stairs:
+        if st.id == fid:
+            return f"the stair {fid} in {room_name(st.room)}"
+    for f in design.fixtures:
+        if f.id == fid:
+            return f"the {f.kind.replace('_', ' ')} {fid} in {room_name(f.room)}"
+    for b in design.balconies:
+        if b.id == fid:
+            return f"the balcony {fid} of {room_name(b.room)}"
+    if fid.startswith("porch"):
+        return "the porch"
+    for c in design.columns:
+        if c.id == fid:
+            return f"the column {fid} on {c.level}"
+    return f"the element {fid}"
 
 
 def describe_design(design: Design, derived: Derived | None = None) -> str:
