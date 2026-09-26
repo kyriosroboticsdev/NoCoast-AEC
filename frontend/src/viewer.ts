@@ -283,9 +283,12 @@ export class Viewer {
     return this.box.isEmpty() ? null : { min: this.box.min.y, max: this.box.max.y };
   }
 
-  /** Diagonal of the loaded model's bounding box in metres (0 when empty). */
+  /** Plan diagonal of the loaded model's bounding box in metres (0 when empty); height is left out so a
+   *  lone riser or column does not count as a building. */
   extent(): number {
-    return this.box.isEmpty() ? 0 : this.box.getSize(new THREE.Vector3()).length();
+    if (this.box.isEmpty()) return 0;
+    const s = this.box.getSize(new THREE.Vector3());
+    return Math.hypot(s.x, s.z);
   }
 
   /** Storeys of the loaded model, lowest first. */
@@ -342,6 +345,7 @@ export class Viewer {
     if (box.isEmpty()) return;
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3()).length();
+    console.log("[nocoast:viewer] frame", center.toArray().map((v) => v.toFixed(2)), "size", size.toFixed(2), "meshes", this.live().length);
     this.controls.target.copy(center);
     this.camera.position.copy(center).add(new THREE.Vector3(size * 0.7, size * 0.55, size * 0.7));
     this.camera.near = size / 200;
