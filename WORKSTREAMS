@@ -1,0 +1,10 @@
+# Who owns what. Read by the pre-commit guard from origin/main, so edit it on main (via PR).
+#
+# <branch pattern>                <path prefixes this branch may commit; * = anything>
+# First matching line wins. Branches not listed are unrestricted.
+# Narrow a line to the folders that workstream should touch, e.g.  demo/*  demo/ vercel.json
+
+backend                           *
+feat/generative-bim-pipeline      *
+demo/*                            demo/ vercel.json .vercelignore
+docs/*                            docs/ README.md WORKSTREAMS
