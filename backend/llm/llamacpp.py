@@ -20,7 +20,7 @@ from pathlib import Path
 
 import httpx
 
-from llm.base import LLMError, LLMRequest
+from llm.base import LLMError, LLMRequest, OnNote, OnText
 from llm.openai_compat import OpenAICompatibleLLM
 from logsetup import log
 
@@ -100,9 +100,9 @@ class LlamaCppLLM(OpenAICompatibleLLM):
 
     # --- LLM ---------------------------------------------------------------
 
-    def complete(self, request: LLMRequest) -> dict:
+    def complete(self, request: LLMRequest, on_text: OnText | None = None, on_note: OnNote | None = None) -> dict:
         self.ensure_server()
-        return super().complete(request)
+        return super().complete(request, on_text, on_note)
 
 
 def env_defaults() -> dict:

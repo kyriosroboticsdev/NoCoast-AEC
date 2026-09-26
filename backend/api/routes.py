@@ -7,7 +7,9 @@ Stateful (what the UI uses):
     POST /projects/{id}/ops           (SSE)        apply raw ops without an LLM → new version
     POST /projects/{id}/revert/{n}    (SSE)        undo: new version equal to version n
     POST /projects/{id}/import        (SSE)        lift a NoCoast-generated IFC file into the project
-    GET  /projects/{id}/versions/{n}/{ifc|spec|context}
+    GET  /projects/{id}/versions/{n}/{ifc|spec|context|slices|gcode}
+    POST /projects/{id}/versions/{n}/construction                     start a live-build simulation job
+    GET  /projects/{id}/versions/{n}/construction/{job_id}            poll it
 
 Stateless (kept for scripts and tests): POST /plan, /build, /generate.
 """
@@ -20,19 +22,23 @@ import time
 import uuid
 from pathlib import Path
 
+import ifcopenshell
 from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
 import config
 from agents import PLANNERS, PlanResult, get_planner
-from core import pipeline
-from core.context import describe_spec
+from core import construction, pipeline
+from core.context import describe_design, describe_spec
+from core.derive import DesignError, analyze
 from ifc.builder import write_ifc
 from ifc.lifter import LiftError, lift
 from llm import PROVIDERS, get_llm
 from schemas.bim import BuildingSpec
 from schemas.ops import Op
+from slicer.gcode import to_gcode
+from slicer.slice import slice_model
 from store.db import Project, Store, Version
 
 from api.sse import sse_response
@@ -146,15 +152,16 @@ async def import_ifc(project_id: str, file: UploadFile):
     with tmp.open("wb") as fh:
         shutil.copyfileobj(file.file, fh)
     try:
-        spec, guids = lift(tmp)
+        spec, design, guids = lift(tmp)
     except (LiftError, ValueError) as exc:
         raise HTTPException(422, f"cannot lift IFC: {exc}") from exc
     except Exception as exc:  # noqa: BLE001 - IfcOpenShell raises its own error types on unparseable files
         raise HTTPException(422, f"cannot read IFC: {exc}") from exc
     finally:
         shutil.rmtree(tmp.parent, ignore_errors=True)
-    notes = [f"imported {file.filename}: {len(spec.elements)} elements, {len(spec.levels)} levels"]
-    return sse_response(lambda emit: pipeline.import_spec(store, project_id, spec, guids, notes, emit))
+    notes = [f"imported {file.filename}: {len(spec.elements)} elements, {len(spec.levels)} levels"
+             + ("" if design else " (no design record: only raw element edits are possible)")]
+    return sse_response(lambda emit: pipeline.import_spec(store, project_id, spec, design, guids, notes, emit))
 
 
 def _version(project_id: str, number: int):
@@ -175,13 +182,52 @@ def version_ifc(project_id: str, number: int):
 def version_spec(project_id: str, number: int) -> dict:
     v = _version(project_id, number)
     return {"version": _with_url(v.as_version()), "spec": v.spec.model_dump(mode="json"),
-            "program": v.program.model_dump(mode="json") if v.program else None, "guids": v.guids}
+            "design": v.design.model_dump(mode="json") if v.design else None, "guids": v.guids}
 
 
 @router.get("/projects/{project_id}/versions/{number}/context", response_class=PlainTextResponse)
 def version_context(project_id: str, number: int) -> str:
-    """Exactly what the LLM sees as CURRENT MODEL when editing this version."""
-    return describe_spec(_version(project_id, number).spec)
+    """Exactly what the LLM sees as CURRENT DESIGN when editing this version (element listing if no design)."""
+    v = _version(project_id, number)
+    if v.design is None:
+        return describe_spec(v.spec)
+    try:
+        return describe_design(v.design, analyze(v.design))
+    except DesignError:
+        return describe_design(v.design)
+
+
+@router.get("/projects/{project_id}/versions/{number}/slices")
+def version_slices(project_id: str, number: int, layer_height: float = 0.2) -> dict:
+    """Layer-by-layer construction walkthrough, slicer-preview style (see slicer/slice.py)."""
+    v = _version(project_id, number)
+    model = ifcopenshell.open(v.ifc_path)
+    layers = slice_model(model, layer_height)
+    return {"layer_height": layer_height, "layers": [{"phase": l.phase, "z": l.z, "segments": l.segments} for l in layers]}
+
+
+@router.get("/projects/{project_id}/versions/{number}/gcode", response_class=PlainTextResponse)
+def version_gcode(project_id: str, number: int, layer_height: float = 0.2) -> str:
+    v = _version(project_id, number)
+    model = ifcopenshell.open(v.ifc_path)
+    return to_gcode(slice_model(model, layer_height))
+
+
+@router.post("/projects/{project_id}/versions/{number}/construction")
+def start_construction(project_id: str, number: int) -> dict:
+    """Kick off a live build simulation: writes this version's elements to disk one construction
+    step at a time (see core/construction.py). Poll the returned job with the GET below."""
+    job = construction.start(_version(project_id, number))
+    return job.status()
+
+
+@router.get("/projects/{project_id}/versions/{number}/construction/{job_id}")
+def construction_status(project_id: str, number: int, job_id: str) -> dict:
+    _version(project_id, number)
+    job = construction.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"construction job '{job_id}' not found")
+    return job.status()
 
 
 # --- stateless -----------------------------------------------------------------

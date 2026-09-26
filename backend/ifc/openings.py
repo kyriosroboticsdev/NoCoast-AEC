@@ -36,6 +36,7 @@ def add_opening(ctx: BuildContext, item: Door | Window) -> None:
 
     if isinstance(item, Door):
         element = ifcopenshell.api.root.create_entity(m, ifc_class="IfcDoor", predefined_type="DOOR", name=item.name or item.id)
+        element.OperationType = {"single": "SINGLE_SWING_LEFT", "double": "DOUBLE_DOOR_SINGLE_SWING", "sliding": "SLIDING_TO_LEFT", "french": "DOUBLE_DOOR_SINGLE_SWING", "garage": "ROLLINGUP"}.get(item.kind, "SINGLE_SWING_LEFT")
         element.OverallWidth, element.OverallHeight = item.width, item.height
         rep = ifcopenshell.api.geometry.add_door_representation(
             m, context=ctx.body, overall_width=item.width, overall_height=item.height,

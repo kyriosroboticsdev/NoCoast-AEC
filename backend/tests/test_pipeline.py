@@ -42,6 +42,8 @@ def test_spec_prompt_interpretation():
     assert len(plan.spec.levels) == 2
     assert {"Kitchen", "Living Room", "Garage"} <= set(rooms["L1"])
     assert {"Bedroom 1", "Bedroom 2", "Bedroom 3"} <= set(rooms["L2"])
+    assert not plan.notes or all("garage door" in n for n in plan.notes), plan.notes  # every template step applies
+    assert any(e.type == "stair" for e in plan.spec.elements)
 
 
 def test_invalid_spec_is_rejected():
@@ -69,3 +71,29 @@ def test_build_from_handwritten_spec():
     r = client.post("/build", json={"spec": spec.model_dump()})
     assert r.status_code == 200, r.text
     assert r.json()["summary"]["counts"] == {"IfcColumn": 1, "IfcDoor": 1, "IfcRoof": 1, "IfcSlab": 1, "IfcWall": 1}
+
+
+def test_build_new_element_kinds():
+    spec = BuildingSpec.model_validate({
+        "levels": [{"id": "L1", "name": "Ground", "height": 3}, {"id": "L2", "name": "Upper", "height": 3}],
+        "elements": [
+            {"type": "slab", "id": "L2-floor", "level": "L2", "outline": [[0, 0], [8, 0], [8, 6], [0, 6]]},
+            {"type": "roof", "id": "roof", "level": "L2", "outline": [[0, 0], [8, 0], [8, 6], [0, 6]], "shape": "gable", "pitch": 35},
+            {"type": "roof", "id": "roof2", "level": "L1", "outline": [[8, 0], [12, 0], [12, 4], [8, 4]], "shape": "hip"},
+            {"type": "stair", "id": "s", "level": "L1", "position": [1, 0.5], "direction": 90, "to_level": "L2"},
+            {"type": "fixture", "id": "f", "level": "L1", "kind": "sofa", "position": [5, 3], "rotation": 90, "width": 2, "depth": 0.9, "height": 0.85},
+            {"type": "railing", "id": "r", "level": "L2", "path": [[0, 0], [8, 0], [8, 6]]},
+            {"type": "beam", "id": "b", "level": "L1", "start": [0, 3], "end": [8, 3]},
+            {"type": "wall", "id": "w", "level": "L1", "start": [0, 6], "end": [8, 6], "material": "timber", "external": True},
+        ],
+    })
+    r = client.post("/build", json={"spec": spec.model_dump()})
+    assert r.status_code == 200, r.text
+    assert r.json()["summary"]["counts"] == {"IfcBeam": 1, "IfcFurniture": 1, "IfcRailing": 1, "IfcRoof": 2, "IfcSlab": 1, "IfcStair": 1, "IfcWall": 1}
+    model = ifcopenshell.open(str(OUTPUT_DIR / f"{r.json()['id']}.ifc"))
+    slab = model.by_type("IfcSlab")[0]
+    assert slab.HasOpenings and slab.HasOpenings[0].RelatedOpeningElement.Name == "s well"
+    assert {roof.PredefinedType for roof in model.by_type("IfcRoof")} == {"GABLE_ROOF", "HIP_ROOF"}
+    bad = spec.model_dump()
+    bad["elements"][1]["outline"] = [[0, 0], [8, 0], [8, 6], [4, 6], [4, 3], [0, 3]]
+    assert client.post("/build", json={"spec": bad}).status_code == 422  # gable needs a rectangle

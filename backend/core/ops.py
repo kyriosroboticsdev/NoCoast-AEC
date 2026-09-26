@@ -7,14 +7,12 @@ from difflib import get_close_matches
 from pydantic import TypeAdapter, ValidationError
 
 from schemas.bim import BuildingSpec, Door, Element, Level, Window
-from schemas.ops import (AddElement, AddLevel, DeleteElement, DeleteLevel, ModifyElement, ModifyLevel, Op,
+from schemas.ops import (AddElement, AddLevel, DeleteElement, DeleteLevel, ModifyElement, ModifyLevel, Op, OpError,
                          SetBuilding)
 
 _element_adapter = TypeAdapter(Element)
 
-
-class OpError(ValueError):
-    """An op could not be applied. The message is meant to be fed back to the LLM."""
+__all__ = ["OpError", "apply_ops", "restack_levels", "hosted_openings"]
 
 
 def _errors(exc: ValidationError) -> str:
@@ -64,11 +62,14 @@ def apply_ops(spec: BuildingSpec, ops: list[Op]) -> tuple[BuildingSpec, list[str
                 elements.append(el)
             elif isinstance(op, ModifyElement):
                 i = find(elements, op.id, "element")
-                if "type" in op.set and op.set["type"] != elements[i]["type"]:
+                changes = op.set
+                if not changes:
+                    raise OpError(f"{where}: no fields to change for '{op.id}'")
+                if "type" in changes and changes["type"] != elements[i]["type"]:
                     raise OpError(f"{where}: cannot change the type of '{op.id}'; delete it and add a new element")
-                if "id" in op.set and op.set["id"] != op.id:
+                if "id" in changes and changes["id"] != op.id:
                     raise OpError(f"{where}: element ids are immutable")
-                merged = {**elements[i], **op.set}
+                merged = {**elements[i], **changes}
                 elements[i] = _element_adapter.validate_python(merged).model_dump(mode="json")
             elif isinstance(op, DeleteElement):
                 delete_element(op.id)
@@ -81,10 +82,11 @@ def apply_ops(spec: BuildingSpec, ops: list[Op]) -> tuple[BuildingSpec, list[str
                     explicit_elevation.add(lvl["id"])
             elif isinstance(op, ModifyLevel):
                 i = find(levels, op.id, "level")
-                if "id" in op.set and op.set["id"] != op.id:
+                changes = op.set
+                if "id" in changes and changes["id"] != op.id:
                     raise OpError(f"{where}: level ids are immutable")
-                levels[i] = Level.model_validate({**levels[i], **op.set}).model_dump(mode="json")
-                if "elevation" in op.set:
+                levels[i] = Level.model_validate({**levels[i], **changes}).model_dump(mode="json")
+                if "elevation" in changes:
                     explicit_elevation.add(op.id)
             elif isinstance(op, DeleteLevel):
                 i = find(levels, op.id, "level")

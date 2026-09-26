@@ -1,4 +1,4 @@
-"""Claude adapter: the official Anthropic SDK with structured outputs.
+"""Claude adapter: the official Anthropic SDK with structured outputs, streamed.
 
 Credentials come from the environment (ANTHROPIC_API_KEY in backend/.env, or an
 `ant auth login` profile). The reply is constrained to the request's JSON schema
@@ -7,11 +7,9 @@ with `output_config.format`, so it always parses.
 
 from __future__ import annotations
 
-import json
-
 import anthropic
 
-from llm.base import LLMError, LLMRequest
+from llm.base import LLMError, LLMRequest, OnNote, OnText, parse_reply
 from llm.schema import strict_schema
 
 DEFAULT_MODEL = "claude-opus-5"
@@ -26,15 +24,21 @@ class ClaudeLLM:
         headers = {"anthropic-workspace-id": workspace_id} if workspace_id else None
         self.client = anthropic.Anthropic(timeout=timeout, default_headers=headers)
 
-    def complete(self, request: LLMRequest) -> dict:
+    def complete(self, request: LLMRequest, on_text: OnText | None = None, on_note: OnNote | None = None) -> dict:
+        text = ""
         try:
-            response = self.client.messages.create(
+            with self.client.messages.stream(
                 model=self.model,
                 max_tokens=16000,
                 system=request.system,
                 messages=[{"role": "user", "content": request.user}],
-                output_config={"format": {"type": "json_schema", "schema": strict_schema(request.schema)}},
-            )
+                output_config={"format": {"type": "json_schema", "schema": strict_schema(request.schema, keep_bounds=False)}},
+            ) as stream:
+                for piece in stream.text_stream:
+                    text += piece
+                    if on_text:
+                        on_text(text)
+                response = stream.get_final_message()
         except anthropic.AuthenticationError as exc:
             raise LLMError("Anthropic authentication failed: set ANTHROPIC_API_KEY or run `ant auth login`") from exc
         except anthropic.RateLimitError as exc:
@@ -52,8 +56,4 @@ class ClaudeLLM:
             raise LLMError("the model declined this request")
         if response.stop_reason == "max_tokens":
             raise LLMError("the model's answer was cut off (max_tokens)")
-        text = next((b.text for b in response.content if b.type == "text"), "")
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise LLMError(f"model returned non-JSON: {text[:200]!r}") from exc
+        return parse_reply(text)

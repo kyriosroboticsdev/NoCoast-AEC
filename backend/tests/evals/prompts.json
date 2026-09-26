@@ -1,0 +1,210 @@
+[
+  {
+    "id": "family-house",
+    "prompt": "A two-storey family house. Downstairs: entrance hall, living room facing south, kitchen next to the dining room, a WC and a garage. Upstairs: master bedroom with an en-suite bathroom, two more bedrooms and a family bathroom. Gable roof.",
+    "requirements": [
+      {"text": "two storeys", "kind": "storeys", "value": 2},
+      {"text": "entrance hall downstairs", "kind": "room", "room": "hall", "level": "L1"},
+      {"text": "living room facing south", "kind": "orientation", "room": "living", "side": "S"},
+      {"text": "kitchen next to the dining room", "kind": "adjacent", "room": "kitchen", "room2": "dining"},
+      {"text": "a WC downstairs", "kind": "room", "room": "bathroom", "level": "L1"},
+      {"text": "a garage", "kind": "feature", "item": "garage"},
+      {"text": "three bedrooms upstairs", "kind": "room", "room": "bedroom", "value": 3, "level": "L2"},
+      {"text": "master bedroom with en-suite", "kind": "adjacent", "room": "master", "room2": "bathroom"},
+      {"text": "two bathrooms upstairs", "kind": "room", "room": "bathroom", "value": 2, "level": "L2"},
+      {"text": "gable roof", "kind": "roof", "item": "gable"},
+      {"text": "a stair", "kind": "stair"}
+    ]
+  },
+  {
+    "id": "cabin",
+    "prompt": "A small one-room cabin, 6 by 4 metres, with a bed, a wood stove-style fireplace, a small kitchen counter and a window on each long side.",
+    "requirements": [
+      {"text": "one storey", "kind": "storeys", "value": 1},
+      {"text": "6 by 4 metres", "kind": "dimension", "value": 6, "value2": 4},
+      {"text": "a bed", "kind": "furniture", "item": "bed"},
+      {"text": "a fireplace", "kind": "furniture", "item": "fireplace"},
+      {"text": "a kitchen counter", "kind": "furniture", "item": "kitchen counter"},
+      {"text": "windows on both long sides", "kind": "window", "value": 2}
+    ]
+  },
+  {
+    "id": "bungalow",
+    "prompt": "Single-storey bungalow with three bedrooms, two bathrooms, an open kitchen-living area and a covered front porch on the south side.",
+    "requirements": [
+      {"text": "single storey", "kind": "storeys", "value": 1},
+      {"text": "three bedrooms", "kind": "room", "room": "bedroom", "value": 3},
+      {"text": "two bathrooms", "kind": "room", "room": "bathroom", "value": 2},
+      {"text": "kitchen adjacent to living", "kind": "adjacent", "room": "kitchen", "room2": "living"},
+      {"text": "front porch", "kind": "feature", "item": "porch"}
+    ]
+  },
+  {
+    "id": "townhouse",
+    "prompt": "Narrow three-storey townhouse, 5 m wide and 12 m deep. Ground floor: garage at the front, utility room and kitchen at the back. First floor: living and dining. Top floor: two bedrooms and a bathroom. Balcony off the living room.",
+    "requirements": [
+      {"text": "three storeys", "kind": "storeys", "value": 3},
+      {"text": "5 m wide, 12 m deep", "kind": "dimension", "value": 5, "value2": 12},
+      {"text": "garage on the ground floor", "kind": "room", "room": "garage", "level": "L1"},
+      {"text": "kitchen on the ground floor", "kind": "room", "room": "kitchen", "level": "L1"},
+      {"text": "living on the first floor", "kind": "room", "room": "living", "level": "L2"},
+      {"text": "two bedrooms on the top floor", "kind": "room", "room": "bedroom", "value": 2, "level": "L3"},
+      {"text": "balcony off the living room", "kind": "feature", "item": "balcony"},
+      {"text": "stairs", "kind": "stair"}
+    ]
+  },
+  {
+    "id": "office",
+    "prompt": "A one-storey office building: reception hall, four offices each with a desk, a meeting room with a large table, a kitchenette and two toilets. Flat roof, concrete walls.",
+    "requirements": [
+      {"text": "one storey", "kind": "storeys", "value": 1},
+      {"text": "reception hall", "kind": "room", "room": "hall"},
+      {"text": "four offices", "kind": "room", "room": "office", "value": 4},
+      {"text": "a desk in each office", "kind": "furniture", "item": "desk", "value": 4},
+      {"text": "meeting room", "kind": "room", "room": "meeting"},
+      {"text": "kitchenette", "kind": "room", "room": "kitchen"},
+      {"text": "two toilets", "kind": "room", "room": "bathroom", "value": 2},
+      {"text": "flat roof", "kind": "roof", "item": "flat"},
+      {"text": "concrete walls", "kind": "material", "item": "concrete"}
+    ]
+  },
+  {
+    "id": "villa",
+    "prompt": "Two-storey villa with a hip roof. Ground floor: double-height entrance hall, living room with fireplace, dining room, kitchen with island, study, guest bedroom with bathroom. Upstairs: master suite with bathroom and walk-in wardrobe, three bedrooms, two bathrooms, balconies on the south bedrooms.",
+    "requirements": [
+      {"text": "two storeys", "kind": "storeys", "value": 2},
+      {"text": "hip roof", "kind": "roof", "item": "hip"},
+      {"text": "fireplace in the living room", "kind": "furniture", "item": "fireplace", "room": "living"},
+      {"text": "kitchen island", "kind": "furniture", "item": "island", "room": "kitchen"},
+      {"text": "a study", "kind": "room", "room": "office"},
+      {"text": "guest bedroom downstairs", "kind": "room", "room": "guest", "level": "L1"},
+      {"text": "four bedrooms upstairs", "kind": "room", "room": "bedroom", "value": 4, "level": "L2"},
+      {"text": "three bathrooms upstairs", "kind": "room", "room": "bathroom", "value": 3, "level": "L2"},
+      {"text": "balconies", "kind": "feature", "item": "balcony"}
+    ]
+  },
+  {
+    "id": "student-flat",
+    "prompt": "Compact one-storey flat, about 45 square metres: a bedroom with a double bed and wardrobe, a bathroom with shower, and a living room with kitchen counter, sofa and a desk. Windows facing west.",
+    "requirements": [
+      {"text": "one storey", "kind": "storeys", "value": 1},
+      {"text": "double bed", "kind": "furniture", "item": "double bed", "room": "bedroom"},
+      {"text": "wardrobe", "kind": "furniture", "item": "wardrobe", "room": "bedroom"},
+      {"text": "shower", "kind": "furniture", "item": "shower", "room": "bathroom"},
+      {"text": "kitchen counter in living room", "kind": "furniture", "item": "kitchen counter", "room": "living"},
+      {"text": "sofa", "kind": "furniture", "item": "sofa"},
+      {"text": "desk", "kind": "furniture", "item": "desk"},
+      {"text": "windows facing west", "kind": "window", "side": "W"}
+    ]
+  },
+  {
+    "id": "duplex",
+    "prompt": "Two-storey house, timber exterior walls, with a large living room facing the garden to the north, a kitchen facing east, and upstairs two bedrooms each with a bathroom.",
+    "requirements": [
+      {"text": "two storeys", "kind": "storeys", "value": 2},
+      {"text": "timber walls", "kind": "material", "item": "timber"},
+      {"text": "living room facing north", "kind": "orientation", "room": "living", "side": "N"},
+      {"text": "kitchen facing east", "kind": "orientation", "room": "kitchen", "side": "E"},
+      {"text": "two bedrooms upstairs", "kind": "room", "room": "bedroom", "value": 2, "level": "L2"},
+      {"text": "two bathrooms upstairs", "kind": "room", "room": "bathroom", "value": 2, "level": "L2"}
+    ]
+  },
+  {
+    "id": "large-family",
+    "prompt": "Five-bedroom house over two floors with a double garage, a big kitchen of about 30 square metres, a laundry room, and a home office on the ground floor.",
+    "requirements": [
+      {"text": "five bedrooms", "kind": "room", "room": "bedroom", "value": 5},
+      {"text": "two floors", "kind": "storeys", "value": 2},
+      {"text": "garage", "kind": "feature", "item": "garage"},
+      {"text": "kitchen about 30 m²", "kind": "area", "room": "kitchen", "value": 30},
+      {"text": "laundry room", "kind": "room", "room": "utility"},
+      {"text": "office on the ground floor", "kind": "room", "room": "office", "level": "L1"}
+    ]
+  },
+  {
+    "id": "imperial",
+    "prompt": "A 40 by 30 foot single-storey house with two bedrooms, one bathroom, living room and kitchen.",
+    "requirements": [
+      {"text": "40 by 30 feet", "kind": "dimension", "value": 12.19, "value2": 9.14},
+      {"text": "one storey", "kind": "storeys", "value": 1},
+      {"text": "two bedrooms", "kind": "room", "room": "bedroom", "value": 2},
+      {"text": "one bathroom", "kind": "room", "room": "bathroom", "value": 1},
+      {"text": "living room", "kind": "room", "room": "living"},
+      {"text": "kitchen", "kind": "room", "room": "kitchen"}
+    ]
+  },
+  {
+    "id": "unsupported",
+    "prompt": "A round two-storey house with a basement, a swimming pool and an elevator, three bedrooms upstairs.",
+    "requirements": [
+      {"text": "round house", "kind": "other", "supported": false},
+      {"text": "basement", "kind": "other", "supported": false},
+      {"text": "swimming pool", "kind": "other", "supported": false},
+      {"text": "elevator", "kind": "other", "supported": false},
+      {"text": "two storeys", "kind": "storeys", "value": 2},
+      {"text": "three bedrooms upstairs", "kind": "room", "room": "bedroom", "value": 3, "level": "L2"}
+    ]
+  },
+  {
+    "id": "workshop",
+    "prompt": "A single-storey workshop with a large garage for two cars, a storage room, a small office and a toilet. Stone walls, hip roof.",
+    "requirements": [
+      {"text": "one storey", "kind": "storeys", "value": 1},
+      {"text": "garage", "kind": "feature", "item": "garage"},
+      {"text": "two cars", "kind": "furniture", "item": "car", "value": 2},
+      {"text": "storage room", "kind": "room", "room": "storage"},
+      {"text": "small office", "kind": "room", "room": "office"},
+      {"text": "toilet", "kind": "room", "room": "bathroom"},
+      {"text": "stone walls", "kind": "material", "item": "stone"},
+      {"text": "hip roof", "kind": "roof", "item": "hip"}
+    ]
+  },
+  {
+    "id": "adjacency-chain",
+    "prompt": "One-storey house where the hall connects to the living room, the living room connects to the kitchen, and the kitchen connects to a pantry. Two bedrooms off the hall.",
+    "requirements": [
+      {"text": "hall next to living room", "kind": "adjacent", "room": "hall", "room2": "living"},
+      {"text": "door hall to living", "kind": "door", "room": "hall", "room2": "living"},
+      {"text": "living next to kitchen", "kind": "adjacent", "room": "living", "room2": "kitchen"},
+      {"text": "kitchen next to pantry", "kind": "adjacent", "room": "kitchen", "room2": "pantry"},
+      {"text": "two bedrooms", "kind": "room", "room": "bedroom", "value": 2},
+      {"text": "bedrooms off the hall", "kind": "door", "room": "bedroom", "room2": "hall"}
+    ]
+  },
+  {
+    "id": "tall",
+    "prompt": "A four-storey apartment block: each floor has two flats, every flat with a living room, kitchen, bedroom and bathroom, plus a stair hall.",
+    "requirements": [
+      {"text": "four storeys", "kind": "storeys", "value": 4},
+      {"text": "eight bedrooms", "kind": "room", "room": "bedroom", "value": 8},
+      {"text": "eight bathrooms", "kind": "room", "room": "bathroom", "value": 8},
+      {"text": "eight kitchens", "kind": "room", "room": "kitchen", "value": 8},
+      {"text": "a stair", "kind": "stair"}
+    ]
+  },
+  {
+    "id": "glass",
+    "prompt": "Modern one-storey pavilion with glass walls, an open living space with sofa and dining table, one bedroom and one bathroom with a bathtub. Flat roof.",
+    "requirements": [
+      {"text": "glass walls", "kind": "material", "item": "glass"},
+      {"text": "sofa", "kind": "furniture", "item": "sofa"},
+      {"text": "dining table", "kind": "furniture", "item": "dining table"},
+      {"text": "one bedroom", "kind": "room", "room": "bedroom"},
+      {"text": "bathtub", "kind": "furniture", "item": "bathtub", "room": "bathroom"},
+      {"text": "flat roof", "kind": "roof", "item": "flat"},
+      {"text": "modern", "kind": "style"}
+    ]
+  },
+  {
+    "id": "orientation-mix",
+    "prompt": "Two-storey house: kitchen on the east side with a window to the east, living room on the west with large windows, master bedroom above the living room with a balcony to the west.",
+    "requirements": [
+      {"text": "two storeys", "kind": "storeys", "value": 2},
+      {"text": "kitchen on the east side", "kind": "orientation", "room": "kitchen", "side": "E"},
+      {"text": "kitchen window to the east", "kind": "window", "room": "kitchen", "side": "E"},
+      {"text": "living room on the west", "kind": "orientation", "room": "living", "side": "W"},
+      {"text": "master bedroom upstairs", "kind": "room", "room": "master", "level": "L2"},
+      {"text": "balcony to the west", "kind": "feature", "item": "balcony"}
+    ]
+  }
+]

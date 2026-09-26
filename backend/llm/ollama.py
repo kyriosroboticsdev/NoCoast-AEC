@@ -1,4 +1,4 @@
-"""Ollama adapter: local models through /api/chat with a JSON-schema `format`."""
+"""Ollama adapter: local models through /api/chat with a JSON-schema `format`, streamed as NDJSON."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 
 import httpx
 
-from llm.base import LLMError, LLMRequest
+from llm.base import LLMError, LLMRequest, OnNote, OnText, parse_reply
 from llm.schema import strict_schema
 
 
@@ -18,21 +18,34 @@ class OllamaLLM:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
-    def complete(self, request: LLMRequest) -> dict:
+    def complete(self, request: LLMRequest, on_text: OnText | None = None, on_note: OnNote | None = None) -> dict:
         body = {
             "model": self.model,
-            "stream": False,
+            "stream": True,
             "format": strict_schema(request.schema),  # constrained decoding: the reply is guaranteed to parse
             "options": {"temperature": 0, "num_ctx": 16384},
             "messages": [{"role": "system", "content": request.system}, {"role": "user", "content": request.user}],
         }
+        text = ""
         try:
-            r = httpx.post(f"{self.base_url}/api/chat", json=body, timeout=self.timeout)
-            r.raise_for_status()
+            with httpx.stream("POST", f"{self.base_url}/api/chat", json=body, timeout=httpx.Timeout(self.timeout, connect=30)) as r:
+                if r.status_code >= 400:
+                    r.read()
+                    raise LLMError(f"ollama returned {r.status_code}: {r.text[:400]}")
+                for line in r.iter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    piece = (chunk.get("message") or {}).get("content")
+                    if piece:
+                        text += piece
+                        if on_text:
+                            on_text(text)
+                    if chunk.get("done"):
+                        break
         except httpx.HTTPError as exc:
             raise LLMError(f"ollama request failed: {exc}") from exc
-        content = r.json().get("message", {}).get("content", "")
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError as exc:
-            raise LLMError(f"ollama returned non-JSON: {content[:200]!r}") from exc
+        return parse_reply(text)

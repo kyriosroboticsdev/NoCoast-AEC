@@ -46,8 +46,14 @@ def get_llm(provider: str | None = None) -> LLM:
     if name == "ollama":
         return OllamaLLM(model=config.LLM_MODEL or "llama3.1", base_url=config.LLM_BASE_URL or "http://127.0.0.1:11434",
                          timeout=config.LLM_TIMEOUT)
-    return OpenAICompatibleLLM(model=config.LLM_MODEL, base_url=config.LLM_BASE_URL or "http://127.0.0.1:8080/v1",
-                               api_key=config.LLM_API_KEY, timeout=config.LLM_TIMEOUT)
+    base_url = config.LLM_BASE_URL or "http://127.0.0.1:8080/v1"
+    anthropic_host = "anthropic.com" in base_url  # Anthropic's OpenAI-compatible endpoint
+    headers = {}
+    if anthropic_host and config.ANTHROPIC_WORKSPACE_ID:
+        headers["anthropic-workspace-id"] = config.ANTHROPIC_WORKSPACE_ID
+    return OpenAICompatibleLLM(model=config.LLM_MODEL, base_url=base_url, api_key=config.LLM_API_KEY,
+                               timeout=config.LLM_TIMEOUT, extra_headers=headers,
+                               temperature=None if anthropic_host else 0.0, schema_bounds=not anthropic_host)
 
 
 __all__ = ["LLM", "LLMError", "LLMRequest", "get_llm", "PROVIDERS"]

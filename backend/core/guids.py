@@ -36,7 +36,7 @@ def ensure_guids(spec: BuildingSpec, existing: GuidMap | None = None) -> GuidMap
     keys = list(FIXED_KEYS) + [key_for_level(l.id) for l in spec.levels]
     for el in spec.elements:
         keys.append(key_for_element(el.id))
-        if el.type in ("door", "window"):
+        if el.type in ("door", "window") or (el.type == "stair" and el.to_level):
             keys.append(key_for_opening(el.id))
     for key in keys:
         guids.setdefault(key, ifcopenshell.guid.new())
