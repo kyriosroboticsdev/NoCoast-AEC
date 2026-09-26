@@ -1,0 +1,13 @@
+#!/bin/sh
+# main only changes through pull requests. Blocks `git push origin <anything>:main`.
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/main|refs/heads/master)
+      if [ "$ALLOW_MAIN_PUSH" != "1" ]; then
+        echo "✗ Refusing to push to ${remote_ref#refs/heads/}. Push your branch and open a PR instead." >&2
+        echo "  (override once with ALLOW_MAIN_PUSH=1)" >&2
+        exit 1
+      fi ;;
+  esac
+done
+exit 0
