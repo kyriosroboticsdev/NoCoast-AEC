@@ -421,8 +421,10 @@ and frames the model. Clicking an element shows `IfcType <spec id> <GlobalId>`. 
 every accepted version the whole IFC is reloaded (milliseconds for a house). `main.ts` keeps one project
 id in `localStorage` (`?project=<id>` deep-links another, `?prompt=…` sends a prompt on load), renders
 the step log, and offers Undo, Import IFC and Download IFC. A slim section slider above the prompt sweeps a
-clipping plane through the finished model along the server-computed slices (the live-build endpoints exist in
-the backend but have no UI). The Tauri shell (`src-tauri/`) spawns
+clipping plane through the model in 0.1 m steps over its own extent (previews included), with sticky snap
+points at every storey's floor and just under its ceiling, read from the IFC's `IfcBuildingStorey` elevations
+and wall tops in the browser; the cut survives reloads. The server-side slices and live-build endpoints
+exist in the backend but have no UI. The Tauri shell (`src-tauri/`) spawns
 `python main.py` on startup (skip with `BIM_NO_BACKEND=1`) and kills it on exit.
 
 ## 4.14 Troubleshooting

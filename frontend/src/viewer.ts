@@ -13,6 +13,9 @@ export interface Picked {
   globalId: string;
 }
 
+/** One building storey as read from the IFC: its elevation and the top of its walls (both in metres, three.js Y). */
+export interface Storey { name: string; elevation: number; top: number }
+
 export class Viewer {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
@@ -28,6 +31,8 @@ export class Viewer {
   // to three.js Y-up by relabeling the axis (no sign flip, no origin shift with COORDINATE_TO_ORIGIN
   // false), so a slice height from the backend (`slicer/slice.py`, IFC Z) is used unchanged as a Y cutoff.
   private clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e6);
+  private box = new THREE.Box3();
+  private storeyList: Storey[] = [];
 
   constructor(canvas: HTMLCanvasElement, private onPick: (p: Picked | null) => void) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -113,6 +118,7 @@ export class Viewer {
         m.matrix.fromArray(pg.flatTransformation);
         m.matrixAutoUpdate = false;
         m.userData.expressID = mesh.expressID;
+        m.userData.typeCode = this.ifc.GetLineType(modelID, mesh.expressID);
         this.root.add(m);
         geom.delete();
         geometries++;
@@ -120,8 +126,45 @@ export class Viewer {
     });
     console.log(`[nocoast:viewer] model ${modelID}: ${products} products, ${geometries} meshes`);
     if (!geometries) console.warn("[nocoast:viewer] no geometry produced — is the IFC empty or unsupported?");
-    if (keepCamera) this.root.updateMatrixWorld(true);
-    else this.frame();
+    this.root.updateMatrixWorld(true); // meshes use manual matrices; world matrices must exist before measuring
+    this.box.setFromObject(this.root);
+    this.storeyList = this.readStoreys(modelID);
+    if (!keepCamera) this.frame();
+  }
+
+  /** Vertical extent of the loaded model in metres, or null when nothing is loaded. */
+  bounds(): { min: number; max: number } | null {
+    return this.box.isEmpty() ? null : { min: this.box.min.y, max: this.box.max.y };
+  }
+
+  /** Storeys of the loaded model, lowest first. */
+  storeys(): Storey[] {
+    return this.storeyList;
+  }
+
+  // Storey elevations come from IfcBuildingStorey; the top of each storey is the highest wall that
+  // starts at that elevation (an upper storey's walls start on its slab), so a section cut just under
+  // it shows the rooms without the ceiling. No containment lookups needed.
+  private readStoreys(modelID: number): Storey[] {
+    const ids = this.ifc.GetLineIDsWithType(modelID, WebIFC.IFCBUILDINGSTOREY);
+    const storeys: Storey[] = [];
+    for (let i = 0; i < ids.size(); i++) {
+      const line = this.ifc.GetLine(modelID, ids.get(i)) as Record<string, { value?: string | number } | undefined>;
+      const elevation = Number(line.Elevation?.value ?? 0);
+      storeys.push({ name: String(line.Name?.value ?? `storey ${i + 1}`), elevation, top: elevation });
+    }
+    storeys.sort((a, b) => a.elevation - b.elevation);
+    const bb = new THREE.Box3();
+    for (const child of this.root.children) {
+      const t = child.userData.typeCode as number;
+      if (t !== WebIFC.IFCWALL && t !== WebIFC.IFCWALLSTANDARDCASE) continue;
+      bb.setFromObject(child);
+      let s: Storey | undefined;
+      for (const c of storeys) if (c.elevation <= bb.min.y + 0.1) s = c;
+      if (s) s.top = Math.max(s.top, bb.max.y);
+    }
+    for (const s of storeys) if (s.top <= s.elevation) s.top = s.elevation + 3;
+    return storeys;
   }
 
   /** Reveal the model built up to (and including) `z` — the layer-by-layer construction walkthrough. Pass `Infinity` for everything. */
@@ -130,7 +173,9 @@ export class Viewer {
   }
 
   clear() {
-    this.clipPlane.constant = 1e6; // previews and fresh loads start fully visible; showVersion() re-applies the slider position
+    this.clipPlane.constant = 1e6; // fresh loads start fully visible; main.ts re-applies the section cut after each load
+    this.box.makeEmpty();
+    this.storeyList = [];
     for (const child of [...this.root.children]) {
       this.root.remove(child);
       const m = child as THREE.Mesh;
@@ -145,8 +190,7 @@ export class Viewer {
   }
 
   private frame() {
-    this.root.updateMatrixWorld(true); // meshes use manual matrices; make sure world matrices exist before measuring
-    const box = new THREE.Box3().setFromObject(this.root);
+    const box = this.box;
     if (box.isEmpty()) return;
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3()).length();
