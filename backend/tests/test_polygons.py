@@ -182,3 +182,13 @@ def test_orientation_check_counts_open_sides():
     res = check(d, analyze(d), [Requirement(text="carport on the east side", kind="orientation", room="carport", side="E"),
                                 Requirement(text="carport on the west side", kind="orientation", room="carport", side="W")])
     assert [r.status for r in res] == ["met", "unmet"]
+
+
+def test_door_check_finds_a_gate_in_a_free_wall():
+    from core.checks import check
+    from schemas.requirements import Requirement
+    d = Design(levels=[LevelDef(id="L1")], rooms=[RoomDef(id="studio", name="Studio", kind="office", rect=(0, 0, 4, 4))],
+               elements=[FreeDef(id="garden-wall", kind="wall", name="Garden wall", path=[[-2, -3], [8, -3]], height=1.8)],
+               doors=[DoorDef(id="gate", wall="garden-wall", kind="double")])
+    res = check(d, analyze(d), [Requirement(text="the garden wall has a gate", kind="door", room="garden wall", room2="outside")])
+    assert res[0].status == "met"
