@@ -94,3 +94,23 @@ def test_ops_revert_and_import():
 
     bad = client.post(f"/projects/{pid2}/import", files={"file": ("x.ifc", b"ISO-10303-21;\nHEADER;ENDSEC;DATA;ENDSEC;END-ISO-10303-21;", "application/x-step")})
     assert bad.status_code == 422
+
+
+def test_prompt_streams_build_steps_layer_by_layer():
+    """The reasoning panel's feed: stage events plus nested build steps, storey by storey."""
+    pid = new_project()
+    r = client.post(f"/projects/{pid}/prompt", json={"prompt": "Two storey house with three bedrooms and a garage"})
+    evs = events(r.text)
+    assert evs[-1]["stage"] == "done"
+    stages = [e["stage"] for e in evs if e["stage"] != "step"]
+    assert stages[0] == "program" and "compile" in stages
+    steps = [e["data"] for e in evs if e["stage"] == "step"]
+    done_steps = {s["id"]: s for s in steps if s["status"] == "done"}
+    assert {s["id"] for s in steps if s["status"] == "running"} == set(done_steps)  # everything that starts, finishes
+    layers = [s["title"] for s in done_steps.values() if s["layer"]]
+    assert layers[0] == "Building Ground Floor" and layers[-1] == "Building Roof" and len(layers) >= 3
+    ids = {s["id"] for s in steps}
+    assert all(s["parent"] in ids for s in steps if s["parent"])
+    assert any(s["title"] == "Checking geometry" for s in done_steps.values())
+    # the step events come before the version they describe
+    assert max(i for i, e in enumerate(evs) if e["stage"] == "step") < len(evs) - 1

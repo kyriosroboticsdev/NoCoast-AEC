@@ -114,9 +114,9 @@ const jsonPost = (body: unknown): RequestInit => ({
   body: JSON.stringify(body),
 });
 
-/** New design (no base) or an edit of `baseVersion`. */
-export const sendPrompt = (id: string, prompt: string, baseVersion: number | null, onEvent: (e: StageEvent) => void) =>
-  stream(`/projects/${id}/prompt`, jsonPost({ prompt, base_version: baseVersion }), onEvent);
+/** New design (no base) or an edit of `baseVersion`. `llm` picks a provider (defaults to the backend's). */
+export const sendPrompt = (id: string, prompt: string, baseVersion: number | null, onEvent: (e: StageEvent) => void,
+  llm?: string) => stream(`/projects/${id}/prompt`, jsonPost({ prompt, base_version: baseVersion, planner: llm }), onEvent);
 
 /** Make an older version the new head (recorded as a new version). */
 export const revert = (id: string, to: number, onEvent: (e: StageEvent) => void) =>
@@ -126,18 +126,34 @@ export const revert = (id: string, to: number, onEvent: (e: StageEvent) => void)
 export const backendUrl = (path: string) => (path.startsWith("/") ? `${BACKEND}${path}` : path);
 
 export async function fetchBytes(url: string): Promise<Uint8Array> {
-  // "/models/x.ifc" is a backend path; anything else is already a full URL.
-  const res = await fetch(url.startsWith("/") ? `${BACKEND}${url}` : url);
+  // "/models/x.ifc" is a backend path; anything else is resolved against the page.
+  const res = await fetch(url.startsWith("/") ? `${BACKEND}${url}` : new URL(url, location.href).href);
   if (!res.ok) throw new Error(`download failed: ${res.status}`);
   return new Uint8Array(await res.arrayBuffer());
 }
 
-/** The desktop shell starts the backend at launch; give it time to come up. */
-export async function waitForBackend(timeoutMs = 20000): Promise<void> {
+/** The desktop shell starts the backend at launch; a cold start (IfcOpenShell + LLM SDK imports) can take ~30 s. */
+export async function waitForBackend(timeoutMs = 90000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!(await health())) {
     if (Date.now() > deadline) throw new Error(`Backend not reachable at ${BACKEND}. Start it with: python main.py (in backend/)`);
     await new Promise((r) => setTimeout(r, 400));
+  }
+}
+
+export interface BackendInfo {
+  ok: boolean;
+  llm: { provider: string; model: string | null; providers: string[] } | null;
+}
+
+export async function info(): Promise<BackendInfo> {
+  try {
+    const res = await fetch(`${BACKEND}/health`, { signal: AbortSignal.timeout(1500) });
+    if (!res.ok) return { ok: false, llm: null };
+    const j = await res.json();
+    return { ok: true, llm: j.llm ?? null };
+  } catch {
+    return { ok: false, llm: null };
   }
 }
 

@@ -71,7 +71,7 @@ export function Sidebar(p: Props) {
         </div>
         <div className="muted small">
           {p.backendUp
-            ? `Planners: ${p.planners.join(", ") || "—"} · IfcOpenShell`
+            ? `Models: ${p.planners.join(", ") || "—"} · IfcOpenShell`
             : "Started automatically by the desktop app, or run python main.py in backend/."}
         </div>
       </div>

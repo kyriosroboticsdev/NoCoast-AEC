@@ -7,7 +7,13 @@ export interface PlannerOption {
   description: string;
 }
 
+/** Labels for the backend's LLM providers (see backend/llm/). Unknown ids show as-is. */
 export const PLANNER_INFO: Record<string, Omit<PlannerOption, "id">> = {
+  mock: { label: "Offline", description: "Built-in rule-based model. No API key, always available." },
+  llamacpp: { label: "llama.cpp", description: "Local GGUF model on this machine." },
+  ollama: { label: "Ollama", description: "Local model served by Ollama." },
+  claude: { label: "Claude", description: "Anthropic API (needs a key in backend/.env)." },
+  openai: { label: "OpenAI-compatible", description: "Any OpenAI-style endpoint (needs LLM_BASE_URL)." },
   template: { label: "Rule-based", description: "Deterministic layouts from keywords. Always valid." },
 };
 
@@ -75,11 +81,11 @@ export function Composer({ size, busy, planners, planner, setPlanner, onSubmit, 
         <span className="grow" />
         <div className="picker" ref={menuRef}>
           <button className="picker-btn" onClick={() => setMenu(!menu)}>
-            {info(planner).label} planner <ChevronDown size={14} />
+            {info(planner).label} <ChevronDown size={14} />
           </button>
           {menu && (
             <div className="menu">
-              <div className="menu-label">Planner</div>
+              <div className="menu-label">Model</div>
               {planners.map((p) => (
                 <button key={p} className={`menu-item ${p === planner ? "on" : ""}`}
                   onClick={() => { setPlanner(p); setMenu(false); }}>
@@ -91,7 +97,7 @@ export function Composer({ size, busy, planners, planner, setPlanner, onSubmit, 
                   {p === planner && <Check size={15} />}
                 </button>
               ))}
-              <div className="menu-foot">LLM planners appear here once the backend registers them.</div>
+              <div className="menu-foot">Providers come from the backend; configure keys in backend/.env.</div>
             </div>
           )}
         </div>

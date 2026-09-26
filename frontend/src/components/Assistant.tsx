@@ -1,6 +1,9 @@
-import { ChevronDown, ChevronUp, Code, Database, Sparkles, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Code, Database, Eye, RotateCcw, Sparkles, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Message, Session } from "../state/sessions";
+import { IfcTurnCard } from "@nocoast/ifc-viewer";
+import type { Version } from "../api/client";
+import { turnId } from "../turns";
 import { Composer } from "./Composer";
 import { Reasoning } from "./Reasoning";
 
@@ -12,9 +15,14 @@ interface Props {
   setPlanner: (p: string) => void;
   onSubmit: (text: string) => void;
   onAttach: () => void;
+  /** name of the model in the viewer (e.g. "v3.ifc") when it belongs to this session */
+  viewing: string | null;
+  onView: (v: Version) => void;
+  onRestore: (versionNumber: number) => void;
 }
 
-export function Assistant({ session, busy, ...composer }: Props) {
+export function Assistant({ session, busy, viewing, onView, onRestore, ...composer }: Props) {
+  const head = [...session.messages].reverse().find((m) => m.run?.version)?.run?.version?.number ?? null;
   const scroller = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
 
@@ -30,7 +38,9 @@ export function Assistant({ session, busy, ...composer }: Props) {
           const el = e.currentTarget;
           setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 40);
         }}>
-        {session.messages.map((m) => (m.role === "user" ? <UserBubble key={m.id} m={m} /> : <AssistantMessage key={m.id} m={m} />))}
+        {session.messages.map((m) => (m.role === "user" ? <UserBubble key={m.id} m={m} /> : (
+          <AssistantMessage key={m.id} m={m} head={head} busy={busy} viewing={viewing} onView={onView} onRestore={onRestore} />
+        )))}
       </div>
       {!atBottom && (
         <button className="jump" onClick={() => setAtBottom(true)} title="Jump to latest">
@@ -48,9 +58,13 @@ function UserBubble({ m }: { m: Message }) {
   return <div className="bubble">{m.text}</div>;
 }
 
-function AssistantMessage({ m }: { m: Message }) {
+function AssistantMessage({ m, head, busy, viewing, onView, onRestore }: {
+  m: Message; head: number | null; busy: boolean; viewing: string | null;
+  onView: (v: Version) => void; onRestore: (n: number) => void;
+}) {
   const run = m.run;
   if (!run) return <div className="answer"><p>{m.text}</p></div>;
+  const v = run.version;
 
   return (
     <div className="answer">
@@ -95,6 +109,31 @@ function AssistantMessage({ m }: { m: Message }) {
           {run.build.summary.elements} elements, as valid {run.build.summary.schema}, built in {run.build.seconds}s.
           {run.build.summary.spaces.length > 0 && <> Rooms: {run.build.summary.spaces.join(", ")}.</>}
         </p>
+      )}
+      {v && run.stage === "done" && (
+        <div className={`version-card ${viewing === `v${v.number}.ifc` ? "viewing" : ""}`}>
+          <div className="version-head">
+            <span className="version-badge">v{v.number}</span>
+            <span className="version-meta">
+              {v.mode}{v.llm ? ` · ${v.llm}` : ""} · {v.summary.elements} elements · {v.summary.storeys.length} storeys
+            </span>
+            {v.number === head && <span className="chip">latest</span>}
+          </div>
+          <IfcTurnCard turnId={turnId(v)} height={170} liveOn={v.number === head ? "visible" : "hover"} onExpand={() => onView(v)} />
+          <div className="version-actions">
+            <button className="btn ghost" onClick={() => onView(v)} disabled={viewing === `v${v.number}.ifc`}>
+              <Eye size={15} /> {viewing === `v${v.number}.ifc` ? "In viewer" : "View"}
+            </button>
+            {v.number !== head && (
+              <button className="btn ghost" onClick={() => onRestore(v.number)} disabled={busy} title="Make this the latest version again">
+                <RotateCcw size={15} /> Restore
+              </button>
+            )}
+          </div>
+          {v.notes.length > 0 && (
+            <ul className="notes small">{v.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
+          )}
+        </div>
       )}
       {run.stage === "error" && <div className="error-card"><X size={15} /> {run.error}</div>}
     </div>

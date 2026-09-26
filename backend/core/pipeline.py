@@ -21,6 +21,7 @@ import ifcopenshell
 from pydantic import ValidationError
 
 import config
+from agents.progress import Progress
 from logsetup import log
 from core.context import describe_spec
 from core.guids import GuidMap, prune_guids
@@ -54,6 +55,11 @@ def _fmt_validation(exc: ValidationError) -> list[str]:
 
 def _noop(stage: str, message: str, data: dict | None = None) -> None:
     pass
+
+
+def _steps(emit: Emit) -> Progress:
+    """Detailed build steps (storey by storey, geometry check) ride the same stream as stage "step"."""
+    return Progress(lambda ev: emit("step", ev["title"], ev))
 
 
 def _call(llm: LLM, request: LLMRequest) -> dict:
@@ -113,7 +119,7 @@ def request_edit(llm: LLM, prompt: str, head: VersionData, emit: Emit = _noop) -
                 emit("solve", "solving the layout")
                 spec, cascade = solve(resp.program), []
             emit("compile", "compiling IFC")
-            model, guids = compile_ifc(spec, head.guids)
+            model, guids = compile_ifc(spec, head.guids, _steps(emit))
             return spec, resp, cascade, guids, model
         except ValidationError as exc:
             errors = _fmt_validation(exc)
@@ -131,7 +137,7 @@ def _persist(store: Store, project_id: str, spec: BuildingSpec, guids: GuidMap, 
              model: ifcopenshell.file | None = None) -> VersionData:
     if model is None:
         emit("compile", "compiling IFC")
-        model, guids = compile_ifc(spec, guids)
+        model, guids = compile_ifc(spec, guids, _steps(emit))
     guids = prune_guids(spec, guids)
     head = store.head(project_id)
     number = head.number + 1 if head else 1

@@ -8,6 +8,7 @@ from pathlib import Path
 import ifcopenshell
 import ifcopenshell.geom
 
+from agents.progress import NO_PROGRESS, Progress
 from core.guids import GuidMap, ensure_guids
 from ifc.openings import add_opening
 from ifc.project import create_project
@@ -26,12 +27,35 @@ BUILDERS = [  # order matters: openings need their host walls
 ]
 
 
-def build_ifc(spec: BuildingSpec, guids: GuidMap | None = None) -> ifcopenshell.file:
-    ctx = create_project(spec, guids)
-    for kinds, build in BUILDERS:
-        for el in spec.elements:
-            if isinstance(el, kinds):
-                build(ctx, el)
+def build_ifc(spec: BuildingSpec, guids: GuidMap | None = None, progress: Progress = NO_PROGRESS) -> ifcopenshell.file:
+    with progress.step("Setting up the IFC project", phase="build") as s:
+        ctx = create_project(spec, guids)
+        s.detail = f"IfcProject → IfcSite → IfcBuilding · {len(spec.levels)} storeys · metres · IFC4"
+
+    # Build storey by storey so the model grows the way a building does. Doors and windows
+    # belong to their host wall's storey; roofs form their own final layer.
+    wall_level = {e.id: e.level for e in spec.elements if isinstance(e, Wall)}
+
+    def layer_of(el) -> str:
+        if isinstance(el, Roof):
+            return "roof"
+        return wall_level[el.wall] if isinstance(el, (Door, Window)) else el.level
+
+    layers = [(lv.id, lv.name, f"elevation {lv.elevation:g} m · {lv.height:g} m tall") for lv in spec.levels]
+    layers.append(("roof", "Roof", "on top of the storeys below"))
+    for layer_id, name, detail in layers:
+        items = [e for e in spec.elements if layer_of(e) == layer_id]
+        if not items:
+            continue
+        with progress.step(f"Building {name}", phase="build", detail=detail, layer=True) as lay:
+            for kinds, build, label in BUILDERS:
+                group = [e for e in items if isinstance(e, kinds)]
+                if not group:
+                    continue
+                with progress.step(f"{len(group)} {label[len(group) != 1]}", phase="build", parent=lay):
+                    for el in group:
+                        build(ctx, el)
+            lay.detail = f"{detail} · {len(items)} elements"
     return ctx.model
 
 
@@ -68,13 +92,17 @@ class GeometryError(ValueError):
     pass
 
 
-def compile_ifc(spec: BuildingSpec, guids: GuidMap | None = None) -> tuple[ifcopenshell.file, GuidMap]:
+def compile_ifc(spec: BuildingSpec, guids: GuidMap | None = None,
+                progress: Progress = NO_PROGRESS) -> tuple[ifcopenshell.file, GuidMap]:
     """Build and geometry-check. Returns the model and the (possibly extended) guid map."""
     guids = ensure_guids(spec, guids)
-    model = build_ifc(spec, guids)
-    failures = check_geometry(model)
-    if failures:
-        raise GeometryError("geometry check failed: " + "; ".join(failures[:10]))
+    model = build_ifc(spec, guids, progress)
+    with progress.step("Checking geometry", phase="build", detail="tessellating every element with IfcOpenShell") as s:
+        failures = check_geometry(model, lambda i, n: s.update(f"tessellating {i}/{n} elements"))
+        if failures:
+            raise GeometryError("geometry check failed: " + "; ".join(failures[:10]))
+        n = sum(1 for p in model.by_type("IfcProduct") if p.Representation and not p.is_a("IfcOpeningElement"))
+        s.detail = f"{n} elements tessellated, no failures"
     return model, guids
 
 

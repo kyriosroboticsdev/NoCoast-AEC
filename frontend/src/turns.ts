@@ -5,6 +5,11 @@ import { backendUrl, fetchBytes, type Version } from "./api/client";
 
 export const turnId = (v: Pick<Version, "project_id" | "number">) => `${v.project_id}:v${v.number}`;
 
+export function ensureTurn(v: Version) {
+  const id = turnId(v);
+  if (!runtime.getTurns().some((t) => t.turn.id === id)) void runtime.addTurn(toTurn(v));
+}
+
 export function toTurn(v: Version): TurnRef {
   return {
     id: turnId(v),

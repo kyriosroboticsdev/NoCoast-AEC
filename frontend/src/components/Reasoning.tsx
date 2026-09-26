@@ -29,10 +29,11 @@ export function Reasoning({ run }: { run: Run }) {
   const failed = run.stage === "error";
 
   // Layer stack: one block per storey (+ roof), filled as each is built.
-  const layerSteps = steps.filter((s) => s.layer && !s.parent);
+  const layerSteps = steps.filter((s) => s.layer);
+  // Storeys + roof: known from the plan (older runs) or the finished version; otherwise what's arrived so far.
   const planned = run.plan
     ? run.plan.spec.levels.length + (run.plan.spec.elements.some((e) => (e as { type?: string }).type === "roof") ? 1 : 0)
-    : 0;
+    : run.version ? run.version.summary.storeys.length + 1 : 0;
   const totalLayers = Math.max(planned, layerSteps.length);
 
   if (!steps.length && !running) return null;
@@ -61,7 +62,7 @@ export function Reasoning({ run }: { run: Run }) {
 
       {open && (
         <ol className="trace">
-          {top.map((s) => <StepRow key={s.id} step={s} kids={children} depth={0} layerIndex={layerSteps.indexOf(s)} layerTotal={totalLayers} />)}
+          {top.map((s) => <StepRow key={s.id} step={s} kids={children} depth={0} layers={layerSteps} layerTotal={totalLayers} />)}
           {running && !steps.length && <li className="trace-row running"><span className="trace-dot"><LoaderCircle size={14} className="spin" /></span><span className="trace-main">Connecting…</span></li>}
         </ol>
       )}
@@ -69,16 +70,17 @@ export function Reasoning({ run }: { run: Run }) {
   );
 }
 
-function StepRow({ step, kids, depth, layerIndex, layerTotal }: {
-  step: TraceStep; kids: Map<string | null, TraceStep[]>; depth: number; layerIndex: number; layerTotal: number;
+function StepRow({ step, kids, depth, layers, layerTotal }: {
+  step: TraceStep; kids: Map<string | null, TraceStep[]>; depth: number; layers: TraceStep[]; layerTotal: number;
 }) {
+  const layerIndex = layers.indexOf(step);
   const children = kids.get(step.id) ?? [];
   const [open, setOpen] = useState(true);
   const Icon = step.layer ? Layers : PHASE_ICON[step.phase] ?? Sparkles;
   const icon =
     step.status === "running" ? <LoaderCircle size={14} className="spin" /> :
     step.status === "error" ? <X size={14} /> :
-    depth === 0 ? <Icon size={14} /> : <Check size={12} />;
+    depth === 0 || step.layer ? <Icon size={14} /> : <Check size={12} />;
 
   return (
     <li className={`trace-row ${step.status} ${depth ? "child" : ""} ${step.layer ? "layer" : ""}`}>
@@ -93,7 +95,7 @@ function StepRow({ step, kids, depth, layerIndex, layerTotal }: {
         {(step.error || step.detail) && <div className={`trace-detail ${step.error ? "err" : ""}`}>{step.error ?? step.detail}</div>}
         {open && children.length > 0 && (
           <ol className="trace nested">
-            {children.map((c) => <StepRow key={c.id} step={c} kids={kids} depth={depth + 1} layerIndex={-1} layerTotal={layerTotal} />)}
+            {children.map((c) => <StepRow key={c.id} step={c} kids={kids} depth={depth + 1} layers={layers} layerTotal={layerTotal} />)}
           </ol>
         )}
       </div>

@@ -10,7 +10,6 @@ from typing import Protocol
 
 from pydantic import BaseModel
 
-from agents.progress import NO_PROGRESS, Progress
 from schemas.bim import BuildingSpec
 from schemas.program import Program
 
@@ -25,6 +24,4 @@ class PlanResult(BaseModel):
 class Planner(Protocol):
     name: str
 
-    def plan(self, prompt: str, progress: Progress = NO_PROGRESS) -> PlanResult:
-        """Report steps on `progress` as you go; the UI shows them live."""
-        ...
+    def plan(self, prompt: str) -> PlanResult: ...

@@ -1,7 +1,7 @@
 // Sessions = one conversation + the model it produced. Persisted in localStorage
 // (per-machine convenience only; generated IFCs live on the backend).
 import { useCallback, useEffect, useState } from "react";
-import type { BuildResult, PlanResult } from "../api/client";
+import type { BuildResult, PlanResult, Version } from "../api/client";
 
 export type Stage = "planning" | "building" | "loading" | "done" | "error";
 
@@ -21,6 +21,9 @@ export interface TraceStep {
 export interface Run {
   stage: Stage;
   error?: string;
+  /** the project version this turn produced */
+  version?: Version;
+  /** older sessions (before versioned projects) */
   plan?: PlanResult;
   build?: BuildResult;
   steps?: TraceStep[];
@@ -43,6 +46,8 @@ export interface ModelRef {
 
 export interface Session {
   id: string;
+  /** backend project behind this conversation (absent for files opened from disk) */
+  projectId?: string;
   title: string;
   createdAt: number;
   messages: Message[];
