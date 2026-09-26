@@ -81,6 +81,7 @@ backend/
   store/db.py           SQLite projects/versions (spec + design + checks + attachments); IFC files, screenshots and
                         attached images under backend/output/projects/<id>/
   api/routes.py         HTTP API; api/sse.py streams pipeline progress as Server-Sent Events
+  export/               final deliverable: validate, stamp provenance, zip bundle (route: api/export.py)
   agents/               stateless planners for /plan and /generate (template regex → steps, llm)
   tests/                pytest; runs entirely on the mock LLM; tests/evals/prompts.json = accuracy set
   tools/eval.py         score the configured model on the evaluation set
@@ -491,6 +492,8 @@ History is linear; `revert/{n}` appends a copy of *n*; `base_version` gives opti
 | `GET /projects/{id}/versions/{n}/ifc` | | the IFC file |
 | `GET /projects/{id}/versions/{n}/spec` | | `{version, spec, design, guids}` |
 | `GET /projects/{id}/versions/{n}/context` | | text — exactly what the LLM sees when editing |
+| `GET /projects/{id}/versions/{n}/validate` | `?thorough=true` adds schema rules | validation report |
+| `POST /projects/{id}/versions/{n}/export` | multipart `options` (JSON) + `snapshots` (PNG) | stamped `.ifc` or `.zip` bundle |
 | `GET /projects/{id}/versions/{n}/render` | `?target=&azimuth=&elevation=&level=&cut=&hide=&position=&look_at=&distance=&ortho=&fov=&width=&height=` | a PNG from any view — the renderer the model looks through; `X-Visible` lists the elements in frame |
 | `GET /projects/{id}/shots/{name}` | | a screenshot the model was shown (linked from the `look` SSE stage) |
 | `GET /projects/{id}/attachments/{file}` | | an image the user attached to one of this project's prompts |
@@ -503,6 +506,24 @@ History is linear; `revert/{n}` appends a copy of *n*; `base_version` gives opti
 
 SSE events: `event: <stage>` + `data: {"seq", "t", "stage", "message", "data"}`, stages as in §4.5.
 `done.data` is the version record incl. `ifc_url` and `checks`.
+
+**Export** (`backend/export/`, route in `api/export.py`) turns a version into a deliverable. The stored
+version is never modified; every export works on a fresh copy.
+
+1. **Validate.** IfcOpenShell schema validation, plus the schema's WHERE rules when `thorough` (a few
+   seconds). Structural checks: one project with units, building storeys, unique GlobalIds, and
+   elements with geometry placed in a storey. Errors block export when `strict` (the default) and the
+   route returns 422 with the report. Warnings never block.
+2. **Stamp.** The STEP header gets author, organization, originating system and file name.
+   `IfcProject` gets the project name and a `NoCoast_Export` property set: export time, source project
+   and version, validation status, and the prompt history that produced this version (walked through
+   the version parents). GlobalIds are unchanged. The stamped file is validated again before it is sent.
+3. **Bundle** (`format: "zip"`): `<name>-vN/` containing the IFC, a `README.md` (counts, checks, issues,
+   prompt history, snapshots), `validation.json`, `snapshots/*.png` rendered by the app, and a
+   `manifest.json` with every file's SHA-256.
+
+`options`: `{format: "ifc"|"zip", project_name?, author?, organization?, strict = true, thorough = true}`.
+The file name comes back in `X-Export-Filename`, and `X-Validation-Status` is `passed` or `failed`.
 
 ### 4.13 Frontend
 
@@ -546,6 +567,12 @@ went away is picked up instead of leaving the session a version behind.
 prompt — picked, dropped onto the composer, or pasted into it. They appear as thumbnails before sending and
 stay with the sent message; their bytes are never written to `localStorage` (the sessions there would blow
 the quota), so after a reload the thumbnails come from the backend's copy on the version.
+
+**Export IFC** (`src/components/ExportDialog.tsx`). For a version of the session's project the button
+opens the export dialog (§4.12): it lists the validation result, takes project name, author and
+organization (remembered in `localStorage`), and saves either the stamped `.ifc` or the `.zip` bundle
+with snapshots taken from the viewer package. For a file opened from disk it saves the file as is, and
+it is disabled while a live preview is on screen.
 
 `Open IFC…` and `Sample` view a file in the main viewer without adding it to the project; the
 backend's `/projects/{id}/import` endpoint has no button yet. The server-side slicer and live-build
@@ -701,6 +728,8 @@ previews, edits keeping GlobalIds, overrides replayed, conflict 409, import) · 
 and the size cap, the bytes reaching a vision model and staying behind for one without, a prompt whose images
 are recorded on the version and served back) · every element kind
 compiling. `python tools/eval.py` measures accuracy on the real model.
+
+`backend/tests/test_export.py` covers validation, stamping, the zip bundle and strict refusal.
 
 ## 6. Decisions and their reasons
 

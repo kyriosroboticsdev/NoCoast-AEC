@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { IfcViewerProvider } from "@nocoast/ifc-viewer";
 import * as api from "./api/client";
 import { Assistant } from "./components/Assistant";
+import { ExportDialog } from "./components/ExportDialog";
 import { Home } from "./components/Home";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
@@ -67,6 +68,7 @@ export default function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [section, setSection] = useState<SectionView | null>(null);
   const [roomsVisible, setRoomsVisible] = useState(false);
+  const [exporting, setExporting] = useState<api.Version | null>(null); // version in the export dialog
   // The camera is framed on the first model of a session and then left alone: previews and new versions
   // load into the same view so the building grows in place — unless it clearly outgrows the view.
   const framed = useRef(0);
@@ -532,6 +534,15 @@ export default function App() {
   const v = viewerRef.current;
   // The selection is only meaningful as prompt context when the workspace shows a version of this session.
   const focusFor = active?.project && loaded?.key.startsWith(`${active.id}:v`) ? focus : null;
+  // The version shown in the workspace, when it is one of this session's project versions (not a file
+  // opened from disk). Export then goes through the validated, stamped export; otherwise it saves as is.
+  const shownNumber = Number(loaded?.name.match(/^v(\d+)\.ifc$/)?.[1] ?? NaN);
+  const shownVersion = active?.project && loaded?.key.startsWith(`${active.id}:`)
+    ? active.messages.map((m) => m.run?.version).find((ver) => ver?.number === shownNumber) ?? null
+    : null;
+  const onExport = shown?.preview ? null // nothing to export while a live preview is on screen
+    : shownVersion ? () => setExporting(shownVersion)
+    : loaded ? () => platform.saveIfc(loaded.name, loaded.bytes) : null;
 
   return (
     <IfcViewerProvider runtime={runtime}>
@@ -547,7 +558,7 @@ export default function App() {
           showAssistantToggle={!!active} onHome={() => setActiveId(null)}
           onToggleSidebar={() => setFlag("sidebarOpen", !layout.sidebarOpen)}
           onToggleAssistant={() => setFlag("assistantOpen", !layout.assistantOpen)}
-          onExport={loaded && !shown?.preview ? () => platform.saveIfc(loaded.name, loaded.bytes) : null}
+          onExport={onExport}
           onDelete={active ? () => removeSession(active.id) : null} />
         <div className="content">
           <Workspace hostRef={hostRef} viewer={viewerReady ? v : null}
@@ -581,6 +592,9 @@ export default function App() {
           )}
         </div>
       </div>
+      {exporting && (
+        <ExportDialog projectId={exporting.project_id} version={exporting} onClose={() => setExporting(null)} />
+      )}
     </div>
     </IfcViewerProvider>
   );
