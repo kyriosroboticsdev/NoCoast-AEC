@@ -183,10 +183,17 @@ def _check_one(design: Design, d: Derived, req: Requirement) -> CheckResult:
     if k == "furniture":
         kinds = _fixtures_for(req.item)
         fx = [f for f in design.fixtures if f.kind in kinds]
+        # An uploaded IFC component whose name names the item ("Kitchen island" for "island") counts too.
+        word = (req.item or "").lower().replace("_", " ").strip()
+        comps = [c for c in design.components if word and word in " ".join(
+            filter(None, [(c.name or "").lower(), (design.assets[c.asset].name.lower() if c.asset in design.assets else "")]))]
         if req.room:
             ids = {r.id for r in _match_rooms(design, req.room)}
             fx = [f for f in fx if f.room in ids]
-        return CheckResult(req, "met" if len(fx) >= n else "unmet", f"{len(fx)} {req.item}(s)" + (f" in {req.room}" if req.room else "") + f", wanted {n}")
+            comps = [c for c in comps if c.room in ids]
+        have = len(fx) + len(comps)
+        return CheckResult(req, "met" if have >= n else "unmet", f"{have} {req.item}(s)" + (f" in {req.room}" if req.room else "")
+                           + (f" ({len(comps)} uploaded component(s))" if comps else "") + f", wanted {n}")
 
     if k == "roof":
         want = (req.item or "").lower()

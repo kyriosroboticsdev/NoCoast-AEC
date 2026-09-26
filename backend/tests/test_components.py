@@ -149,3 +149,18 @@ def test_deleting_an_upload_keeps_old_versions_compiling(island_files):
     spec = client.get(f"/projects/{pid}/versions/{v3['number']}/spec").json()["spec"]
     assert not [e for e in spec["elements"] if e["type"] == "component"]
     assert client.get(f"/projects/{pid}/versions/{v2['number']}/ifc").status_code == 200
+
+
+def test_placed_component_satisfies_a_matching_furniture_requirement():
+    from core.checks import _check_one
+    from core.derive import analyze
+    from schemas.design import AssetRef, ComponentDef, Design, RoomDef
+    from schemas.requirements import Requirement
+    design = Design(rooms=[RoomDef(id="kitchen", name="Kitchen", level="L1", kind="kitchen", rect=(0, 0, 5, 4))])
+    design.assets = {"kitchen-island": AssetRef(id="kitchen-island", name="Kitchen island", source="x.ifc", width=1.9,
+                                                depth=1.0, height=0.9, origin=(0, 0, 0), products=["g"])}
+    req = Requirement(text="an island in the kitchen", kind="furniture", item="island", room="kitchen")
+    assert _check_one(design, analyze(design), req).status == "unmet"
+    design.components = [ComponentDef(id="kitchen-island-kitchen", asset="kitchen-island", room="kitchen")]
+    result = _check_one(design, analyze(design), req)
+    assert result.status == "met" and "uploaded component" in result.detail
