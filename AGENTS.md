@@ -6,6 +6,11 @@ conflicts with a rule here, say so and ask before breaking it.
 
 ## Git and GitHub
 
+The team workflow is in `CONTRIBUTING.md`: one git worktree per branch (`tools\ws.ps1 new <branch>`),
+and git hooks (`tools\ws.ps1 setup`) that refuse commits on `main`, commits in a folder that belongs to
+another branch, commits to files another workstream owns (`WORKSTREAMS`), and pushes to `main`.
+Never bypass those hooks with the `ALLOW_*` overrides unless the user explicitly asks.
+
 - **Never push to `main`, and never force-push to `main`.** Work on a branch named `feat/…`, `fix/…`,
   `docs/…` or `chore/…`, created from an up-to-date `main` (`git fetch` first).
 - Deliver work as a **pull request** with a description of what changed and how it was tested. Do not
@@ -37,9 +42,10 @@ Changes in an area go to that area's reviewer. Mention them in the pull request.
 
 | Area | Reviewer |
 |---|---|
-| `backend/` | kyriosroboticsdev |
-| `frontend/` | Kailash Kannan |
-| `packages/ifc-viewer/` | Drona Thoka |
+| `backend/` | kyriolexy (commits may show the author name "kyriosroboticsdev") |
+| `frontend/` | Kailash Kannan (pushes through the `kyriosroboticsdev` account) |
+| `packages/ifc-viewer/` | Drona Thoka (`Drona-Thoka`) |
+| slicer / construction order | Abhijyot Chadha (`Aeioujyot`) |
 
 ## Hard constraints
 

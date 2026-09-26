@@ -438,9 +438,10 @@ conflict 409, ops, revert, import, bad import) · the legacy stateless endpoints
 
 ## 8. Contributing
 
-Five people work on this repo, so `main` only changes through reviewed pull requests. These are team
-rules. GitHub does not enforce them yet, so everyone, and every coding agent, follows them by hand.
-Agents get the same rules as instructions in [`AGENTS.md`](AGENTS.md).
+Five people work on this repo, so `main` only changes through reviewed pull requests. GitHub does not
+enforce this yet; the git hooks from [`CONTRIBUTING.md`](CONTRIBUTING.md) (`tools\ws.ps1 setup`) do it on
+each clone, and CONTRIBUTING.md also covers the one-folder-per-branch workflow. Agents get the same rules
+as instructions in [`AGENTS.md`](AGENTS.md).
 
 **Workflow**
 
@@ -469,9 +470,10 @@ also needs the frontend checks.
 
 | Area | Reviewer |
 |---|---|
-| `backend/` | kyriosroboticsdev |
-| `frontend/` | Kailash Kannan |
-| `packages/ifc-viewer/` | Drona Thoka |
+| `backend/` | kyriolexy (commits may show the author name "kyriosroboticsdev") |
+| `frontend/` | Kailash Kannan (pushes through the `kyriosroboticsdev` account) |
+| `packages/ifc-viewer/` | Drona Thoka (`Drona-Thoka`) |
+| slicer / construction order | Abhijyot Chadha (`Aeioujyot`) |
 | everything else | anyone |
 
 **Things that must not happen**
