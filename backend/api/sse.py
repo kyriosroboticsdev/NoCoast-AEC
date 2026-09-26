@@ -11,6 +11,7 @@ from typing import Callable
 from fastapi.responses import StreamingResponse
 
 from core.pipeline import ConflictError, PipelineError
+from logsetup import log
 
 _END = object()
 
@@ -21,16 +22,20 @@ def sse_response(work: Callable[[Callable[[str, str, dict | None], None]], objec
     q: queue.Queue = queue.Queue()
 
     def emit(stage: str, message: str, data: dict | None = None) -> None:
+        log.info("stage %s: %s", stage, message)
         q.put({"stage": stage, "message": message, "data": data})
 
     def run() -> None:
         try:
             work(emit)
         except ConflictError as exc:
+            log.warning("conflict: %s", exc)
             q.put({"stage": "error", "message": str(exc), "data": {"code": 409}})
         except PipelineError as exc:
+            log.error("pipeline error: %s", exc)
             q.put({"stage": "error", "message": str(exc), "data": {"code": 422}})
         except Exception as exc:  # noqa: BLE001 - report, don't hang the stream
+            log.exception("unexpected error in pipeline")
             q.put({"stage": "error", "message": f"{type(exc).__name__}: {exc}", "data": {"code": 500}})
         finally:
             q.put(_END)

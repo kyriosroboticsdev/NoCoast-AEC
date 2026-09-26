@@ -111,7 +111,7 @@ def _assign_rooms(text: str, storeys: int, notes: list[str]) -> list[Room]:
                 rooms[j] = (f"Bedroom {k}", kind)
     for i, rooms in enumerate(floors):
         notes.append(f"level {i + 1}: {', '.join(r for r, _ in rooms)}")
-    return [Room(name=r, level=i, kind=kind) for i, rooms in enumerate(floors) for r, kind in rooms]
+    return [Room(name=r, level=f"L{i + 1}", kind=kind) for i, rooms in enumerate(floors) for r, kind in rooms]
 
 
 class TemplatePlanner:

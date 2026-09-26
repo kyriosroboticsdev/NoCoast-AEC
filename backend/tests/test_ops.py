@@ -54,6 +54,7 @@ def test_set_building():
 
 @pytest.mark.parametrize("ops, fragment", [
     ([DeleteElement(id="nope")], "does not exist"),
+    ([DeleteElement(id="wall-w1")], "did you mean 'w1'"),
     ([ModifyElement(id="w1", set={"type": "slab"})], "cannot change the type"),
     ([ModifyElement(id="w1", set={"id": "w9"})], "immutable"),
     ([ModifyElement(id="w1", set={"end": [2, 0]})], "runs past the end"),  # d1/win1 no longer fit

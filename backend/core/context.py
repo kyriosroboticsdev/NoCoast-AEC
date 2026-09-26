@@ -22,29 +22,31 @@ def _outline(pts) -> str:
 
 
 def describe_element(el) -> str:
-    name = f' "{el.name}"' if el.name and el.name != el.id else ""
+    """`<type> id=<id> ...` — the explicit id= keeps small models from merging type and id into one token."""
+    name = f' name="{el.name}"' if el.name and el.name != el.id else ""
+    head = f"{el.type} id={el.id}{name}"
     if el.type == "wall":
         ext = " external" if el.external else ""
         h = f" h={el.height:g}" if el.height else ""
-        return f"wall {el.id}{name} {_pt(el.start)}->{_pt(el.end)} len={el.length:.2f} t={el.thickness:g}{h}{ext}"
+        return f"{head} {_pt(el.start)}->{_pt(el.end)} len={el.length:.2f} t={el.thickness:g}{h}{ext}"
     if el.type == "door":
-        return f"door {el.id}{name} on {el.wall} offset={el.offset:g} w={el.width:g} h={el.height:g}"
+        return f"{head} wall={el.wall} offset={el.offset:g} w={el.width:g} h={el.height:g}"
     if el.type == "window":
-        return f"window {el.id}{name} on {el.wall} offset={el.offset:g} w={el.width:g} h={el.height:g} sill={el.sill_height:g}"
+        return f"{head} wall={el.wall} offset={el.offset:g} w={el.width:g} h={el.height:g} sill={el.sill_height:g}"
     if el.type in ("slab", "roof"):
-        return f"{el.type} {el.id}{name} outline={_outline(el.outline)} t={el.thickness:g}"
+        return f"{head} outline={_outline(el.outline)} t={el.thickness:g}"
     if el.type == "space":
-        return f"space {el.id}{name} outline={_outline(el.outline)}"
+        return f"{head} outline={_outline(el.outline)}"
     if el.type == "column":
-        return f"column {el.id}{name} at {_pt(el.position)} {el.width:g}x{el.depth:g}"
-    return f"{el.type} {el.id}"
+        return f"{head} at {_pt(el.position)} {el.width:g}x{el.depth:g}"
+    return head
 
 
 def describe_spec(spec: BuildingSpec) -> str:
     lines = [f'building "{spec.building.name}"' + (f": {spec.building.description}" if spec.building.description else "")]
     lines.append("levels:")
     for l in spec.levels:
-        lines.append(f"  {l.id} \"{l.name}\" elevation={l.elevation:g} height={l.height:g}")
+        lines.append(f"  level id={l.id} name=\"{l.name}\" elevation={l.elevation:g} height={l.height:g}")
     by_level: dict[str, list] = {l.id: [] for l in spec.levels}
     walls = {el.id: el for el in spec.elements if el.type == "wall"}
     for el in spec.elements:

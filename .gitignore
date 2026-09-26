@@ -15,6 +15,8 @@ frontend/src-tauri/gen/
 
 # Generated output (IFC files, SQLite db)
 backend/output/
+# llama.cpp binaries fetched by tools/get_llama.py
+backend/.llama/
 
 # Env / secrets
 .env

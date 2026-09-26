@@ -56,7 +56,7 @@ def test_design_then_edit_keeps_guids():
     detail = client.get(f"/projects/{pid}").json()
     assert detail["head"]["number"] == 4 and len(detail["versions"]) == 4
     assert "CURRENT MODEL" not in client.get(f"/projects/{pid}/versions/4/context").text
-    assert "wall L1-wall-S" in client.get(f"/projects/{pid}/versions/4/context").text
+    assert "wall id=L1-wall-S" in client.get(f"/projects/{pid}/versions/4/context").text
 
 
 def test_conflict_and_errors():

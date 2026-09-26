@@ -90,19 +90,39 @@ Environment (see `backend/.env.example`):
 
 | var | meaning |
 |---|---|
-| `LLM_PROVIDER` | `mock` (default, no model needed), `claude`, `ollama`, `openai` |
-| `ANTHROPIC_API_KEY` | key for the `claude` provider (or use an `ant auth login` profile) |
+| `LLM_PROVIDER` | `mock` (default, no model needed), `llamacpp`, `claude`, `ollama`, `openai` |
+| `LLM_MODELS_DIR`, `LLAMA_SERVER`, `LLAMA_GPU_LAYERS`, `LLAMA_CTX` | `llamacpp`: folder of `.gguf` files, server binary, GPU offload (99 = all), context |
+| `ANTHROPIC_API_KEY`, `ANTHROPIC_WORKSPACE_ID` | `claude`: key (or an `ant auth login` profile); workspace id only for org-level keys |
+| `BIM_LOG_LEVEL` | `INFO` (default) or `DEBUG` (full LLM prompts and replies in the backend console) |
 | `LLM_MODEL`, `LLM_BASE_URL`, `LLM_API_KEY` | model id / endpoint / key for the chosen provider |
 | `BIM_MAX_REPAIRS` | validate→repair round trips per LLM call (default 2) |
 | `BIM_OUTPUT_DIR`, `BIM_DB_PATH`, `BIM_PORT` | storage and port |
 | `VITE_BACKEND_URL` (frontend) | backend origin, default `http://127.0.0.1:8765` |
 | `BIM_NO_BACKEND`, `BIM_BACKEND_DIR`, `BIM_PYTHON` (Tauri) | control how the shell spawns the backend |
 
-To use Claude: put `LLM_PROVIDER=claude` and `ANTHROPIC_API_KEY=sk-ant-…` in `backend/.env`
-(optionally `LLM_MODEL=claude-sonnet-5` for cheaper runs). To use a local model: install [Ollama](https://ollama.com), `ollama pull llama3.1` (or any model that
-supports JSON-schema `format`), set `LLM_PROVIDER=ollama LLM_MODEL=llama3.1`. Any server with an
-OpenAI-compatible `/chat/completions` (vLLM, LM Studio, llama.cpp, a hosted API, a fine-tuned model)
-works with `LLM_PROVIDER=openai LLM_BASE_URL=http://host:port/v1`.
+**Local `.gguf` models (recommended for development).** Fetch a prebuilt `llama-server` once, then point
+the backend at your model folder; the server is started on first use and stopped with the backend:
+
+```bash
+cd backend
+python tools/get_llama.py            # Vulkan build: any GPU, no CUDA toolkit (--backend cpu | cuda-13.4 also work)
+# backend/.env
+LLM_PROVIDER=llamacpp
+LLM_MODELS_DIR=D:\Models
+LLM_MODEL=llama-3.2-3b-instruct-q4_k_m.gguf
+```
+
+Measured on an RTX 5060 laptop (Vulkan): model load 4–50 s (first run compiles shaders, ~80 s), a new
+design 10–15 s, an edit 3–10 s. Llama-3.2-3B and Qwen3-4B both complete design + edits without repair
+rounds after the schema hardening described in §4.5.
+
+**Claude.** `LLM_PROVIDER=claude` and `ANTHROPIC_API_KEY=sk-ant-…` in `backend/.env` (optionally
+`LLM_MODEL=claude-sonnet-5` for cheaper runs). A key created at organisation level rather than inside a
+workspace is rejected with *"must include the anthropic-workspace-id header"* — add
+`ANTHROPIC_WORKSPACE_ID=wrkspc_…` (Console → Settings → Workspaces) or create the key inside a workspace.
+
+**Ollama / anything OpenAI-compatible.** `LLM_PROVIDER=ollama LLM_MODEL=llama3.1`, or
+`LLM_PROVIDER=openai LLM_BASE_URL=http://host:port/v1` for vLLM, LM Studio, a hosted API or a fine-tuned model.
 
 ## 4. Specifications
 
@@ -222,9 +242,18 @@ class LLM(Protocol):
 | provider | how JSON is enforced | notes |
 |---|---|---|
 | `mock` | regexes over the prompt (`llm/mock.py`) | no network; backs the tests; fallback when a model is down |
-| `claude` | Anthropic SDK, `output_config.format` json_schema (`llm/claude.py`) | `claude-opus-5` by default; schema rewritten to the strict subset |
-| `ollama` | `/api/chat` with `format: <json schema>` (grammar-constrained) | local models |
-| `openai` | `/chat/completions` with `response_format: json_schema` | vLLM, LM Studio, llama.cpp, hosted, fine-tuned |
+| `llamacpp` | starts `llama-server` on a local `.gguf`, then `openai` below (`llm/llamacpp.py`) | grammar-constrained by llama.cpp; server log in `backend/.llama/server.log` |
+| `claude` | Anthropic SDK, `output_config.format` json_schema (`llm/claude.py`) | `claude-opus-5` by default |
+| `ollama` | `/api/chat` with `format: <json schema>` (grammar-constrained) | local models via Ollama |
+| `openai` | `/chat/completions` with `response_format: json_schema` | vLLM, LM Studio, hosted, fine-tuned |
+
+Every provider receives the schema through `llm/schema.py::strict_schema`: all properties required,
+objects closed, tuples as fixed-length arrays. This came out of testing 3–4B local models, which skip
+optional keys (rooms lost their `level`) and, once keys are required, fill unused ones with junk — so the
+Program coerces junk (`footprint: [0, 0]`, `storey_height: 0`) to "unspecified", rooms name storeys by id
+(`"L2"`, the same ids the model sees in the context) instead of a 0-based index, `program` is ignored in
+`mode="ops"`, and unknown-id errors suggest the closest real ids. The context lists elements as
+`wall id=L1-wall-S …` because small models otherwise merge type and id into `wall-L1-wall-S`.
 
 Two calls exist (`llm/prompts.py`): **program** (`PROGRAM_SYSTEM`, user = request) and **edit**
 (`EDIT_SYSTEM`, user = current model as text + request). Both are single-shot and schema-constrained,
@@ -315,6 +344,22 @@ Undo (revert to n-1), Import IFC and Download IFC.
 
 The Tauri shell (`src-tauri/`) adds nothing to the UI: it spawns `python main.py` in `backend/` on
 startup (skip with `BIM_NO_BACKEND=1`) and kills it on exit.
+
+## 4.13 Troubleshooting
+
+Both sides log verbosely so a failure can be diagnosed from two pastes:
+
+- **Backend console** (`python main.py`): every request, LLM call with timing, rejected answer with the
+  validation errors that went back to the model, and full tracebacks. `BIM_LOG_LEVEL=DEBUG` adds the
+  complete prompts and replies. `llama-server`'s own output is in `backend/.llama/server.log`.
+- **Browser console** (F12 → Console, filter `[nocoast]`): page/backend URL, health, project open, every
+  API call and SSE event, IFC size, web-ifc init and mesh counts, and uncaught errors. The status line
+  under the prompt shows the last event or error too.
+
+Common ones: *backend not reachable* → start `python main.py` in `backend/` (or set `VITE_BACKEND_URL`);
+*web-ifc init FAILED* → `npm install` did not run `scripts/copy-wasm.mjs`, so `public/wasm/` is empty;
+*language model unavailable* → the provider's own message follows (missing key, workspace id, model file,
+`llama-server` exit code with the last log line).
 
 ## 5. Tests
 

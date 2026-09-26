@@ -7,6 +7,7 @@ import json
 import httpx
 
 from llm.base import LLMError, LLMRequest
+from llm.schema import strict_schema
 
 
 class OllamaLLM:
@@ -21,7 +22,7 @@ class OllamaLLM:
         body = {
             "model": self.model,
             "stream": False,
-            "format": request.schema,  # constrained decoding: the reply is guaranteed to parse
+            "format": strict_schema(request.schema),  # constrained decoding: the reply is guaranteed to parse
             "options": {"temperature": 0, "num_ctx": 16384},
             "messages": [{"role": "system", "content": request.system}, {"role": "user", "content": request.user}],
         }
