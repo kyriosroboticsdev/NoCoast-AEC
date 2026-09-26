@@ -1,0 +1,315 @@
+/* @nocoast/ifc-viewer — override the custom properties to theme. */
+.ncv-root {
+  --ncv-surface: #ffffff;
+  --ncv-stage: #f6f7f9;
+  --ncv-border: #d9dce1;
+  --ncv-text: #1c1f24;
+  --ncv-muted: #6b7280;
+  --ncv-accent: #ff7a1a;
+  --ncv-danger: #b42318;
+  --ncv-chip-bg: rgba(255, 255, 255, 0.86);
+  --ncv-radius: 10px;
+  --ncv-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--ncv-text);
+  font: 13px/1.4 var(--ncv-font);
+  box-sizing: border-box;
+}
+.ncv-root *,
+.ncv-root *::before,
+.ncv-root *::after {
+  box-sizing: inherit;
+}
+@media (prefers-color-scheme: dark) {
+  .ncv-root:not(.ncv-light) {
+    --ncv-surface: #17191d;
+    --ncv-stage: #1f2227;
+    --ncv-border: #33373e;
+    --ncv-text: #e8eaed;
+    --ncv-muted: #9aa1ab;
+    --ncv-danger: #f97066;
+    --ncv-chip-bg: rgba(23, 25, 29, 0.86);
+  }
+}
+
+.ncv-viewport {
+  position: absolute;
+  inset: 0;
+}
+.ncv-viewport canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  outline: none;
+}
+
+/* ---------------------------------------------------------------- card */
+
+.ncv-card {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--ncv-border);
+  border-radius: var(--ncv-radius);
+  background: var(--ncv-stage);
+  outline: none;
+}
+.ncv-card:focus-visible {
+  box-shadow: 0 0 0 2px var(--ncv-accent);
+}
+.ncv-card-still {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  user-select: none;
+}
+.ncv-card-stage {
+  position: absolute;
+  inset: 0;
+  cursor: grab;
+  touch-action: none;
+}
+.ncv-card-stage:active {
+  cursor: grabbing;
+}
+.ncv-card-stage.is-idle {
+  visibility: hidden;
+}
+.ncv-card-chrome {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: none;
+}
+.ncv-card-chrome > * {
+  pointer-events: auto;
+}
+.ncv-card-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.ncv-chip {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--ncv-chip-bg);
+  color: var(--ncv-muted);
+  font-size: 12px;
+  backdrop-filter: blur(4px);
+  pointer-events: none !important;
+}
+.ncv-card-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  text-align: center;
+  color: var(--ncv-muted);
+  background: var(--ncv-stage);
+  z-index: 1;
+}
+.ncv-card-overlay.is-error {
+  color: var(--ncv-danger);
+}
+.ncv-card-overlay.is-error strong {
+  color: var(--ncv-text);
+}
+.ncv-spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--ncv-border);
+  border-top-color: var(--ncv-accent);
+  animation: ncv-spin 0.8s linear infinite;
+}
+@keyframes ncv-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ncv-spinner {
+    animation-duration: 2.4s;
+  }
+}
+
+/* ---------------------------------------------------------------- controls */
+
+.ncv-btn {
+  appearance: none;
+  border: 1px solid var(--ncv-border);
+  background: var(--ncv-surface);
+  color: var(--ncv-text);
+  border-radius: 7px;
+  padding: 4px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+.ncv-btn:hover {
+  border-color: var(--ncv-muted);
+}
+.ncv-btn:focus-visible {
+  outline: 2px solid var(--ncv-accent);
+  outline-offset: 1px;
+}
+.ncv-btn-group {
+  display: inline-flex;
+}
+.ncv-btn-group .ncv-btn {
+  border-radius: 0;
+  margin-left: -1px;
+}
+.ncv-btn-group .ncv-btn:first-child {
+  border-radius: 7px 0 0 7px;
+  margin-left: 0;
+}
+.ncv-btn-group .ncv-btn:last-child {
+  border-radius: 0 7px 7px 0;
+}
+.ncv-muted {
+  color: var(--ncv-muted);
+  font-weight: normal;
+}
+
+/* ---------------------------------------------------------------- inspector */
+
+.ncv-inspector {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 320px;
+  background: var(--ncv-surface);
+  border: 1px solid var(--ncv-border);
+  border-radius: var(--ncv-radius);
+  overflow: hidden;
+}
+.ncv-insp-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--ncv-border);
+}
+.ncv-insp-title {
+  margin-right: auto;
+}
+.ncv-section {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ncv-section input[type="range"] {
+  width: 110px;
+  accent-color: var(--ncv-accent);
+}
+.ncv-insp-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.ncv-insp-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  background: var(--ncv-stage);
+}
+.ncv-insp-side {
+  width: 280px;
+  max-width: 45%;
+  border-left: 1px solid var(--ncv-border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+@media (max-width: 640px) {
+  .ncv-insp-body {
+    flex-direction: column;
+  }
+  .ncv-insp-stage {
+    min-height: 260px;
+  }
+  .ncv-insp-side {
+    width: auto;
+    max-width: none;
+    border-left: 0;
+    border-top: 1px solid var(--ncv-border);
+    max-height: 45%;
+  }
+}
+.ncv-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--ncv-border);
+}
+.ncv-tabs button {
+  flex: 1;
+  appearance: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--ncv-muted);
+  padding: 8px 6px;
+  font: inherit;
+  cursor: pointer;
+}
+.ncv-tabs button[aria-selected="true"] {
+  color: var(--ncv-text);
+  border-bottom-color: var(--ncv-accent);
+}
+.ncv-panel {
+  padding: 10px;
+  overflow: auto;
+  flex: 1;
+}
+.ncv-panel h5 {
+  margin: 14px 0 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ncv-muted);
+}
+.ncv-el-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.ncv-props {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.ncv-props th,
+.ncv-props td {
+  text-align: left;
+  vertical-align: top;
+  padding: 3px 4px;
+  border-bottom: 1px solid var(--ncv-border);
+  overflow-wrap: anywhere;
+}
+.ncv-props th {
+  width: 42%;
+  color: var(--ncv-muted);
+  font-weight: normal;
+}
+.ncv-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 0;
+  cursor: pointer;
+}
+.ncv-group span:nth-child(2) {
+  flex: 1;
+}
+.ncv-group input {
+  accent-color: var(--ncv-accent);
+}

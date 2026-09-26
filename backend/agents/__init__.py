@@ -1,13 +1,18 @@
-"""Planner registry. Select with the BIM_PLANNER env var (default: template)."""
+"""Planner registry for the stateless /plan and /generate endpoints.
+
+Select with the BIM_PLANNER env var (default: template). The stateful project
+pipeline (core/pipeline.py) uses the LLM adapter in llm/ instead.
+"""
 
 from __future__ import annotations
 
 import os
 
 from agents.base import Planner, PlanResult
+from agents.llm_planner import LLMPlanner
 from agents.template_planner import TemplatePlanner
 
-PLANNERS: dict[str, type] = {"template": TemplatePlanner}
+PLANNERS: dict[str, type] = {"template": TemplatePlanner, "llm": LLMPlanner}
 
 
 def get_planner(name: str | None = None) -> Planner:

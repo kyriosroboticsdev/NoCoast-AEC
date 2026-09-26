@@ -21,44 +21,6 @@ export interface PropertyGroup {
   rows: [string, string][];
 }
 
-export type ViewName = "top" | "bottom" | "front" | "back" | "left" | "right" | "isometric";
-
-export interface ModelStats {
-  elements: number;
-  levels: number;
-  extent: [number, number, number];
-  triangles: number;
-}
-
-export interface LevelItem {
-  localId: number;
-  name: string;
-}
-
-export interface LevelNode {
-  localId: number;
-  name: string;
-  elevation: number;
-  groups: { category: string; label: string; items: LevelItem[] }[];
-}
-
-export interface ElementRow {
-  localId: number;
-  ifcClass: string;
-  name: string;
-  tag: string;
-  level: string;
-  guid: string;
-}
-
-export interface ElementSummary {
-  name: string;
-  category: string;
-  ifcClass: string;
-  level: string;
-  guid: string;
-}
-
 type World = OBC.SimpleWorld<OBC.SimpleScene, OBC.OrthoPerspectiveCamera, OBC.SimpleRenderer>;
 
 const SELECT = "select";
@@ -75,15 +37,13 @@ export class BimViewer {
   private hiddenCategories = new Set<string>();
 
   onSelect: (sel: { modelId: string; localId: number } | null) => void = () => {};
-  /** Fires on every camera move — drives the axis gizmo. */
-  onCamera: (camera: THREE.Camera) => void = () => {};
 
   async init(container: HTMLElement) {
     const worlds = this.components.get(OBC.Worlds);
     const world = worlds.create<OBC.SimpleScene, OBC.OrthoPerspectiveCamera, OBC.SimpleRenderer>();
     world.scene = new OBC.SimpleScene(this.components);
     world.scene.setup();
-    world.scene.three.background = new THREE.Color("#f6f6f4");
+    world.scene.three.background = new THREE.Color("#14171d");
     world.renderer = new OBC.SimpleRenderer(this.components, container);
     world.camera = new OBC.OrthoPerspectiveCamera(this.components);
     await world.camera.controls.setLookAt(25, 18, 25, 0, 2, 0);
@@ -91,14 +51,11 @@ export class BimViewer {
     this.world = world;
 
     const grid = this.components.get(OBC.Grids).create(world);
-    grid.material.uniforms.uColor.value = new THREE.Color("#c9c9c4");
+    grid.material.uniforms.uColor.value = new THREE.Color("#2a2f3a");
 
     this.fragments = this.components.get(OBC.FragmentsManager);
     this.fragments.init(workerUrl);
-    world.camera.controls.addEventListener("update", () => {
-      this.fragments.core.update();
-      this.onCamera(world.camera.three);
-    });
+    world.camera.controls.addEventListener("update", () => this.fragments.core.update());
     this.fragments.list.onItemSet.add(({ value: model }) => {
       model.useCamera(world.camera.three);
       world.scene.three.add(model.object);
@@ -261,169 +218,6 @@ export class BimViewer {
     return groups;
   }
 
-  // --- stats, levels & element table ---------------------------------------
-
-  async stats(): Promise<ModelStats | null> {
-    const model = this.model;
-    if (!model) return null;
-    const cats = await this.categories();
-    const box = model.box;
-    const size = box.getSize(new THREE.Vector3());
-    let triangles = 0;
-    const geo = await model.getItemsWithGeometry();
-    const ids = (await Promise.all(geo.map((i) => i.getLocalId()))).filter((x): x is number => x !== null);
-    for (const meshes of await model.getItemsGeometry(ids)) {
-      for (const m of meshes) triangles += (m.indices?.length ?? 0) / 3;
-    }
-    return {
-      elements: ids.length, // items with geometry (excludes property sets, materials, openings' voids…)
-      levels: cats.find((c) => c.name === "IFCBUILDINGSTOREY")?.count ?? 0,
-      // Three.js is Y-up; report IFC-style X × Y × Z (plan width × depth × height).
-      extent: [size.x, size.z, size.y],
-      triangles: Math.round(triangles),
-    };
-  }
-
-  /** Storeys (highest first) → class groups → elements, like a level-by-level schedule. */
-  async levels(): Promise<LevelNode[]> {
-    const model = this.model;
-    if (!model) return [];
-    const root = await model.getSpatialStructure();
-    const storeys: { id: number; members: { id: number; cat: string }[] }[] = [];
-    // Fragments puts the class on a grouping node (localId null) above the items it holds.
-    const walk = (n: FRAGS.SpatialTreeItem, current: (typeof storeys)[number] | null, inherited: string | null) => {
-      const cat = (n.category ?? inherited ?? "ITEM").toUpperCase();
-      let here = current;
-      if (n.localId !== null && cat === "IFCBUILDINGSTOREY") {
-        here = { id: n.localId, members: [] };
-        storeys.push(here);
-      } else if (n.localId !== null && here) {
-        here.members.push({ id: n.localId, cat });
-      }
-      n.children?.forEach((c) => walk(c, here, n.localId === null ? cat : null));
-    };
-    walk(root, null, null);
-
-    const all = storeys.flatMap((s) => [s.id, ...s.members.map((m) => m.id)]);
-    const data = await model.getItemsData(all, { attributesDefault: false, attributes: ["Name", "LongName", "Elevation"] });
-    const info = new Map<number, Record<string, FRAGS.ItemAttribute>>();
-    all.forEach((id, i) => info.set(id, data[i] as Record<string, FRAGS.ItemAttribute>));
-    const name = (id: number) => String(info.get(id)?.LongName?.value ?? info.get(id)?.Name?.value ?? `#${id}`);
-
-    this.levelOf.clear();
-    return storeys
-      .map((s) => {
-        const groups = new Map<string, LevelItem[]>();
-        for (const m of s.members) {
-          this.levelOf.set(m.id, name(s.id));
-          if (!groups.has(m.cat)) groups.set(m.cat, []);
-          groups.get(m.cat)!.push({ localId: m.id, name: name(m.id) });
-        }
-        return {
-          localId: s.id,
-          name: name(s.id),
-          elevation: Number(info.get(s.id)?.Elevation?.value ?? 0),
-          groups: [...groups.entries()]
-            .map(([category, items]) => ({ category, label: pretty(category), items }))
-            .sort((a, b) => a.label.localeCompare(b.label)),
-        };
-      })
-      .sort((a, b) => b.elevation - a.elevation);
-  }
-
-  private levelOf = new Map<number, string>();
-
-  levelName(localId: number) {
-    return this.levelOf.get(localId) ?? "";
-  }
-
-  /** One row per element (spatial containers excluded) for the Data tab. */
-  async elementRows(): Promise<ElementRow[]> {
-    const model = this.model;
-    if (!model) return [];
-    const cats = (await this.categories()).filter((c) => !SPATIAL.test(c.name) || c.name === "IFCSPACE");
-    const byCat = await model.getItemsOfCategories(cats.map((c) => new RegExp(`^${c.name}$`)));
-    // Only physical things: skip property sets, materials, types and other non-geometric items.
-    const geo = await model.getItemsWithGeometry();
-    const physical = new Set((await Promise.all(geo.map((i) => i.getLocalId()))).filter((x): x is number => x !== null));
-    const rows: ElementRow[] = [];
-    for (const [cat, all] of Object.entries(byCat)) {
-      const ids = all.filter((id) => physical.has(id));
-      if (!ids.length) continue;
-      const data = await model.getItemsData(ids, { attributesDefault: false, attributes: ["Name", "LongName", "Tag"] });
-      ids.forEach((id, i) => {
-        const d = data[i] as Record<string, FRAGS.ItemAttribute>;
-        rows.push({
-          localId: id,
-          ifcClass: ifcClass(cat),
-          name: String(d?.LongName?.value ?? d?.Name?.value ?? ""),
-          tag: String(d?.Tag?.value ?? ""),
-          level: this.levelName(id),
-          guid: String(d?._guid?.value ?? ""),
-        });
-      });
-    }
-    return rows.sort((a, b) => a.level.localeCompare(b.level) || a.ifcClass.localeCompare(b.ifcClass) || a.name.localeCompare(b.name));
-  }
-
-  /** Short summary of one element for the info card. */
-  async elementSummary(localId: number): Promise<ElementSummary | null> {
-    const model = this.model;
-    if (!model) return null;
-    const [d] = (await model.getItemsData([localId], { attributesDefault: true })) as Record<string, FRAGS.ItemAttribute>[];
-    if (!d) return null;
-    const cat = String(d._category?.value ?? "");
-    return {
-      name: String(d.LongName?.value ?? d.Name?.value ?? `#${localId}`),
-      category: pretty(cat),
-      ifcClass: ifcClass(cat),
-      level: this.levelName(localId),
-      guid: String(d._guid?.value ?? ""),
-    };
-  }
-
-  // --- camera --------------------------------------------------------------
-
-  /** Standard views, in IFC terms (Z up). Three.js is Y-up: IFC (x, y, z) → three (x, z, -y). */
-  async view(name: ViewName) {
-    const model = this.model;
-    const box = model ? model.box : new THREE.Box3(new THREE.Vector3(-10, 0, -10), new THREE.Vector3(10, 10, 10));
-    const center = box.getCenter(new THREE.Vector3());
-    const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 1);
-    const dirs: Record<ViewName, [number, number, number]> = {
-      top: [0, 1, 0.0001], bottom: [0, -1, 0.0001],
-      front: [0, 0, 1], back: [0, 0, -1],
-      left: [-1, 0, 0], right: [1, 0, 0],
-      isometric: [1, 0.8, 1],
-    };
-    const d = new THREE.Vector3(...dirs[name]).normalize().multiplyScalar(radius * 2.2);
-    await this.world.camera.controls.setLookAt(center.x + d.x, center.y + d.y, center.z + d.z, center.x, center.y, center.z, true);
-  }
-
-  get projection(): "Perspective" | "Orthographic" {
-    return this.world.camera.projection.current;
-  }
-
-  async toggleProjection() {
-    await this.world.camera.projection.set(this.projection === "Perspective" ? "Orthographic" : "Perspective");
-    this.onCamera(this.world.camera.three);
-    return this.projection;
-  }
-
-  /** Zoom to the selection, or the whole model when nothing is selected. */
-  async focusSelection() {
-    await this.world.camera.fitToItems(Object.keys(this.selection).length ? this.selection : undefined);
-  }
-
-  async reset() {
-    await this.world.camera.projection.set("Perspective");
-    await this.view("isometric");
-  }
-
-  get camera(): THREE.Camera | null {
-    return this.world?.camera.three ?? null;
-  }
-
   // --- visibility ----------------------------------------------------------
 
   async categories(): Promise<{ name: string; count: number }[]> {
@@ -502,22 +296,4 @@ function fmt(v: unknown): string {
 function attr(item: FRAGS.ItemData, key: string): string {
   const v = item[key];
   return v && !Array.isArray(v) && v.value !== undefined && v.value !== null ? fmt(v.value) : "";
-}
-
-/** "IFCWALLSTANDARDCASE" → "IfcWallStandardCase" (best effort from the upper-case category). */
-const KNOWN = ["Standard", "Case", "Element", "Opening", "Building", "Storey", "Proxy", "Covering", "Railing", "Curtain", "Flow", "Terminal", "Segment", "Fitting", "Member", "Plate", "Stair", "Flight", "Ramp", "Beam", "Column", "Wall", "Slab", "Roof", "Door", "Window", "Space", "Site", "Project", "Furnishing", "Footing", "Pile", "Distribution", "Port", "Annotation", "Grid", "Zone", "Group", "System", "Type", "Assembly"];
-function ifcClass(category: string): string {
-  let rest = category.replace(/^IFC/i, "").toLowerCase();
-  let out = "Ifc";
-  while (rest.length) {
-    const word = KNOWN.find((w) => rest.startsWith(w.toLowerCase()));
-    if (word) {
-      out += word;
-      rest = rest.slice(word.length);
-    } else {
-      out += rest.charAt(0).toUpperCase() + rest.slice(1);
-      break;
-    }
-  }
-  return out;
 }

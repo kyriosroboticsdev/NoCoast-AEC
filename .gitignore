@@ -7,15 +7,23 @@ __pycache__/
 # Node / frontend
 node_modules/
 dist/
-dist-electron/
-release/
+frontend/public/wasm/
+frontend/public/fragments-worker.mjs
+*.log
 
-# Generated output
+# Tauri
+frontend/src-tauri/target/
+frontend/src-tauri/gen/
+
+# Generated output (IFC files, SQLite db)
 backend/output/
+# llama.cpp binaries fetched by tools/get_llama.py
+backend/.llama/
 
 # Env / secrets
 .env
 .env.*
+!.env.example
 
 # OS / editor
 .DS_Store

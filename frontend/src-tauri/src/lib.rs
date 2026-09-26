@@ -97,8 +97,6 @@ struct LaunchOptions {
     autoload: Option<String>,
     prompt: Option<String>,
     select: Option<String>,
-    tab: Option<String>,
-    smoke: bool,
 }
 
 /// Smoke-test hooks and config, read from the environment.
@@ -109,8 +107,6 @@ fn launch_options() -> LaunchOptions {
         autoload: env("BIM_AUTOLOAD"),
         prompt: env("BIM_PROMPT"),
         select: env("BIM_SMOKE_SELECT"),
-        tab: env("BIM_SMOKE_TAB"),
-        smoke: env("BIM_SMOKE").is_some(),
     }
 }
 

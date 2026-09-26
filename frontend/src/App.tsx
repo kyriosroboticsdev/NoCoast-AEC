@@ -1,72 +1,60 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { IfcTurnCard, IfcViewerProvider } from "@nocoast/ifc-viewer";
 import * as api from "./api/client";
-import { Assistant } from "./components/Assistant";
-import { Home } from "./components/Home";
-import { Sidebar } from "./components/Sidebar";
-import { TopBar } from "./components/TopBar";
-import { Workspace, type Tab } from "./components/Workspace";
+import { InspectorPanel } from "./components/InspectorPanel";
+import { PromptPanel, type Stage } from "./components/PromptPanel";
 import * as platform from "./platform";
-import { addMessage, patchRun, uid, upsertStep, useSessions, type TraceStep } from "./state/sessions";
-import {
-  BimViewer, type ElementRow, type ElementSummary, type LevelNode, type ModelStats, type PropertyGroup,
-} from "./viewer/BimViewer";
+import { runtime, toTurn, turnId } from "./turns";
+import { BimViewer, type PropertyGroup, type TreeNode } from "./viewer/BimViewer";
 
-const SAMPLE_URL = "samples/sample-house.ifc";
+const PROJECT_KEY = "nocoast.project";
 
-interface Loaded {
-  key: string;
-  name: string;
-  schema: string;
-  bytes: Uint8Array;
-}
+/** Pipeline stage names from the backend, mapped onto the panel's steps. */
+const STAGE_OF: Record<string, Stage> = {
+  program: "planning", edit: "planning", apply: "building", solve: "building", compile: "building",
+};
+
+const HIDDEN_BY_DEFAULT = ["IFCSPACE"]; // room volumes hide the building; toggle under Classes
 
 export default function App() {
-  const { sessions, active, activeId, setActiveId, create, update, remove } = useSessions();
-  const activeRef = useRef(activeId);
-  activeRef.current = activeId;
-
-  // --- viewer ---------------------------------------------------------------
-  const hostRef = useRef<HTMLDivElement>(null);
+  const host = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<BimViewer | null>(null);
   const [viewerReady, setViewerReady] = useState(false);
-  const [loaded, setLoaded] = useState<Loaded | null>(null);
-  const loadedKey = useRef<string | null>(null); // sync copy, avoids double loads
-  const [progress, setProgress] = useState<number | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [stats, setStats] = useState<ModelStats | null>(null);
-  const [levels, setLevels] = useState<LevelNode[]>([]);
-  const [rows, setRows] = useState<ElementRow[] | null>(null);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [selected, setSelected] = useState<ElementSummary | null>(null);
-  const [properties, setProperties] = useState<PropertyGroup[]>([]);
-  const [roomsVisible, setRoomsVisible] = useState(false);
-  const [treeVersion, setTreeVersion] = useState(0);
-
-  // --- chrome ---------------------------------------------------------------
   const [options, setOptions] = useState<platform.LaunchOptions | null>(null);
+
+  const [prompt, setPrompt] = useState("");
+  const [stage, setStage] = useState<Stage>("idle");
+  const [error, setError] = useState<string | null>(null);
   const [backendUp, setBackendUp] = useState<boolean | null>(null);
-  const [planners, setPlanners] = useState<string[]>(["template"]);
-  const [planner, setPlanner] = useState("template");
-  const [busy, setBusy] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [assistantOpen, setAssistantOpen] = useState(true);
-  const [treeOpen, setTreeOpen] = useState(false);
-  const [tab, setTab] = useState<Tab>("model");
-  const localFiles = useRef(new Map<string, Uint8Array>()); // session id → bytes of a file opened from disk
+  const [detail, setDetail] = useState<string | null>(null);
+
+  // Versioned project: every prompt makes a new version; the newest is the head.
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [versions, setVersions] = useState<api.Version[]>([]);
+  const [viewing, setViewing] = useState<number | null>(null);
+  const head = versions.at(-1) ?? null;
+
+  const [modelName, setModelName] = useState<string | null>(null);
+  const [modelBytes, setModelBytes] = useState<Uint8Array | null>(null);
+  const [progress, setProgress] = useState<number | null>(null);
+  const [tree, setTree] = useState<TreeNode | null>(null);
+  const [categories, setCategories] = useState<{ name: string; count: number; visible: boolean }[]>([]);
+  const [tab, setTab] = useState<"tree" | "classes">("tree");
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [properties, setProperties] = useState<PropertyGroup[]>([]);
 
   useEffect(() => {
-    if (!hostRef.current || viewerRef.current) return;
+    if (!host.current || viewerRef.current) return;
     const viewer = new BimViewer();
     viewerRef.current = viewer;
     (window as unknown as { __viewer: BimViewer }).__viewer = viewer; // debug / smoke-test handle
-    viewer.setCategoryVisible("IFCSPACE", false); // room volumes hide the building
+    for (const c of HIDDEN_BY_DEFAULT) viewer.setCategoryVisible(c, false);
     viewer.onSelect = async (sel) => {
       setSelectedId(sel?.localId ?? null);
-      setSelected(sel ? await viewer.elementSummary(sel.localId) : null);
       setProperties(sel ? await viewer.properties(sel.localId) : []);
     };
-    viewer.init(hostRef.current).then(() => setViewerReady(true), (e) => {
-      setLoadError(`Viewer failed to start: ${e}`);
+    viewer.init(host.current).then(() => setViewerReady(true), (e) => {
+      setError(`Viewer failed to start: ${e}`);
       platform.report({ status: "error", error: String(e) });
     });
     platform.launchOptions().then((o) => {
@@ -77,298 +65,247 @@ export default function App() {
 
   useEffect(() => {
     if (!options) return;
-    // Poll quickly while the backend boots, then settle to every 4 s.
-    let timer: ReturnType<typeof setTimeout>;
-    let seen = false;
-    const check = async () => {
-      const i = await api.info();
-      setBackendUp(i.ok || (seen ? false : null));
-      if (i.ok) {
-        seen = true;
-        if (i.planners.length) setPlanners(i.planners);
-      }
-      timer = setTimeout(check, seen ? 4000 : 1000);
-    };
+    const check = () => api.health().then(setBackendUp);
     check();
-    return () => clearTimeout(timer);
+    const t = setInterval(check, 4000);
+    return () => clearInterval(t);
   }, [options]);
 
-  // --- loading models into the viewer -----------------------------------------
-
-  const showModel = useCallback(async (bytes: Uint8Array, name: string, key: string, onProgress?: (p: number) => void) => {
+  const refreshCategories = useCallback(async () => {
     const v = viewerRef.current!;
-    loadedKey.current = key;
-    setLoadError(null);
+    const cats = await v.categories();
+    setCategories(cats.map((c) => ({ ...c, visible: !v.isCategoryHidden(c.name) })));
+  }, []);
+
+  const showModel = useCallback(async (bytes: Uint8Array, name: string) => {
+    const v = viewerRef.current!;
     setProgress(0);
     setSelectedId(null);
-    setSelected(null);
     setProperties([]);
-    setStats(null);
-    setRows(null);
-    await v.loadIfc(bytes, name, (p) => { setProgress(p); onProgress?.(p); });
-    const head = new TextDecoder().decode(bytes.subarray(0, 4000));
-    const schema = head.match(/FILE_SCHEMA\s*\(\s*\(\s*'([^']+)'/i)?.[1] ?? "";
-    setLevels(await v.levels());
-    setTreeVersion((n) => n + 1);
-    setLoaded({ key, name, schema, bytes });
+    await v.loadIfc(bytes, name, setProgress);
     setProgress(null);
-    const s = await v.stats();
-    setStats(s);
-    return s ?? { elements: 0, levels: 0, triangles: 0, extent: [0, 0, 0] as [number, number, number] };
+    setModelName(name);
+    setModelBytes(bytes);
+    setTree(await v.spatialTree());
+    await refreshCategories();
+  }, [refreshCategories]);
+
+  const fail = (e: unknown) => {
+    const msg = e instanceof Error ? e.message : String(e);
+    setError(msg);
+    setProgress(null);
+    platform.report({ status: "error", error: msg });
+  };
+
+  const showVersion = useCallback(async (v: api.Version) => {
+    await showModel(await api.fetchBytes(api.backendUrl(v.ifc_url)), `v${v.number}.ifc`);
+    setViewing(v.number);
+  }, [showModel]);
+
+  /** Record a new version: history list, a turn card, and the main viewer. */
+  const adopt = useCallback(async (v: api.Version) => {
+    setVersions((vs) => [...vs.filter((x) => x.number !== v.number), v]);
+    void runtime.addTurn(toTurn(v));
+    setStage("loading");
+    await showVersion(v);
+    setStage("ready");
+  }, [showVersion]);
+
+  const onEvent = useCallback((e: api.StageEvent) => {
+    const s = STAGE_OF[e.stage];
+    if (s) setStage(s);
+    setDetail(e.message);
   }, []);
 
-  const clearModel = useCallback(async () => {
-    loadedKey.current = null;
-    setLoaded(null);
-    setLevels([]);
-    setStats(null);
-    setRows(null);
-    setSelectedId(null);
-    setSelected(null);
-    setProperties([]);
-    await viewerRef.current?.clear();
-  }, []);
+  const openProject = useCallback(async (id: string) => {
+    const p = await api.getProject(id);
+    setProjectId(id);
+    setVersions(p.versions);
+    for (const v of p.versions) void runtime.addTurn(toTurn(v));
+    if (p.head) await showVersion(p.head);
+  }, [showVersion]);
 
-  // Switching sessions loads that session's model.
-  useEffect(() => {
-    if (!viewerReady) return;
-    const model = active?.model;
-    if (!active || !model) {
-      // A load for this same session may be in flight (its model is attached when it finishes).
-      const mine = active && loadedKey.current?.startsWith(`${active.id}:`);
-      if (loadedKey.current && !mine && !busy) clearModel();
-      return;
-    }
-    const key = `${active.id}:${model.name}`;
-    if (loadedKey.current === key) return;
-    const local = localFiles.current.get(active.id);
-    (async () => {
-      try {
-        if (model.url) await showModel(await api.fetchBytes(model.url), model.name, key);
-        else if (local) await showModel(local, model.name, key);
-        else {
-          await clearModel();
-          setLoadError(`${model.name} was opened from disk in an earlier run. Open it again to view it.`);
-        }
-      } catch (e) {
-        setProgress(null);
-        setLoadError(`Couldn't load ${model.name}: ${e instanceof Error ? e.message : e}`);
-      }
-    })();
-  }, [viewerReady, active?.id, active?.model?.name]); // eslint-disable-line react-hooks/exhaustive-deps
+  const newProject = useCallback(() => {
+    localStorage.removeItem(PROJECT_KEY);
+    for (const v of versions) runtime.removeTurn(turnId(v));
+    setProjectId(null);
+    setVersions([]);
+    setViewing(null);
+    setStage("idle");
+    setError(null);
+    void viewerRef.current?.clear();
+    setModelName(null);
+    setModelBytes(null);
+    setTree(null);
+    setCategories([]);
+  }, [versions]);
 
-  useEffect(() => {
-    if (tab === "data" && loaded && rows === null) viewerRef.current!.elementRows().then(setRows);
-  }, [tab, loaded, rows]);
-
-  // --- actions ------------------------------------------------------------------
-
-  const generate = useCallback(async (sid: string, prompt: string) => {
-    const aid = uid();
-    update(sid, addMessage({ id: uid(), role: "user", text: prompt }));
-    update(sid, addMessage({ id: aid, role: "assistant", text: "", run: { stage: "planning", steps: [], startedAt: Date.now() } }));
-    setBusy(true);
-
-    // Client-side steps join the backend's trace so the user sees the whole journey.
-    const step = (title: string, detail: string | null = null) => {
-      const base: TraceStep = { id: uid(), parent: null, phase: "load", title, detail, status: "running" };
-      const t0 = performance.now();
-      update(sid, upsertStep(aid, base));
-      return {
-        update: (d: string) => update(sid, upsertStep(aid, { ...base, detail: d })),
-        done: (d?: string) => update(sid, upsertStep(aid, { ...base, detail: d ?? detail, status: "done", ms: Math.round(performance.now() - t0) })),
-        fail: (msg: string) => update(sid, upsertStep(aid, { ...base, status: "error", error: msg, ms: Math.round(performance.now() - t0) })),
-      };
-    };
-
-    let current: ReturnType<typeof step> | null = null;
+  /** First prompt designs a building; later prompts edit the head version. */
+  const generate = useCallback(async (text: string) => {
+    setError(null);
+    setDetail(null);
     try {
-      if (!(await api.health())) {
-        current = step("Waiting for the backend", "starting Python + IfcOpenShell");
-        await api.waitForBackend();
-        current.done();
+      setStage("planning");
+      await api.waitForBackend();
+      let id = projectId;
+      if (!id) {
+        id = (await api.createProject("Untitled")).id;
+        localStorage.setItem(PROJECT_KEY, id);
+        setProjectId(id);
       }
-
-      let plan: api.PlanResult | undefined;
-      let build: api.BuildResult | undefined;
-      let failure: string | undefined;
-      try {
-        await api.generateStream(prompt, planner, (ev) => {
-          if (ev.type === "step") {
-            const { type: _, ...s } = ev;
-            update(sid, upsertStep(aid, s));
-          } else if (ev.type === "plan") {
-            plan = ev.plan;
-            update(sid, patchRun(aid, { plan, stage: "building" }));
-          } else if (ev.type === "build") {
-            build = ev.build;
-            update(sid, patchRun(aid, { build, stage: "loading" }));
-          } else if (ev.type === "error") {
-            failure = ev.message;
-          }
-        });
-      } catch (e) {
-        if (!(e instanceof api.StreamUnsupported)) throw e;
-        // An older backend is still running: no live trace, same result.
-        current = step("Planning and building", "restart the backend to see a live trace");
-        plan = await api.plan(prompt, planner);
-        update(sid, patchRun(aid, { plan, stage: "building" }));
-        build = await api.build(plan.spec);
-        update(sid, patchRun(aid, { build, stage: "loading" }));
-        current.done();
-      }
-      if (failure) throw new Error(failure);
-      if (!plan || !build) throw new Error("The backend stream ended without a model.");
-
-      const name = `${build.id}.ifc`;
-      if (activeRef.current === sid) {
-        setTab("model");
-        current = step("Downloading the IFC", build.ifc_url);
-        const bytes = await api.fetchBytes(build.ifc_url);
-        current.done(`${name} · ${Math.round(bytes.length / 1024)} KB`);
-
-        current = step("Loading into the 3D viewer", "converting IFC to fragments");
-        const load = current;
-        let shown = -1;
-        const loaded = await showModel(bytes, name, `${sid}:${name}`, (p) => {
-          const pct = Math.round(p * 100);
-          if (pct >= shown + 10) { shown = pct; load.update(`converting IFC to fragments · ${pct}%`); }
-        });
-        current.done(`${loaded.levels} levels · ${loaded.elements} elements · ${loaded.triangles.toLocaleString()} triangles`);
-        current = null;
-      }
-      update(sid, (s) => ({ ...patchRun(aid, { stage: "done", endedAt: Date.now() })(s), model: { name, url: build!.ifc_url } }));
-      return true;
+      const v = await api.sendPrompt(id, text, head?.number ?? null, onEvent);
+      await adopt(v);
+      setPrompt("");
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      current?.fail(msg);
-      setProgress(null);
-      update(sid, patchRun(aid, { stage: "error", error: msg, endedAt: Date.now() }));
-      platform.report({ status: "error", error: msg });
-      return false;
-    } finally {
-      setBusy(false);
+      fail(e);
     }
-  }, [planner, showModel, update]);
+  }, [projectId, head, onEvent, adopt]);
 
-  const startSession = (prompt: string) => {
-    const title = prompt.length > 48 ? `${prompt.slice(0, 46).trimEnd()}…` : prompt;
-    return generate(create(title), prompt);
-  };
-
-  const openSessionWithModel = async (name: string, bytes: Uint8Array, url?: string) => {
-    const sid = create(name);
-    if (!url) localFiles.current.set(sid, bytes);
-    update(sid, addMessage({ id: uid(), role: "assistant", text: `Opened ${name}. Explore it in the viewer, or describe a new building below.` }));
-    setTab("model");
-    await showModel(bytes, name, `${sid}:${name}`);
-    update(sid, (s) => ({ ...s, model: { name, url } }));
-  };
+  const undo = useCallback(async () => {
+    if (!projectId || !head) return;
+    setError(null);
+    try {
+      setStage("building");
+      await adopt(await api.revert(projectId, head.parent ?? head.number - 1, onEvent));
+    } catch (e) {
+      fail(e);
+    }
+  }, [projectId, head, onEvent, adopt]);
 
   const openFile = async () => {
     try {
       const file = await platform.openIfc();
-      if (file) await openSessionWithModel(file.name, file.data);
+      if (!file) return;
+      setError(null);
+      setStage("idle");
+      setViewing(null);
+      await showModel(file.data, file.name);
     } catch (e) {
-      setProgress(null);
-      setLoadError(String(e instanceof Error ? e.message : e));
+      fail(e);
     }
   };
 
-  const openSample = async () => {
+  const loadSample = async () => {
     try {
-      await openSessionWithModel("sample-house.ifc", await api.fetchBytes(SAMPLE_URL), SAMPLE_URL);
+      setError(null);
+      await showModel(await api.fetchBytes(new URL("samples/sample-house.ifc", location.href).href), "sample-house.ifc");
     } catch (e) {
-      setProgress(null);
-      setLoadError(String(e instanceof Error ? e.message : e));
+      fail(e);
     }
   };
 
-  const toggleRooms = async () => {
-    const next = !roomsVisible;
-    setRoomsVisible(next);
-    await viewerRef.current?.setCategoryVisible("IFCSPACE", next);
-    setTreeVersion((n) => n + 1);
+  const saveFile = async () => {
+    try {
+      if (modelBytes && modelName) await platform.saveIfc(modelName, modelBytes);
+    } catch (e) {
+      fail(e);
+    }
   };
 
-  // Smoke-test hooks (BIM_AUTOLOAD / BIM_PROMPT / BIM_SMOKE_SELECT) once everything is up.
+  // Reopen the last project once the viewer and backend are up. Skipped for
+  // smoke-test runs so a scripted prompt always starts a fresh design.
+  const reopened = useRef(false);
+  useEffect(() => {
+    if (reopened.current || !viewerReady || !backendUp || !options || options.autoload || options.prompt) return;
+    reopened.current = true;
+    const stored = localStorage.getItem(PROJECT_KEY);
+    if (!stored) return;
+    openProject(stored).catch(() => localStorage.removeItem(PROJECT_KEY)); // stale id from an older database
+  }, [viewerReady, backendUp, options, openProject]);
+
+  // Smoke-test hooks (BIM_AUTOLOAD / BIM_PROMPT / BIM_SMOKE_SELECT) once the viewer is up.
   useEffect(() => {
     if (!viewerReady || !options) return;
     platform.report({ status: "viewer-ready" });
-    const { autoload, prompt, select, tab: smokeTab, smoke } = options;
-    (async () => {
-      if (autoload) await openSessionWithModel(autoload.split("/").pop()!, await api.fetchBytes(autoload), autoload);
-      else if (prompt) {
-        if (!(await startSession(prompt))) return;
-      } else if (smoke && smokeTab === "reset") {
-        // Test hygiene: forget sessions created by earlier smoke runs.
-        localStorage.removeItem("gbim.sessions.v1");
-        return platform.report({ status: "ready", screen: "reset" });
-      } else if (smoke) {
-        // Home screen: nothing to load.
-        await new Promise((r) => setTimeout(r, 800));
-        return platform.report({ status: "ready", screen: "home" });
+    const { autoload, prompt: auto, select } = options;
+    const run = async () => {
+      if (autoload) {
+        await showModel(await api.fetchBytes(new URL(autoload, location.href).href), autoload.split("/").pop()!);
+      } else if (auto) {
+        setPrompt(auto);
+        await generate(auto);
       } else return;
       if (select) await viewerRef.current!.selectFirstOf(select);
-      if (smokeTab === "model" || smokeTab === "elements" || smokeTab === "data") setTab(smokeTab);
-      if (smokeTab === "levels") setTreeOpen(true);
-      if (smokeTab === "trace") (document.querySelector(".reasoning-head") as HTMLElement | null)?.click();
-      await new Promise((r) => setTimeout(r, 800));
+      await new Promise((r) => setTimeout(r, 500)); // let React render the panels
+      if (window.__bim?.status === "error") return;
       platform.report({
         status: "ready",
-        model: document.querySelector(".ws-file")?.textContent,
-        levels: [...document.querySelectorAll(".lrow.bold")].map((e) => e.textContent),
-        rows: document.querySelectorAll(".data-scroll tbody tr").length,
-        info: document.querySelector(".info-card")?.textContent?.slice(0, 160),
+        model: document.querySelector(".toolbar .grow + span")?.textContent,
+        tree: document.querySelectorAll(".tree .row").length,
+        propRows: document.querySelectorAll(".props tr").length,
       });
-    })().catch((e) => platform.report({ status: "error", error: String(e) }));
+    };
+    run().catch(fail);
   }, [viewerReady, options]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // --- layout -------------------------------------------------------------------
-
-  const running = active?.messages.some((m) => m.run && !["done", "error"].includes(m.run.stage));
-  const status = loadError
-    ?? (progress !== null ? `Loading model… ${Math.round(progress * 100)}%` : null)
-    ?? (!loaded && running ? "Generating model…" : null)
-    ?? (!loaded && active ? "No model in this session yet." : null);
   const v = viewerRef.current;
+  const history = versions.length > 0 && (
+    <section className="history" aria-label="Version history">
+      <h3 className="label">History</h3>
+      <ol>
+        {[...versions].reverse().map((ver, i) => (
+          <li key={ver.number} className={ver.number === viewing ? "viewing" : ""}>
+            <div className="history-head">
+              <b>v{ver.number}</b>
+              <span className="history-prompt">{ver.prompt ?? ver.notes[0] ?? ver.mode}</span>
+            </div>
+            <IfcTurnCard
+              turnId={turnId(ver)}
+              height={170}
+              liveOn={i === 0 ? "visible" : "hover"}
+              onExpand={() => void showVersion(ver).catch(fail)}
+            />
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
 
   return (
+    <IfcViewerProvider runtime={runtime}>
     <div className="app">
-      {sidebarOpen && (
-        <Sidebar sessions={sessions} activeId={activeId} onSelect={setActiveId} onNew={() => setActiveId(null)}
-          onOpenFile={openFile} onSample={openSample} onDelete={remove} onCollapse={() => setSidebarOpen(false)}
-          backendUp={backendUp} planners={planners} />
-      )}
-      <div className="main">
-        <TopBar title={active?.title ?? null} sidebarOpen={sidebarOpen} assistantOpen={assistantOpen}
-          showAssistantToggle={!!active} onHome={() => setActiveId(null)}
-          onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} onToggleAssistant={() => setAssistantOpen(!assistantOpen)}
-          onExport={loaded ? () => platform.saveIfc(loaded.name, loaded.bytes) : null}
-          onDelete={active ? () => remove(active.id) : null} />
-        <div className="content">
-          <Workspace hostRef={hostRef} viewer={viewerReady ? v : null}
-            fileName={loaded?.name ?? (active?.model?.name ?? null)} schema={loaded?.schema ?? ""}
-            status={status} progress={progress} tab={tab} setTab={setTab}
-            treeOpen={treeOpen} setTreeOpen={setTreeOpen} treeVersion={treeVersion}
-            onClose={() => { if (active) update(active.id, (s) => ({ ...s, model: undefined })); clearModel(); }}
-            stats={stats} levels={levels} rows={rows} selectedId={selectedId} selected={selected} properties={properties}
-            onSelect={(id) => v?.select(id)}
-            onPick={(id) => { setTab("model"); v?.select(id); }}
-            onVisible={(ids, vis) => v?.setItemsVisible(ids, vis)}
-            roomsVisible={roomsVisible} onRooms={toggleRooms} />
-          {active && assistantOpen && (
-            <Assistant session={active} busy={busy} planners={planners} planner={planner} setPlanner={setPlanner}
-              onSubmit={(t) => generate(active.id, t)} onAttach={openFile} />
-          )}
-          {!active && (
-            <div className="home-layer">
-              <Home busy={busy} planners={planners} planner={planner} setPlanner={setPlanner}
-                onSubmit={startSession} onAttach={openFile} />
+      <PromptPanel prompt={prompt} setPrompt={setPrompt} onGenerate={() => generate(prompt)} stage={stage}
+        detail={detail} error={error} backendUp={backendUp} head={head}
+        onUndo={() => void undo()} onNewProject={newProject} history={history} />
+
+      <main className="stage">
+        <div className="toolbar">
+          <button onClick={openFile} disabled={!viewerReady}>Open IFC…</button>
+          <button onClick={loadSample} disabled={!viewerReady}>Sample</button>
+          <button onClick={saveFile} disabled={!modelBytes}>Save IFC…</button>
+          <span className="sep" />
+          <button onClick={() => v?.fit()} disabled={!modelName}>Fit</button>
+          <button onClick={() => v?.hideSelection()} disabled={selectedId === null}>Hide</button>
+          <button onClick={() => v?.isolateSelection()} disabled={selectedId === null}>Isolate</button>
+          <button onClick={async () => { await v?.showAll(); await refreshCategories(); setTree(tree && { ...tree }); }}
+            disabled={!modelName}>Show all</button>
+          <span className="grow" />
+          <span className="muted">{viewing !== null && head && viewing !== head.number ? `viewing v${viewing} (head is v${head.number}) · ` : ""}{modelName ?? "No model"}</span>
+        </div>
+        <div className="viewport" ref={host}>
+          {progress !== null && (
+            <div className="overlay">
+              <div>Loading model… {Math.round(progress * 100)}%</div>
+              <div className="bar"><i style={{ width: `${progress * 100}%` }} /></div>
             </div>
           )}
+          {!modelName && progress === null && viewerReady && (
+            <div className="empty">
+              <p>Type a prompt and press <b>Generate</b>, or</p>
+              <p><button onClick={openFile}>Open an IFC file</button> · <button onClick={loadSample}>Load the sample</button></p>
+            </div>
+          )}
+          <div className="hint-bar muted">Left-drag orbit · Right-drag pan · Wheel zoom · Click to select</div>
         </div>
-      </div>
+      </main>
+
+      <InspectorPanel tab={tab} setTab={setTab} tree={tree} categories={categories}
+        onCategory={async (name, visible) => { await v?.setCategoryVisible(name, visible); await refreshCategories(); }}
+        selectedId={selectedId}
+        onSelect={(id) => v?.select(id)}
+        onToggle={(node, visible) => v?.setItemsVisible(node.ids, visible)}
+        properties={properties} />
     </div>
+    </IfcViewerProvider>
   );
 }
