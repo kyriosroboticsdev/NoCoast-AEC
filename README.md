@@ -61,11 +61,12 @@ backend/
   core/partial_json.py  close the JSON a model has produced so far (only complete array elements survive)
   solver/layout.py      two-row packer for rooms that come without a rectangle (mock, fallback)
   llm/                  adapter protocol + mock / llamacpp / claude / ollama / openai-compatible implementations, prompts
-  ifc/                  IfcOpenShell compiler: project, walls, slabs, roofs (flat/gable/hip), openings, stairs (+ slab wells),
+  ifc/                  IfcOpenShell compiler (ifc/components.py copies uploaded components): project, walls, slabs, roofs (flat/gable/hip), openings, stairs (+ slab wells),
                         fixtures/railings/beams, geometry helpers; lifter (IFC → spec + design)
   store/db.py           SQLite projects/versions (spec + design + checks); IFC files under backend/output/projects/<id>/vN.ifc
   api/routes.py         HTTP API; api/sse.py streams pipeline progress as Server-Sent Events
   export/               final deliverable: validate, stamp provenance, zip bundle (route: api/export.py)
+  components/           uploaded IFC components: normalise (IFC4, metres), measure, store (route: api/components.py)
   agents/               stateless planners for /plan and /generate (template regex → steps, llm)
   tests/                pytest; runs entirely on the mock LLM; tests/evals/prompts.json = accuracy set
   tools/eval.py         score the configured model on the evaluation set
@@ -509,6 +510,43 @@ The Tauri shell (`src-tauri/`) starts `backend/.venv` python unless something al
 port (skip with `BIM_NO_BACKEND=1`). A Windows Job Object ties the backend to the app, so it also dies
 on a crash or force-quit. The shell also provides native open/save dialogs and raw-bytes
 `read_ifc`/`write_ifc` commands. `src/platform.ts` is the only frontend file that knows about Tauri.
+
+### 4.13a IFC components (uploaded parts the model can place)
+
+Attach IFC files to a project the way you attach files to a chat: a staircase, a kitchen island, a
+manufacturer's furniture. The model then places them into the design as rigid objects, and the
+compiler copies their real geometry into every version.
+
+**Upload** (`POST /projects/{id}/components`, several files at once, per-file errors). Each file is
+normalised to IFC4 in metres (`ifcpatch` Migrate and ConvertLengthUnit, so Revit-style IFC2X3 and
+millimetre files work), measured (bounding box of the tessellated geometry), and stored as
+`output/projects/<id>/components/<cid>.ifc` next to the untouched original `<cid>.orig.ifc`. A
+component is every top-level element in the file as one object. Files with no geometry, more than
+2000 elements, or larger than 60 m are rejected with a reason (`components/assets.py`).
+
+**Design layer.** Every prompt refreshes `Design.assets` from the project's uploads, so the model sees
+them under `AVAILABLE COMPONENTS` even for a brand-new building. A new step places one:
+
+```
+{"step":"component","component":"kitchen-island","room":"kitchen","side":"N|S|E|W|center"|"near","at","rotation"}
+{"step":"component","component":"kitchen-island","room":"kitchen","position":[x,y],"rotation"}
+```
+
+It is placed exactly like furniture (`core/derive.py::_place_piece`, against a wall or in the middle,
+fit-checked against the room polygon), or at an explicit footprint centre. Re-emitting the same id
+moves or rotates it; `remove` deletes it; removing its room removes it. Removed uploads are dropped
+from later versions with a note; earlier versions keep compiling because the file stays on disk.
+
+**Compiler** (`ifc/components.py`). `ifcopenshell.api.project.append_asset` copies each product with
+its own materials, styles and property sets; only placement changes (footprint centre on the level,
+then rotation). The first product carries the component's spec (`NoCoast_Spec`) and its stable
+GlobalId from the guid map; every other copied element gets a GlobalId derived from that one and its
+source GlobalId, plus a `NoCoast_ComponentPart` marker that the lifter skips. A component therefore
+keeps the same ids across versions, and a compiled version lifts back to the same design.
+
+**UI.** The composer's **+** offers *Attach IFC components…* (multi-select) next to *Open an IFC file*.
+Attached components show as chips with their size (click to add the name to the prompt, × to remove).
+From Home, attaching starts a session for them.
 
 ## 4.14 Troubleshooting
 
