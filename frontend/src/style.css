@@ -30,7 +30,13 @@ html, body { margin: 0; height: 100%; background: #0f1115; color: #e6e6e6; font:
 #steps-list li.stream { opacity: 0.85; }
 #steps-text { margin: 0; max-height: 40%; overflow: auto; padding: 8px 10px; border-top: 1px solid #2a2f3a; font: 11px/1.35 ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; color: #b9c2d0; }
 
-#prompt { position: fixed; left: 8px; right: 8px; bottom: 8px; display: grid; grid-template-columns: 1fr auto; gap: 6px; }
+#dock { position: fixed; left: 8px; right: 8px; bottom: 8px; display: flex; flex-direction: column; gap: 6px; }
+
+#layerbar { display: flex; gap: 8px; align-items: center; background: #1a1d24; border: 1px solid #333; border-radius: 4px; padding: 6px 10px; }
+#layerbar input[type="range"] { flex: 1; }
+#layerLabel { min-width: 10em; opacity: 0.8; font-family: ui-monospace, monospace; }
+
+#prompt { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
 #text { grid-column: 1; resize: vertical; background: #1a1d24; color: inherit; border: 1px solid #333; border-radius: 4px; padding: 8px; font: inherit; }
 #send { grid-column: 2; min-width: 80px; }
 #status { grid-column: 1 / 3; min-height: 1.2em; opacity: 0.85; }

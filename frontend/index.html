@@ -29,11 +29,20 @@
       <pre id="steps-text" hidden></pre>
     </aside>
 
-    <div id="prompt">
-      <textarea id="text" rows="2" placeholder="Describe a building, or a change to the current one…"></textarea>
-      <button id="send">Send</button>
-      <div id="status"></div>
-      <pre id="notes"></pre>
+    <div id="dock">
+      <div id="layerbar">
+        <button id="layerPlay" disabled>▶ Play</button>
+        <input id="layerSlider" type="range" min="0" max="0" value="0" disabled />
+        <span id="layerLabel"></span>
+        <button id="liveBuild" disabled>⏺ Live build</button>
+      </div>
+
+      <div id="prompt">
+        <textarea id="text" rows="2" placeholder="Describe a building, or a change to the current one…"></textarea>
+        <button id="send">Send</button>
+        <div id="status"></div>
+        <pre id="notes"></pre>
+      </div>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

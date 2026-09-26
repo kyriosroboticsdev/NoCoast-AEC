@@ -53,6 +53,8 @@ backend/
   core/stream.py        apply steps as they stream; worker thread compiles previews (geometry-checks only what changed)
   core/pipeline.py      the run: requirements → build stream → fix rounds → check → compile → version
   core/ops.py           apply raw ops to a spec (pure, cascading deletes, re-validates)
+  core/construction.py  live-build job: writes a version's elements to disk one at a time in construction order
+  slicer/               horizontal slices of a compiled IFC by construction phase + preview G-code
   core/guids.py         element id ↔ IFC GlobalId map, kept per project
   core/context.py       design / spec → compact text for the LLM
   core/partial_json.py  close the JSON a model has produced so far (only complete array elements survive)
@@ -400,6 +402,8 @@ History is linear; `revert/{n}` appends a copy of *n*; `base_version` gives opti
 | `GET /projects/{id}/versions/{n}/ifc` | | the IFC file |
 | `GET /projects/{id}/versions/{n}/spec` | | `{version, spec, design, guids}` |
 | `GET /projects/{id}/versions/{n}/context` | | text — exactly what the LLM sees when editing |
+| `GET /projects/{id}/versions/{n}/slices`, `…/gcode` | `?layer_height=` | horizontal slices of the compiled IFC in construction-phase order; slicer-style preview G-code (`slicer/`) |
+| `POST /projects/{id}/versions/{n}/construction`, `GET …/construction/{job}` | | live-build job: one IFC per element in construction order, polled by the viewer (`core/construction.py`) |
 | `POST /plan`, `/build`, `/generate` | | stateless one-shots (scripts, tests) |
 
 SSE events: `event: <stage>` + `data: {"seq", "t", "stage", "message", "data"}`, stages as in §4.5.
@@ -412,7 +416,9 @@ Vanilla TypeScript + Vite. `viewer.ts` opens the IFC bytes with `web-ifc` (`IfcA
 and frames the model. Clicking an element shows `IfcType <spec id> <GlobalId>`. After every preview and
 every accepted version the whole IFC is reloaded (milliseconds for a house). `main.ts` keeps one project
 id in `localStorage` (`?project=<id>` deep-links another, `?prompt=…` sends a prompt on load), renders
-the step log, and offers Undo, Import IFC and Download IFC. The Tauri shell (`src-tauri/`) spawns
+the step log, and offers Undo, Import IFC and Download IFC. A layer slider / Play button sweeps a clipping plane
+through the finished model along the server-computed slices, and *Live build* replays a version element by element
+in construction order from the backend job. The Tauri shell (`src-tauri/`) spawns
 `python main.py` on startup (skip with `BIM_NO_BACKEND=1`) and kills it on exit.
 
 ## 4.14 Troubleshooting

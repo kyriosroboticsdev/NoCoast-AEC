@@ -7,7 +7,9 @@ Stateful (what the UI uses):
     POST /projects/{id}/ops           (SSE)        apply raw ops without an LLM → new version
     POST /projects/{id}/revert/{n}    (SSE)        undo: new version equal to version n
     POST /projects/{id}/import        (SSE)        lift a NoCoast-generated IFC file into the project
-    GET  /projects/{id}/versions/{n}/{ifc|spec|context}
+    GET  /projects/{id}/versions/{n}/{ifc|spec|context|slices|gcode}
+    POST /projects/{id}/versions/{n}/construction                     start a live-build simulation job
+    GET  /projects/{id}/versions/{n}/construction/{job_id}            poll it
 
 Stateless (kept for scripts and tests): POST /plan, /build, /generate.
 """
@@ -20,13 +22,14 @@ import time
 import uuid
 from pathlib import Path
 
+import ifcopenshell
 from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
 import config
 from agents import PLANNERS, PlanResult, get_planner
-from core import pipeline
+from core import construction, pipeline
 from core.context import describe_design, describe_spec
 from core.derive import DesignError, analyze
 from ifc.builder import write_ifc
@@ -34,6 +37,8 @@ from ifc.lifter import LiftError, lift
 from llm import PROVIDERS, get_llm
 from schemas.bim import BuildingSpec
 from schemas.ops import Op
+from slicer.gcode import to_gcode
+from slicer.slice import slice_model
 from store.db import Project, Store, Version
 
 from api.sse import sse_response
@@ -190,6 +195,39 @@ def version_context(project_id: str, number: int) -> str:
         return describe_design(v.design, analyze(v.design))
     except DesignError:
         return describe_design(v.design)
+
+
+@router.get("/projects/{project_id}/versions/{number}/slices")
+def version_slices(project_id: str, number: int, layer_height: float = 0.2) -> dict:
+    """Layer-by-layer construction walkthrough, slicer-preview style (see slicer/slice.py)."""
+    v = _version(project_id, number)
+    model = ifcopenshell.open(v.ifc_path)
+    layers = slice_model(model, layer_height)
+    return {"layer_height": layer_height, "layers": [{"phase": l.phase, "z": l.z, "segments": l.segments} for l in layers]}
+
+
+@router.get("/projects/{project_id}/versions/{number}/gcode", response_class=PlainTextResponse)
+def version_gcode(project_id: str, number: int, layer_height: float = 0.2) -> str:
+    v = _version(project_id, number)
+    model = ifcopenshell.open(v.ifc_path)
+    return to_gcode(slice_model(model, layer_height))
+
+
+@router.post("/projects/{project_id}/versions/{number}/construction")
+def start_construction(project_id: str, number: int) -> dict:
+    """Kick off a live build simulation: writes this version's elements to disk one construction
+    step at a time (see core/construction.py). Poll the returned job with the GET below."""
+    job = construction.start(_version(project_id, number))
+    return job.status()
+
+
+@router.get("/projects/{project_id}/versions/{number}/construction/{job_id}")
+def construction_status(project_id: str, number: int, job_id: str) -> dict:
+    _version(project_id, number)
+    job = construction.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"construction job '{job_id}' not found")
+    return job.status()
 
 
 # --- stateless -----------------------------------------------------------------

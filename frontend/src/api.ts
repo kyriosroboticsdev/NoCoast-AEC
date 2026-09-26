@@ -32,6 +32,26 @@ export interface StageEvent {
   data: Record<string, unknown> | null;
 }
 
+export interface SliceLayer {
+  phase: string;
+  z: number;
+  segments: [number, number, number, number][];
+}
+
+export interface Slices {
+  layer_height: number;
+  layers: SliceLayer[];
+}
+
+export interface ConstructionStatus {
+  job_id: string;
+  done: boolean;
+  error: string | null;
+  index: number;
+  total: number;
+  ifc_url: string | null;
+}
+
 const log = (...args: unknown[]) => console.log("[nocoast:api]", ...args);
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
@@ -92,6 +112,15 @@ export const importIfc = (id: string, file: File, onEvent: (e: StageEvent) => vo
   form.append("file", file, file.name);
   return stream(`/projects/${id}/import`, { method: "POST", body: form }, onEvent);
 };
+
+export const fetchSlices = (id: string, number: number, layerHeight = 0.2) =>
+  json<Slices>(`/projects/${id}/versions/${number}/slices?layer_height=${layerHeight}`);
+
+export const startConstruction = (id: string, number: number) =>
+  json<ConstructionStatus>(`/projects/${id}/versions/${number}/construction`, { method: "POST" });
+
+export const constructionStatus = (id: string, number: number, jobId: string) =>
+  json<ConstructionStatus>(`/projects/${id}/versions/${number}/construction/${jobId}`);
 
 export const fetchIfc = async (ifcUrl: string): Promise<Uint8Array> => {
   const r = await fetch(BACKEND + ifcUrl);

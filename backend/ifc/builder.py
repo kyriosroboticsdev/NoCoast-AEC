@@ -18,13 +18,13 @@ from ifc.stairs import add_stair, add_stair_wells
 from ifc.walls import add_wall
 from schemas.bim import Beam, BuildingSpec, Column, Door, Fixture, Railing, Roof, Slab, Space, Stair, Wall, Window
 
-BUILDERS = [  # order matters: openings need their host walls, stair wells need slabs and stairs
+BUILDERS = [  # construction order: foundation/floors, then structure, roof, spaces, then details last
+    (Slab, add_slab),                  # (openings need their host walls already built - Wall precedes them)
     (Wall, add_wall),
-    (Slab, add_slab),
-    (Space, add_space),
     (Column, add_column),
     (Beam, add_beam),
     (Roof, add_roof),
+    (Space, add_space),
     ((Door, Window), add_opening),
     (Stair, add_stair),
     (Fixture, add_fixture),
