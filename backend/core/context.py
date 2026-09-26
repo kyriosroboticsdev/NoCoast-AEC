@@ -149,7 +149,7 @@ def describe_focus(design: Design, focus: str) -> str:
 def describe_design(design: Design, derived: Derived | None = None) -> str:
     """The semantic model as the edit prompt sees it."""
     lines = [f'building "{design.name}"' + (f": {design.description}" if design.description else "")]
-    lines.append("levels: " + "; ".join(f"{l.id} \"{l.display}\" height={l.height:g}" for l in design.levels))
+    lines.append("levels: " + "; ".join(f"{l.id} \"{l.display}\" height={l.height:g}" + (" below ground" if l.below_ground else "") for l in design.ordered_levels()))
     if design.wall_material:
         lines.append(f"exterior walls: {design.wall_material}")
     for level in design.levels:

@@ -110,7 +110,7 @@ export const fetchSpec = (id: string, number: number) =>
 
 export interface Design {
   name: string;
-  levels: { id: string; name: string | null; height: number }[];
+  levels: { id: string; name: string | null; height: number; below_ground: boolean }[];
   rooms: { id: string; name: string; level: string; kind: string; rect: [number, number, number, number] | null; area: number | null }[];
   doors: { id: string; room: string; to: string; side: string | null; at: number; kind: string; width: number; height: number }[];
   windows: { id: string; room: string; side: string; at: number; kind: string; width: number; height: number; sill: number | null }[];

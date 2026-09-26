@@ -29,7 +29,7 @@ DoorKind = Literal["single", "double", "sliding", "french", "garage"]
 WindowKind = Literal["standard", "large", "floor", "small"]
 Rect = tuple[float, float, float, float]
 
-MAX_STOREYS = 6
+MAX_STOREYS = 40
 KIND_WORDS: list[tuple[str, RoomKind]] = [
     (r"living|lounge|family|sitting|great room|salon", "living"), (r"kitchen", "kitchen"), (r"dining|breakfast", "dining"),
     (r"office|study|studio|library", "office"), (r"bed|master|guest|nursery|suite", "bedroom"),
@@ -54,18 +54,40 @@ def _round(v: float) -> float:
     return round(float(v), 2)
 
 
+LEVEL_ID = re.compile(r"^([LB])(\d+)$")
+
+
 class LevelDef(BaseModel):
-    id: str = Field(description="'L1' is the ground floor, 'L2' the storey above it …")
+    id: str = Field(description="'L1' is the ground floor, 'L2' the storey above it …, 'B1' the first level below ground, 'B2' below that")
     name: Optional[str] = None
-    height: float = Field(3.0, ge=2.2, le=6.0, description="Floor-to-floor height in metres")
+    height: float = Field(3.0, ge=2.2, le=12.0, description="Floor-to-floor height in metres")
+    below_ground: bool = Field(False, description="Basement level: no windows, no roof; stacks downward from ground")
+
+    @field_validator("id")
+    @classmethod
+    def _id(cls, v: str) -> str:
+        v = str(v).strip().upper()
+        if not LEVEL_ID.match(v) or int(v[1:]) < 1:
+            raise ValueError(f"level ids look like 'L1', 'L2' … or 'B1', 'B2' for basements; got {v!r}")
+        return v
+
+    def model_post_init(self, __context) -> None:
+        if self.id.startswith("B"):
+            self.below_ground = True
 
     @property
     def index(self) -> int:
-        return int(self.id[1:]) - 1
+        """0 for the ground floor, positive above, negative below (B1 = -1)."""
+        n = int(self.id[1:])
+        return -n if self.id.startswith("B") else n - 1
 
     @property
     def display(self) -> str:
-        return self.name or ("Ground Floor" if self.index == 0 else f"Level {self.index + 1}")
+        if self.name:
+            return self.name
+        if self.index < 0:
+            return "Basement" if self.index == -1 else f"Basement {-self.index}"
+        return "Ground Floor" if self.index == 0 else f"Level {self.index + 1}"
 
 
 class RoomDef(BaseModel):
@@ -246,4 +268,17 @@ class Design(BaseModel):
         return f"{base}-{n}"
 
     def storeys(self) -> int:
-        return len(self.levels)
+        """Storeys above ground (what people count when they say 'two-storey house')."""
+        return sum(1 for l in self.levels if l.index >= 0)
+
+    def basements(self) -> int:
+        return sum(1 for l in self.levels if l.index < 0)
+
+    def ordered_levels(self) -> list[LevelDef]:
+        return sorted(self.levels, key=lambda l: l.index)
+
+    def level_above(self, level_id: str) -> LevelDef | None:
+        cur = self.level(level_id)
+        if cur is None:
+            return None
+        return next((l for l in self.ordered_levels() if l.index > cur.index), None)

@@ -68,8 +68,10 @@ def parse_requirements(prompt: str) -> list[Requirement]:
     if m:
         kind = {"pitched": "gable", "hipped": "hip"}.get(m.group(1), m.group(1))
         reqs.append(Requirement(text=f"{kind} roof", kind="roof", item=kind))
-    if re.search(r"\bpool\b|basement|elevator|lift\b", text):
-        reqs.append(Requirement(text="pool/basement/elevator", kind="other", supported=False))
+    if re.search(r"basement|cellar", text):
+        reqs.append(Requirement(text="a basement", kind="feature", item="basement"))
+    if re.search(r"\bpool\b|elevator|lift\b", text):
+        reqs.append(Requirement(text="pool/elevator", kind="other", supported=False))
     return reqs
 
 
@@ -113,20 +115,26 @@ def _assign_rooms(text: str, storeys: int) -> list[list[tuple[str, str]]]:
 def template_steps(prompt: str) -> list[dict]:
     """Build steps for a new design, in construction order."""
     text = prompt.lower()
-    storeys = max(1, min(_count(text, r"(stor(e)?y|stories|storeys|floors?|levels?)") or 1, 6))
+    storeys = max(1, min(_count(text, r"(stor(e)?y|stories|storeys|floors?|levels?)") or 1, 40))
+    basement = bool(re.search(r"basement|cellar", text))
     floors = _assign_rooms(text, storeys)
     garage = "garage" in text
-    steps: list[dict] = [{"step": "building", "name": "Generated House", "description": f"{storeys}-storey house"}]
+    steps: list[dict] = [{"step": "building", "name": "Generated House", "description": f"{storeys}-storey house" + (" with a basement" if basement else "")}]
+    if basement:
+        steps.append({"step": "level", "id": "B1"})
     for i in range(storeys):
         steps.append({"step": "level", "id": f"L{i + 1}"})
     # Every storey gets a hall so there is somewhere for the stair and the doors to meet.
     design = Design(levels=[])
-    for i, rooms in enumerate(floors):
-        level = f"L{i + 1}"
+    level_ids = (["B1"] if basement else []) + [f"L{i + 1}" for i in range(storeys)]
+    if basement:
+        floors = [[("Storage", "storage"), ("Utility Room", "utility")]] + floors
+    for i, (level, rooms) in enumerate(zip(level_ids, floors)):
         design.levels.append(LevelDef(id=level))
-        defs = [RoomDef(id="hall" if i == 0 else f"landing-{i + 1}", name="Hall" if i == 0 else f"Landing {i + 1}", level=level, kind="hall", area=12)]
+        hall_id, hall_name = ("hall", "Hall") if level == "L1" else (f"landing-{level.lower()}", f"Landing {level}")
+        defs = [RoomDef(id=hall_id, name=hall_name, level=level, kind="hall", area=12)]
         defs += [RoomDef(id=slug(r), name=r, level=level, kind=kind, area=18 if kind != "bathroom" else 8) for r, kind in rooms]
-        if i == 0 and garage:
+        if level == "L1" and garage:
             defs.append(RoomDef(id="garage", name="Garage", level=level, kind="garage"))
         rects = place_rooms([], defs)
         for r in defs:
@@ -138,9 +146,8 @@ def template_steps(prompt: str) -> list[dict]:
         steps.append({"step": "roof", "kind": {"pitched": "gable", "hipped": "hip"}.get(m.group(1), m.group(1))})
     # Doors: each room to the hall of its storey if adjacent, else to its first neighbour.
     derived = analyze(design)
-    for i in range(storeys):
-        level = f"L{i + 1}"
-        hall = "hall" if i == 0 else f"landing-{i + 1}"
+    for level in level_ids:
+        hall = "hall" if level == "L1" else f"landing-{level.lower()}"
         for r in design.rooms_on(level):
             if r.id == hall:
                 continue
@@ -148,7 +155,7 @@ def template_steps(prompt: str) -> list[dict]:
             to = hall if hall in info.neighbours else (info.neighbours[0] if info.neighbours else None)
             if to:
                 steps.append({"step": "door", "room": r.id, "to": to})
-        if i == 0:
+        if level == "L1":
             side = "S" if "S" in derived.rooms[hall].sides else derived.rooms[hall].sides[0]
             steps.append({"step": "door", "room": hall, "to": "outside", "side": side})
     big = bool(re.search(r"natural light|lots of windows|large windows|bright|glass", text))
@@ -156,10 +163,12 @@ def template_steps(prompt: str) -> list[dict]:
         sides = derived.rooms[r.id].sides
         if r.id == "hall" and len(sides) > 1:
             sides = sides[1:]  # the entrance door is on the first exterior side
-        if sides and r.kind != "garage":
+        if sides and r.kind != "garage" and not design.level(r.level).below_ground:
             steps.append({"step": "window", "room": r.id, "side": sides[0], "kind": "large" if big else "standard"})
     if storeys > 1:
         steps.append({"step": "stair", "room": "hall", "side": "W"})
+    if basement:
+        steps.append({"step": "stair", "room": "landing-b1", "side": "W"})
     if re.search(r"porch|columns?|pillars?|veranda", text):
         steps.append({"step": "porch", "side": "S"})
     for r in design.rooms:

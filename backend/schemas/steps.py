@@ -17,8 +17,8 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from schemas.bim import FixtureKind, RoofShape, WallMaterial
-from schemas.design import (BalconyDef, ColumnDef, CustomShapeDef, Design, DoorDef, DoorKind, FixtureDef, LevelDef,
-                            PorchDef, RoofDef, RoomDef, RoomKind, ShapePartDef, Side, StairDef, WindowDef,
+from schemas.design import (MAX_STOREYS, BalconyDef, ColumnDef, CustomShapeDef, Design, DoorDef, DoorKind, FixtureDef,
+                            LevelDef, PorchDef, RoofDef, RoomDef, RoomKind, ShapePartDef, Side, StairDef, WindowDef,
                             WindowKind, guess_kind, slug)
 
 StepKind = Literal["building", "level", "room", "layout", "door", "window", "stair", "furniture", "custom", "balcony",
@@ -76,6 +76,7 @@ class Step(BaseModel):
     depth: Optional[float] = None
     sill: Optional[float] = Field(None, description="window sill height")
     to_level: Optional[str] = Field(None, description="stair: level it reaches (null = the one above)")
+    below_ground: Optional[bool] = Field(None, description="level: a basement (id B1, B2 …)")
     pitch: Optional[float] = Field(None, description="roof: degrees")
     overhang: Optional[float] = Field(None, description="roof: metres")
     x: Optional[float] = Field(None, description="column")
@@ -123,7 +124,12 @@ class Step(BaseModel):
         s = str(v).strip()
         import re
         m = re.match(r"^\s*(?:l|level\s*|floor\s*|storey\s*)?(\d+)\s*$", s, re.IGNORECASE)
-        return f"L{int(m.group(1))}" if m else s
+        if m:
+            return f"L{int(m.group(1))}"
+        m = re.match(r"^\s*(?:b|basement\s*(?:level\s*)?|cellar\s*)(\d*)\s*$", s, re.IGNORECASE)
+        if m:
+            return f"B{int(m.group(1) or 1)}"
+        return s
 
 
 class StepsResponse(BaseModel):
@@ -207,10 +213,14 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
         return d, f"note: {text}"
 
     if k == "level":
-        lid = step.id or (step.level if step.level else f"L{len(d.levels) + 1}")
-        lid = Step._level(lid)
-        if not (lid.startswith("L") and lid[1:].isdigit()):
-            raise StepError(f"level ids look like 'L1', 'L2', …; got {lid!r}")
+        above = d.storeys()
+        below = d.basements()
+        if step.id or step.level:
+            lid = Step._level(step.id or step.level)
+        else:
+            lid = f"B{below + 1}" if step.below_ground else f"L{above + 1}"
+        if not (lid[:1] in ("L", "B") and lid[1:].isdigit()):
+            raise StepError(f"level ids look like 'L1', 'L2', … or 'B1' for a basement; got {lid!r}")
         existing = d.level(lid)
         if existing:
             if step.name:
@@ -218,13 +228,19 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
             if step.height:
                 existing.height = step.height
             return d, f"level {lid}: {existing.display}, {existing.height} m"
-        if len(d.levels) >= 6:
-            raise StepError("at most 6 storeys are supported")
+        if len(d.levels) >= MAX_STOREYS:
+            raise StepError(f"at most {MAX_STOREYS} levels are supported")
         idx = int(lid[1:])
-        if idx != len(d.levels) + 1:
-            raise StepError(f"levels must be added in order; the next level id is L{len(d.levels) + 1}")
-        d.levels.append(LevelDef(id=lid, name=step.name, height=step.height or 3.0))
-        return d, f"level {lid}: {d.levels[-1].display}, {d.levels[-1].height} m"
+        if lid.startswith("L") and idx != above + 1:
+            raise StepError(f"storeys must be added in order; the next level id is L{above + 1}")
+        if lid.startswith("B") and idx != below + 1:
+            raise StepError(f"basements must be added in order; the next basement id is B{below + 1}")
+        try:
+            d.levels.append(LevelDef(id=lid, name=step.name, height=step.height or 3.0))
+        except ValueError as exc:
+            raise StepError(str(exc)) from exc
+        what = "basement" if lid.startswith("B") else "level"
+        return d, f"{what} {lid}: {d.levels[-1].display}, {d.levels[-1].height} m"
 
     if k == "room":
         existing = d.room(step.id) if step.id else (d.room(step.name) if step.name else None)

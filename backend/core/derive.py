@@ -231,6 +231,8 @@ def _window(w: WindowDef, design: Design, infos: dict[str, RoomInfo], level: Lev
     room = design.room(w.room)
     if room is None:
         raise DesignError(f"{what}: unknown room '{w.room}' (rooms: {', '.join(r.id for r in design.rooms)})")
+    if design.level(room.level).below_ground:
+        raise DesignError(f"{what}: room '{room.id}' is on {room.level}, which is below ground; basement rooms cannot have windows")
     wall, _ = _exterior_wall(infos[room.id], w.side, what)
     width, height, sill = WINDOW_SIZES[w.kind]
     width, height, sill = w.width or width, w.height or height, w.sill if w.sill is not None else sill
@@ -250,8 +252,7 @@ def _stair(s: StairDef, design: Design, level: Level) -> Stair:
     if room is None:
         raise DesignError(f"{what}: unknown room '{s.room}'")
     x0, y0, x1, y1 = room.box
-    idx = design.level(room.level).index
-    above = next((l for l in design.levels if l.index == idx + 1), None)
+    above = design.level_above(room.level)
     to_level = s.to_level or (above.id if above else None)
     if to_level and design.level(to_level) is None:
         raise DesignError(f"{what}: unknown to_level '{to_level}'")
@@ -404,7 +405,7 @@ def _mep(design: Design, levels: list[Level], els: list) -> None:
                         top_level=wet_level or levels[-1].id, position=wet_pos))
 
 
-def _porch(design: Design, polys: list[Polygon], els: list) -> None:
+def _porch(design: Design, polys: list[Polygon], els: list, ground: str = "L1") -> None:
     p = design.porch
     if p is None or not polys:
         return
@@ -430,10 +431,10 @@ def _porch(design: Design, polys: list[Polygon], els: list) -> None:
         cx = x0 + 0.2 if p.side == "W" else x1 - 0.2
         cols = [(_r(cx), _r(a + 0.25 + i * (b - a - 0.5) / (n - 1))) for i in range(n)]
     deck = [(_r(x), _r(y)) for x, y in deck]
-    els.append(Slab(id="porch-deck", name="Porch deck", level="L1", outline=deck, thickness=0.15))
-    els.append(Roof(id="porch-roof", name="Porch roof", level="L1", outline=deck, thickness=0.2))
+    els.append(Slab(id="porch-deck", name="Porch deck", level=ground, outline=deck, thickness=0.15))
+    els.append(Roof(id="porch-roof", name="Porch roof", level=ground, outline=deck, thickness=0.2))
     for i, (x, y) in enumerate(cols, 1):
-        els.append(Column(id=f"porch-col-{i}", name="Porch column", level="L1", position=(x, y), width=0.25, depth=0.25))
+        els.append(Column(id=f"porch-col-{i}", name="Porch column", level=ground, position=(x, y), width=0.25, depth=0.25))
 
 
 # --- the whole thing ----------------------------------------------------------
@@ -469,8 +470,22 @@ def analyze(design: Design, prune: bool = False) -> Derived:
         if r.level not in level_ids:
             raise DesignError(f"room '{r.id}' is on unknown level '{r.level}' (levels: {', '.join(sorted(level_ids))})")
     names = {r.id: r.name for r in design.rooms}
-    levels = [Level(id=l.id, name=l.display, height=l.height) for l in sorted(design.levels, key=lambda l: l.index)]
+    # Storeys stack upward from the ground floor at 0; basements stack downward from it.
+    ordered = design.ordered_levels()
+    elevations: dict[str, float] = {}
+    z = 0.0
+    for l in ordered:
+        if l.index >= 0:
+            elevations[l.id] = _r(z)
+            z += l.height
+    z = 0.0
+    for l in reversed([l for l in ordered if l.index < 0]):
+        z -= l.height
+        elevations[l.id] = _r(z)
+    levels = [Level(id=l.id, name=l.display, height=l.height, elevation=elevations[l.id]) for l in ordered]
     level_by_id = {l.id: l for l in levels}
+    ground = next((l for l in levels if design.level(l.id).index >= 0), levels[0])
+    below_ground = {l.id for l in ordered if l.below_ground}
     els: list = []
     infos: dict[str, RoomInfo] = {}
     footprints: dict[str, list[Polygon]] = {}
@@ -527,8 +542,10 @@ def analyze(design: Design, prune: bool = False) -> Derived:
                 els.append(Beam(id=f"{w.id}-beam", name=f"Beam over {names[w.rooms[0]]} {_side_name(w.side)} wall",
                                 level=level.id, start=w.start, end=w.end))
 
-    # Roofs: whatever a storey covers that the storey above does not.
+    # Roofs: whatever a storey covers that the storey above does not. Basements get none (the ground is their lid).
     for i, level in enumerate(levels):
+        if level.id in below_ground:
+            continue
         above = unary_union(footprints[levels[i + 1].id]) if i + 1 < len(levels) and footprints[levels[i + 1].id] else None
         here = unary_union(footprints[level.id]) if footprints[level.id] else None
         if here is None:
@@ -576,7 +593,7 @@ def analyze(design: Design, prune: bool = False) -> Derived:
         if c.level not in level_by_id:
             raise DesignError(f"column '{c.id}': unknown level '{c.level}'")
         els.append(Column(id=c.id, level=c.level, position=(_r(c.x), _r(c.y)), width=c.size, depth=c.size))
-    _porch(design, footprints[levels[0].id], els)
+    _porch(design, footprints[ground.id], els, ground.id)
     _mep(design, levels, els)
 
     try:
