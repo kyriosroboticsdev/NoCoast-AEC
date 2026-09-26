@@ -43,3 +43,4 @@ def test_clean_reply_strips_thinking_and_fences():
     assert clean_reply('<think>hmm</think>\n```json\n{"a": 1}\n```') == '{"a": 1}'
     assert clean_reply("<think>still going") == ""
     assert parse_reply('{"a": 1, "b": [1, 2') == {"a": 1, "b": [1, 2]}  # max_tokens cut → closed
+    assert parse_reply('Here is the plan:\n{"a": 1}\nLet me know if you want changes.') == {"a": 1}  # unconstrained model

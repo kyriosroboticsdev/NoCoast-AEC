@@ -6,7 +6,7 @@ import json
 
 import httpx
 
-from llm.base import LLMError, LLMRequest, OnText, parse_reply
+from llm.base import LLMError, LLMRequest, OnNote, OnText, parse_reply
 from llm.schema import strict_schema
 
 
@@ -18,7 +18,7 @@ class OllamaLLM:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
-    def complete(self, request: LLMRequest, on_text: OnText | None = None) -> dict:
+    def complete(self, request: LLMRequest, on_text: OnText | None = None, on_note: OnNote | None = None) -> dict:
         body = {
             "model": self.model,
             "stream": True,

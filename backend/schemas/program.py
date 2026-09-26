@@ -87,6 +87,10 @@ class Program(BaseModel):
             data["storeys"] = 1
         if data.get("name") in (None, ""):
             data["name"] = "Generated Building"
+        if isinstance(data.get("notes"), str):
+            data["notes"] = [data["notes"]]
+        if isinstance(data.get("rooms"), dict):
+            data["rooms"] = [data["rooms"]]
         return data
 
     @model_validator(mode="after")

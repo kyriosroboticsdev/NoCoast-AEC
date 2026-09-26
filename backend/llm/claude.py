@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import anthropic
 
-from llm.base import LLMError, LLMRequest, OnText, parse_reply
+from llm.base import LLMError, LLMRequest, OnNote, OnText, parse_reply
 from llm.schema import strict_schema
 
 DEFAULT_MODEL = "claude-opus-5"
@@ -24,7 +24,7 @@ class ClaudeLLM:
         headers = {"anthropic-workspace-id": workspace_id} if workspace_id else None
         self.client = anthropic.Anthropic(timeout=timeout, default_headers=headers)
 
-    def complete(self, request: LLMRequest, on_text: OnText | None = None) -> dict:
+    def complete(self, request: LLMRequest, on_text: OnText | None = None, on_note: OnNote | None = None) -> dict:
         text = ""
         try:
             with self.client.messages.stream(
@@ -32,7 +32,7 @@ class ClaudeLLM:
                 max_tokens=16000,
                 system=request.system,
                 messages=[{"role": "user", "content": request.user}],
-                output_config={"format": {"type": "json_schema", "schema": strict_schema(request.schema)}},
+                output_config={"format": {"type": "json_schema", "schema": strict_schema(request.schema, keep_bounds=False)}},
             ) as stream:
                 for piece in stream.text_stream:
                     text += piece

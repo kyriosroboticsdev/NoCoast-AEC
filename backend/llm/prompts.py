@@ -38,8 +38,12 @@ Model conventions (units: metres, plan coordinates x,y; z comes from levels):
   must not exceed the wall height.
 - slab / roof / space: {type, id, level, outline:[[x,y],...], thickness}. Roof sits on top of its level.
 - column: {type:"column", id, level, position:[x,y], width, depth}
-Operations: add_element{element}, modify_element{id, set:{field: value}}, delete_element{id},
-add_level{level}, modify_level{id, set}, delete_level{id}, set_building{set:{name, description}}.
+Operations (one object each; unused parts null):
+  {op:"add_element", element:{type, id, ...fields for that type}}
+  {op:"modify_element", id, set:{...changed fields}}     {op:"delete_element", id}
+  {op:"add_level", level:{id, name, height}}   {op:"modify_level", id, set:{name|height|elevation}}
+  {op:"delete_level", id}                      {op:"set_building", set:{name|description}}
+In `element` and `set`, fill only the fields that apply and leave every other field null.
 
 Rules:
 - Ids are immutable and must exist in the current model for modify/delete. Use them EXACTLY as written

@@ -18,6 +18,17 @@
       <span id="picked"></span>
     </div>
 
+    <div id="showing"></div>
+
+    <aside id="steps">
+      <div id="steps-head">
+        <span>Steps</span>
+        <label><input id="steps-json" type="checkbox" /> show model output</label>
+      </div>
+      <ol id="steps-list"></ol>
+      <pre id="steps-text" hidden></pre>
+    </aside>
+
     <div id="prompt">
       <textarea id="text" rows="2" placeholder="Describe a building, or a change to the current one…"></textarea>
       <button id="send">Send</button>

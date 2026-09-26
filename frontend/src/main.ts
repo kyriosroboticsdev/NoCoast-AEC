@@ -17,6 +17,10 @@ const undo = $<HTMLButtonElement>("undo");
 const download = $<HTMLAnchorElement>("download");
 const projectLabel = $<HTMLSpanElement>("project");
 const picked = $<HTMLSpanElement>("picked");
+const showing = $<HTMLDivElement>("showing");
+const stepsList = $<HTMLOListElement>("steps-list");
+const stepsText = $<HTMLPreElement>("steps-text");
+const stepsJson = $<HTMLInputElement>("steps-json");
 
 let projectId = "";
 let head: api.Version | null = null;
@@ -52,44 +56,127 @@ async function showVersion(v: api.Version | null) {
     const t = performance.now();
     await viewer.load(bytes);
     log("viewer loaded in", Math.round(performance.now() - t), "ms");
+    shownRow?.classList.remove("shown");
+    shownRow = null;
+    setShowing(`v${v.number} · final · ${v.summary.elements} elements`, false);
   } else {
     notes.textContent = "";
     viewer.clear();
+    setShowing("", false);
   }
   setBusy(false);
 }
 
-// Partial previews: the backend emits `partial` events with a geometry-checked IFC of what the model
-// has produced so far. Loads are serialised, only the newest pending preview is loaded, and nothing
-// is loaded once the final version has arrived.
+// --- step log ------------------------------------------------------------------------------------
+// One row per SSE event. `stream` events update a single row (and the live model-output pane);
+// `partial` rows are clickable so earlier previews can be re-shown after the run.
+
+let streamRow: HTMLLIElement | null = null;
+let shownRow: HTMLLIElement | null = null;
+
+function setShowing(label: string, preview: boolean) {
+  showing.textContent = label;
+  showing.classList.toggle("preview", preview);
+}
+
+function stepRow(e: api.StageEvent, detail?: string): HTMLLIElement {
+  const li = document.createElement("li");
+  li.className = e.stage;
+  li.innerHTML = `<span class="t">${e.t.toFixed(1)}s</span><span class="stage">${e.stage}</span> `;
+  li.append(document.createTextNode(e.message));
+  if (detail) {
+    const d = document.createElement("span");
+    d.className = "detail";
+    d.textContent = detail;
+    li.append(d);
+  }
+  stepsList.append(li);
+  li.scrollIntoView({ block: "nearest" });
+  return li;
+}
+
+function detailFor(e: api.StageEvent): string | undefined {
+  const d = e.data ?? {};
+  const errs = d.errors as string[] | undefined;
+  if (errs?.length) return errs.map((x) => "• " + x).join("\n");
+  if (e.stage === "llm" && d.model) return `${d.provider} ${d.model} · system ${d.system_chars} chars · user ${d.user_chars} chars`;
+  if (e.stage === "validate" && Array.isArray(d.rooms)) return (d.rooms as string[]).join(", ") + ((d.features as string[])?.length ? ` · ${(d.features as string[]).join(", ")}` : "");
+  if (e.stage === "validate" && Array.isArray(d.ops)) return (d.ops as string[]).map((x) => "• " + x).join("\n");
+  if (e.stage === "apply" && Array.isArray(d.cascade)) return (d.cascade as string[]).map((x) => "• " + x).join("\n");
+  if (e.stage === "partial") {
+    const rooms = d.rooms as Record<string, string[]>;
+    const roomLine = Object.entries(rooms ?? {}).map(([l, n]) => `${l}: ${n.join(", ") || "–"}`).join(" | ");
+    return `${JSON.stringify(d.counts)} · compiled in ${d.compile_ms} ms from ${d.chars} chars\n${roomLine}`;
+  }
+  if (e.stage === "done") {
+    const v = d as unknown as api.Version;
+    return `v${v.number} ${v.mode} · ${JSON.stringify(v.summary?.counts)}${v.notes?.length ? "\n" + v.notes.map((n) => "• " + n).join("\n") : ""}`;
+  }
+  return undefined;
+}
+
+function resetSteps() {
+  stepsList.replaceChildren();
+  stepsText.textContent = "";
+  streamRow = shownRow = null;
+}
+
+stepsJson.onchange = () => (stepsText.hidden = !stepsJson.checked);
+
+// --- previews --------------------------------------------------------------------------------------
+// The backend emits `partial` events with a geometry-checked IFC of what the model has produced so far.
+// Loads are serialised, only the newest pending preview is loaded, and nothing is loaded once the
+// final version has arrived (unless the user clicks a preview row afterwards).
 let previewChain = Promise.resolve();
-let pendingPreview: string | null = null;
+let pendingPreview: { url: string; label: string; row: HTMLLIElement } | null = null;
 let finalArrived = false;
 
-function queuePreview(url: string) {
-  pendingPreview = url;
+function queuePreview(p: { url: string; label: string; row: HTMLLIElement }) {
+  pendingPreview = p;
   previewChain = previewChain.then(async () => {
-    const u = pendingPreview;
-    if (!u || finalArrived) return;
+    const q = pendingPreview;
+    if (!q || finalArrived) return;
     pendingPreview = null;
-    try {
-      const bytes = await api.fetchIfc(u);
-      if (finalArrived) return;
-      await viewer.load(bytes);
-      log("preview shown", u);
-    } catch (err) {
-      log("preview skipped:", String(err));
-    }
+    await showPreview(q);
   });
+}
+
+async function showPreview(p: { url: string; label: string; row: HTMLLIElement }) {
+  try {
+    const bytes = await api.fetchIfc(p.url);
+    if (finalArrived && busy) return;
+    await viewer.load(bytes);
+    shownRow?.classList.remove("shown");
+    shownRow = p.row;
+    p.row.classList.add("shown");
+    setShowing(p.label, true);
+    log("preview shown", p.url);
+  } catch (err) {
+    log("preview skipped:", String(err));
+  }
 }
 
 const onEvent = (e: api.StageEvent) => {
   const errs = (e.data?.errors as string[] | undefined) ?? [];
   if (e.stage === "stream") {
-    status.textContent = `${e.message} … ${String(e.data?.tail ?? "").replace(/\s+/g, " ")}`;
+    stepsText.textContent = String(e.data?.text ?? "");
+    stepsText.scrollTop = stepsText.scrollHeight;
+    if (!streamRow) streamRow = stepRow(e);
+    else streamRow.innerHTML = `<span class="t">${e.t.toFixed(1)}s</span><span class="stage">stream</span> ${e.message}`;
+    status.textContent = `streaming: ${e.message}`;
     return;
   }
-  if (e.stage === "partial" && typeof e.data?.ifc_url === "string") queuePreview(e.data.ifc_url);
+  streamRow = null; // the next stream event (a repair round) starts a fresh row
+  const row = stepRow(e, detailFor(e));
+  if (e.stage === "validate" && errs.length) row.classList.add("bad");
+  if (e.stage === "partial" && typeof e.data?.ifc_url === "string") {
+    const label = `preview ${e.data.preview} · ${e.data.elements} elements`;
+    const p = { url: e.data.ifc_url, label, row };
+    row.onclick = () => {
+      if (!busy) previewChain = previewChain.then(() => showPreview(p));
+    };
+    queuePreview(p);
+  }
   setStatus(`${e.stage}: ${e.message}${errs.length ? " — " + errs.join("; ") : ""}`);
 };
 
@@ -97,6 +184,7 @@ async function run(work: () => Promise<api.Version>) {
   if (busy) return;
   setBusy(true);
   finalArrived = false;
+  resetSteps();
   try {
     const version = await work();
     finalArrived = true;
@@ -155,12 +243,18 @@ async function boot() {
       await new Promise((r) => setTimeout(r, 500));
     }
   }
+  const params = new URLSearchParams(location.search);
   try {
     // ?project=<id> deep-links a project (also how the headless smoke test opens one).
-    await openProject(new URLSearchParams(location.search).get("project") ?? localStorage.getItem("nocoast.project"));
+    await openProject(params.get("project") ?? localStorage.getItem("nocoast.project"));
   } catch (err) {
     log("stored project could not be opened, creating a new one:", String(err));
     await openProject(null); // stale id from an older database
+  }
+  const auto = params.get("prompt"); // ?prompt=… sends a prompt on load (smoke tests, demos)
+  if (auto) {
+    text.value = auto;
+    send.click();
   }
 }
 

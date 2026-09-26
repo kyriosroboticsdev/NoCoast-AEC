@@ -60,11 +60,40 @@ def test_set_building():
     ([ModifyElement(id="w1", set={"end": [2, 0]})], "runs past the end"),  # d1/win1 no longer fit
     ([AddElement(element={"type": "door", "id": "d1", "wall": "w1", "offset": 0})], "already exists"),
     ([ModifyElement(id="win1", set={"width": -1})], "greater than 0"),
+    ([ModifyElement(id="w1", set={})], "no fields to change"),
 ])
 def test_errors_are_readable(ops, fragment):
     with pytest.raises(OpError) as exc:
         apply_ops(base(), ops)
     assert fragment in str(exc.value)
+
+
+def test_flat_ops_convert_and_explain():
+    from schemas.ops import EditResponse
+
+    resp = EditResponse.model_validate({"mode": "ops", "ops": [
+        {"op": "add_element", "element": {"type": "window", "id": "win2", "wall": "w1", "offset": 4.5}},
+        {"op": "modify_element", "id": "w1", "set": {"thickness": 0.3}},
+        {"op": "modify_level", "id": "L1", "set": {"height": 3.5}},
+        {"op": "set_building", "set": {"name": "Casa"}},
+        {"op": "delete_element", "id": "d1"},
+    ]})
+    typed = resp.typed_ops()
+    assert [op.op for op in typed] == ["add_element", "modify_element", "modify_level", "set_building", "delete_element"]
+    spec, _ = apply_ops(base(), typed)
+    assert spec.building.name == "Casa" and spec.levels[1].elevation == 3.5 and "win2" in {e.id for e in spec.elements}
+
+    for flat, fragment in [
+        ({"op": "add_element"}, "needs `element`"),
+        ({"op": "add_element", "element": {"type": "window", "id": "x"}}, "wall"),  # window needs a host wall
+        ({"op": "modify_element", "id": "w1", "set": {}}, "non-null field"),
+        ({"op": "modify_level", "id": "L1", "set": {"thickness": 1}}, "not level fields"),
+        ({"op": "set_building", "set": {"height": 1}}, "not building fields"),
+        ({"op": "delete_element"}, "needs `id`"),
+    ]:
+        with pytest.raises(OpError) as exc:
+            EditResponse.model_validate({"mode": "ops", "ops": [flat]}).typed_ops()
+        assert fragment in str(exc.value), str(exc.value)
 
 
 def test_input_is_not_mutated():

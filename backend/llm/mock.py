@@ -13,7 +13,7 @@ import math
 import re
 
 from agents.template_planner import parse_program
-from llm.base import LLMRequest, OnText
+from llm.base import LLMRequest, OnNote, OnText
 from schemas.program import Program, Room
 
 NUM = r"(\d+(?:\.\d+)?)"
@@ -23,7 +23,7 @@ STREAM_STEPS = 6  # the mock "streams" its answer in a few slices so the preview
 class MockLLM:
     name = "mock"
 
-    def complete(self, request: LLMRequest, on_text: OnText | None = None) -> dict:
+    def complete(self, request: LLMRequest, on_text: OnText | None = None, on_note: OnNote | None = None) -> dict:
         prompt: str = request.meta.get("prompt", request.user)
         if request.schema_name == "program":
             reply = parse_program(prompt).model_dump(mode="json")

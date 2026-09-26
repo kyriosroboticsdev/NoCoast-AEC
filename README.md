@@ -126,7 +126,25 @@ rounds after the schema hardening described in §4.5.
 workspace is rejected with *"must include the anthropic-workspace-id header"* — add
 `ANTHROPIC_WORKSPACE_ID=wrkspc_…` (Console → Settings → Workspaces) or create the key inside a workspace.
 
-**Fireworks (or any OpenAI-compatible API).** The `openai` provider streams from `/chat/completions`
+**Claude Opus 5.5 through the OpenAI API spec.** Anthropic serves `/v1/chat/completions`; the `openai`
+provider targets it directly (keys go in `.env`; `${VAR}` references expand to variables defined above them):
+
+```
+CLAUDE_KEY=sk-ant-…
+LLM_PROVIDER=openai
+LLM_BASE_URL=https://api.anthropic.com/v1
+LLM_MODEL=claude-opus-5-5
+LLM_API_KEY=${CLAUDE_KEY}
+```
+
+Three things the adapter handles for that host: `temperature` is omitted (Claude 5 rejects it), numeric
+bounds are stripped from the schema (its validator rejects `minimum`/`maximum`), and when the endpoint
+answers *"the compiled grammar is too large"* (it does for the edit schema) the request is retried once
+without constrained decoding and that schema stays unconstrained for the process — the step log shows
+the note, and Pydantic + the repair loop validate on our side. Measured: design 7 s, edits 5–14 s.
+(`LLM_PROVIDER=claude` uses the native SDK with real structured outputs instead.)
+
+**Fireworks (or any other OpenAI-compatible API).** Same provider, streaming from `/chat/completions`
 with a JSON-schema `response_format`:
 
 ```
@@ -223,7 +241,13 @@ when layouts need to honour adjacencies and target areas properly; nothing else 
 ```
 
 or `{"mode": "redesign", "program": {…}, "notes": […]}` when the change is at program level
-(rooms, storeys, footprint). Rules enforced by `apply_ops`:
+(rooms, storeys, footprint, features). Two representations of the same ops exist: the **typed**
+discriminated union (`Op`, used internally and by `POST /projects/{id}/ops`) and the **flat** form the
+LLM emits (`FlatOp`: one object with an `op` enum and optional `id`/`element`/`level`/`set`, the element
+one object with a `type` enum and every field optional). The flat schema is a fraction of the grammar
+size of the union-of-unions, which matters for constrained decoders; `EditResponse.typed_ops()`
+converts and raises model-readable errors ("add_element needs `element`", "`thickness` is not a level
+field"). Rules enforced by `apply_ops`:
 
 - pure: returns a new spec, input untouched; the result is re-validated as a whole
 - `modify_*` merges fields; `type` and `id` cannot change
@@ -300,8 +324,20 @@ browser: loads each preview into the viewer; the final version replaces it
 - For designs the partial `Program` is solved as usual; for edits the ops that are complete so far are
   applied (incomplete ones skipped) or the partial redesign program is solved.
 - `close()` runs before the final compile, so IfcOpenShell is never used from two threads at once.
-- SSE `stream` events (every 0.5 s: chars received + the tail of the text) drive the status line.
+- SSE `stream` events (every 0.4 s: chars received + the live reply text) drive the status line and
+  the "show model output" pane.
 - Preview files are served by the `/models` static mount and pruned after 30 minutes.
+
+**Step log (transparency).** Every SSE event carries `seq` and `t` (seconds since the request), and the
+pipeline emits one for each decision: `llm` (what was sent to which model, then chars/seconds/previews
+when the reply completes, plus provider notes such as the unconstrained-decoding fallback), `stream`,
+`partial` (with room lists per level, element counts by type, compile time, and a one-line diff against
+the previous preview: "+7 elements; L2: +Bedroom 3, Bedroom 2"), `validate` (accepted with rooms/ops
+listed, or rejected with the exact errors sent back), `apply` (ops and cascaded deletes), `solve`,
+`compile`, `done`. The UI renders these as a timeline on the right; preview rows are clickable to
+re-show any intermediate render, an overlay says what the viewer is showing (`preview 3 · 39 elements`
+vs `v4 · final`), and a checkbox reveals the model's output as it streams. `?prompt=…` in the URL
+sends a prompt on load (smoke tests, demos).
 
 `parse_reply` also uses the partial parser as a fallback for a final answer cut by `max_tokens`, so
 the repair loop gets a concrete semantic complaint instead of a parse error.
@@ -372,10 +408,10 @@ storage replace this module with the same interface.
 | `GET /projects/{id}/versions/{n}/context` | | text — exactly what the LLM sees when editing |
 | `POST /plan`, `/build`, `/generate` | | stateless one-shots (scripts, tests) |
 
-SSE events: `event: <stage>` + `data: {"stage", "message", "data"}` where stage ∈
-`program, edit, stream, partial, apply, solve, compile, done, error`. `done.data` is the version record
-incl. `ifc_url`; `partial.data` is `{ifc_url, elements}` for a geometry-checked preview; `stream.data`
-is `{chars, tail}`; repair rounds carry `data.errors`.
+SSE events: `event: <stage>` + `data: {"seq", "t", "stage", "message", "data"}` where stage ∈
+`program, edit, llm, stream, partial, validate, apply, solve, compile, done, error`. `done.data` is the
+version record incl. `ifc_url`; `partial.data` is `{ifc_url, preview, elements, counts, rooms, change,
+compile_ms}`; `stream.data` is `{chars, text}`; `validate`/`error` carry `data.errors`.
 
 ### 4.12 Frontend
 

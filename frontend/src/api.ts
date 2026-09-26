@@ -24,7 +24,9 @@ export interface Project {
 }
 
 export interface StageEvent {
-  stage: string; // program | edit | apply | solve | compile | done | error
+  seq: number; // ordinal within the request
+  t: number; // seconds since the request started
+  stage: string; // llm | program | edit | stream | partial | validate | apply | solve | compile | done | error
   message: string;
   data: Record<string, unknown> | null;
 }
@@ -65,7 +67,8 @@ async function stream(path: string, init: RequestInit, onEvent: (e: StageEvent) 
       const dataLine = chunk.split("\n").find((l) => l.startsWith("data: "));
       if (!dataLine) continue;
       const ev = JSON.parse(dataLine.slice(6)) as StageEvent;
-      log("event", ev.stage, ev.message, ev.data ?? "");
+      if (ev.stage === "stream") log("event", ev.seq, `${ev.t}s`, ev.stage, ev.message);
+      else log("event", ev.seq, `${ev.t}s`, ev.stage, ev.message, ev.data ?? "");
       onEvent(ev);
       if (ev.stage === "error") throw new Error(ev.message);
       if (ev.stage === "done") result = ev.data as unknown as Version;
