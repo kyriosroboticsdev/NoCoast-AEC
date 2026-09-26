@@ -23,6 +23,7 @@ _singletons: dict[str, LLM] = {}  # llamacpp owns a server process; keep one ins
 
 
 def get_llm(provider: str | None = None) -> LLM:
+    config.reload()  # pick up .env edits (provider, model, key) without a restart
     name = provider or config.LLM_PROVIDER
     if name not in PROVIDERS:
         raise LLMError(f"unknown LLM provider '{name}' (available: {', '.join(PROVIDERS)})")
@@ -31,12 +32,17 @@ def get_llm(provider: str | None = None) -> LLM:
     if name == "claude":
         return ClaudeLLM(model=config.LLM_MODEL, timeout=config.LLM_TIMEOUT, workspace_id=config.ANTHROPIC_WORKSPACE_ID)
     if name == "llamacpp":
-        if "llamacpp" not in _singletons:
-            if not config.LLM_MODEL:
-                raise LLMError("LLM_MODEL must name a .gguf file for the llamacpp provider")
-            _singletons["llamacpp"] = LlamaCppLLM(model=config.LLM_MODEL, models_dir=config.LLM_MODELS_DIR, server=config.LLAMA_SERVER,
-                                                  base_url=config.LLM_BASE_URL, timeout=config.LLM_TIMEOUT, **env_defaults())
-        return _singletons["llamacpp"]
+        if not config.LLM_MODEL:
+            raise LLMError("LLM_MODEL must name a .gguf file for the llamacpp provider")
+        current = _singletons.get("llamacpp")
+        if current is not None and current.model != config.LLM_MODEL:
+            current.stop()  # model changed in .env: drop the old server
+            current = None
+        if current is None:
+            current = _singletons["llamacpp"] = LlamaCppLLM(
+                model=config.LLM_MODEL, models_dir=config.LLM_MODELS_DIR, server=config.LLAMA_SERVER,
+                base_url=config.LLM_BASE_URL, timeout=config.LLM_TIMEOUT, **env_defaults())
+        return current
     if name == "ollama":
         return OllamaLLM(model=config.LLM_MODEL or "llama3.1", base_url=config.LLM_BASE_URL or "http://127.0.0.1:11434",
                          timeout=config.LLM_TIMEOUT)
