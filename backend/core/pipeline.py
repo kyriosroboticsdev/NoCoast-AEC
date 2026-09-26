@@ -18,18 +18,19 @@ import json
 import time
 
 import ifcopenshell
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 import config
 from logsetup import log
 from core.context import describe_spec
 from core.guids import GuidMap, prune_guids
 from core.ops import OpError, apply_ops
+from core.preview import Build, Preview
 from ifc.builder import GeometryError, compile_ifc, summarize
 from llm import LLM, LLMError, LLMRequest
 from llm.prompts import EDIT_SYSTEM, PROGRAM_SYSTEM, edit_user_message, program_user_message
 from schemas.bim import BuildingSpec
-from schemas.ops import EditResponse
+from schemas.ops import EditResponse, Op
 from schemas.program import Program
 from solver.layout import solve
 from store.db import Store, VersionData
@@ -56,19 +57,56 @@ def _noop(stage: str, message: str, data: dict | None = None) -> None:
     pass
 
 
-def _call(llm: LLM, request: LLMRequest) -> dict:
-    """One LLM call with timing and (at DEBUG) the full prompt and reply logged."""
+def _call(llm: LLM, request: LLMRequest, emit: Emit = _noop, build: Build | None = None) -> dict:
+    """One streamed LLM call with timing, (at DEBUG) the full prompt and reply, and live previews
+    when `build` can turn a partial reply into a spec."""
     log.info("LLM %s: %s request, system %d chars, user %d chars", llm.name, request.schema_name, len(request.system), len(request.user))
     log.debug("LLM user message:\n%s", request.user)
     t = time.perf_counter()
+    preview = Preview(emit, build) if build else None
     try:
-        raw = llm.complete(request)
+        raw = llm.complete(request, preview.feed if preview else None)
     except LLMError as exc:
         log.error("LLM %s failed after %.1fs: %s", llm.name, time.perf_counter() - t, exc)
         raise
+    finally:
+        if preview:
+            preview.close()
+            log.info("LLM %s: %d preview(s) rendered while streaming", llm.name, preview.count)
     log.info("LLM %s replied in %.1fs (%d chars)", llm.name, time.perf_counter() - t, len(json.dumps(raw)))
     log.debug("LLM reply:\n%s", json.dumps(raw, indent=1)[:20000])
     return raw
+
+
+def build_program_preview(data: dict) -> BuildingSpec | None:
+    try:
+        return solve(Program.model_validate(data))
+    except (ValidationError, ValueError):
+        return None
+
+
+def build_edit_preview(head: VersionData) -> Build:
+    """Ops applied so far (skipping ones that are still incomplete), or the partial redesign program."""
+    op_adapter = TypeAdapter(Op)
+
+    def build(data: dict) -> BuildingSpec | None:
+        try:
+            if data.get("mode") == "redesign":
+                return solve(Program.model_validate(data["program"])) if data.get("program") else None
+            ops = []
+            for raw in data.get("ops") or []:
+                try:
+                    ops.append(op_adapter.validate_python(raw))
+                except ValidationError:
+                    pass  # still being generated
+            if not ops:
+                return None
+            spec, _ = apply_ops(head.spec, ops)
+            return spec
+        except (ValidationError, ValueError, KeyError, TypeError):
+            return None
+
+    return build
 
 
 # --- LLM calls with repair -------------------------------------------------
@@ -78,7 +116,7 @@ def request_program(llm: LLM, prompt: str, emit: Emit = _noop) -> Program:
     for attempt in range(config.MAX_REPAIRS + 1):
         emit("program", "asking the model for a building program" if not attempt else f"repair attempt {attempt}", {"errors": errors})
         raw = _call(llm, LLMRequest(system=PROGRAM_SYSTEM, user=program_user_message(prompt, errors), schema=PROGRAM_SCHEMA,
-                                    schema_name="program", meta={"prompt": prompt}))
+                                    schema_name="program", meta={"prompt": prompt}), emit, build_program_preview)
         try:
             return Program.model_validate(raw)
         except ValidationError as exc:
@@ -93,10 +131,11 @@ def request_edit(llm: LLM, prompt: str, head: VersionData, emit: Emit = _noop) -
     errors: list[str] = []
     program_json = head.program.model_dump_json(exclude={"notes"}) if head.program else None
     meta = {"prompt": prompt, "spec": head.spec.model_dump(mode="json"), "program": head.program.model_dump(mode="json") if head.program else None}
+    build = build_edit_preview(head)
     for attempt in range(config.MAX_REPAIRS + 1):
         emit("edit", "asking the model for edit operations" if not attempt else f"repair attempt {attempt}", {"errors": errors})
         raw = _call(llm, LLMRequest(system=EDIT_SYSTEM, user=edit_user_message(prompt, context, errors, program_json), schema=EDIT_SCHEMA,
-                                    schema_name="edit", meta=meta))
+                                    schema_name="edit", meta=meta), emit, build)
         try:
             if isinstance(raw, dict) and raw.get("mode") == "ops":
                 raw["program"] = None  # strict schemas make the model fill it anyway; it is meaningless in ops mode

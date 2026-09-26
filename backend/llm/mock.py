@@ -8,26 +8,34 @@ with no model installed, and it is the fallback when the configured model is dow
 
 from __future__ import annotations
 
+import json
 import math
 import re
 
 from agents.template_planner import parse_program
-from llm.base import LLMRequest
+from llm.base import LLMRequest, OnText
 from schemas.program import Program, Room
 
 NUM = r"(\d+(?:\.\d+)?)"
+STREAM_STEPS = 6  # the mock "streams" its answer in a few slices so the preview path gets exercised
 
 
 class MockLLM:
     name = "mock"
 
-    def complete(self, request: LLMRequest) -> dict:
+    def complete(self, request: LLMRequest, on_text: OnText | None = None) -> dict:
         prompt: str = request.meta.get("prompt", request.user)
         if request.schema_name == "program":
-            return parse_program(prompt).model_dump(mode="json")
-        if request.schema_name == "edit":
-            return self._edit(prompt, request.meta.get("spec") or {}, request.meta.get("program"))
-        raise ValueError(f"mock has no answer for schema '{request.schema_name}'")
+            reply = parse_program(prompt).model_dump(mode="json")
+        elif request.schema_name == "edit":
+            reply = self._edit(prompt, request.meta.get("spec") or {}, request.meta.get("program"))
+        else:
+            raise ValueError(f"mock has no answer for schema '{request.schema_name}'")
+        if on_text:
+            text = json.dumps(reply)
+            for i in range(1, STREAM_STEPS + 1):
+                on_text(text[: len(text) * i // STREAM_STEPS])
+        return reply
 
     # --- edits -----------------------------------------------------------
 

@@ -33,9 +33,16 @@ def guids_by_tag(pid: str, number: int) -> dict[str, str]:
 
 def test_design_then_edit_keeps_guids():
     pid = new_project()
-    v1 = prompt(pid, "Two storey house with a kitchen, living room and three bedrooms, plus a garage")
+    r = client.post(f"/projects/{pid}/prompt", json={"prompt": "Two storey house with a kitchen, living room and three bedrooms, plus a garage"})
+    evs = events(r.text)
+    v1 = done(r.text)
     assert v1["number"] == 1 and v1["mode"] == "design"
     assert v1["summary"]["counts"]["IfcWall"] > 5
+    # The mock streams its answer in slices, so at least one geometry-checked preview must have been emitted.
+    partials = [e for e in evs if e["stage"] == "partial"]
+    assert partials, [e["stage"] for e in evs]
+    assert client.get(partials[-1]["data"]["ifc_url"]).status_code == 200
+    assert 0 < partials[-1]["data"]["elements"] <= v1["summary"]["elements"]
 
     v2 = prompt(pid, "remove the garage", base=1)
     assert v2["number"] == 2 and v2["mode"] == "ops"

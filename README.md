@@ -47,6 +47,8 @@ backend/
   core/ops.py           apply ops to a spec (pure, cascading deletes, re-validates)
   core/guids.py         element id ↔ IFC GlobalId map, kept per project
   core/context.py       spec → compact text for the LLM
+  core/partial_json.py  close the JSON a model has produced so far
+  core/preview.py       worker thread: partial reply → geometry-checked preview IFC → SSE "partial"
   core/pipeline.py      the run: LLM call → validate/repair loop → compile → new version
   llm/                  adapter protocol + mock / ollama / openai-compatible implementations, prompts
   ifc/                  IfcOpenShell compiler (project, walls, slabs, roofs, openings) + lifter (IFC → IR)
@@ -124,8 +126,18 @@ rounds after the schema hardening described in §4.5.
 workspace is rejected with *"must include the anthropic-workspace-id header"* — add
 `ANTHROPIC_WORKSPACE_ID=wrkspc_…` (Console → Settings → Workspaces) or create the key inside a workspace.
 
-**Ollama / anything OpenAI-compatible.** `LLM_PROVIDER=ollama LLM_MODEL=llama3.1`, or
-`LLM_PROVIDER=openai LLM_BASE_URL=http://host:port/v1` for vLLM, LM Studio, a hosted API or a fine-tuned model.
+**Fireworks (or any OpenAI-compatible API).** The `openai` provider streams from `/chat/completions`
+with a JSON-schema `response_format`:
+
+```
+LLM_PROVIDER=openai
+LLM_BASE_URL=https://api.fireworks.ai/inference/v1
+LLM_MODEL=accounts/fireworks/models/qwen3p8-max
+LLM_API_KEY=fw_…
+```
+
+Measured with qwen3p8-max: a design in ~8 s, edits 4–17 s, no repair rounds on the test prompts. The same
+provider covers vLLM, LM Studio, a hosted API or a fine-tuned model. **Ollama:** `LLM_PROVIDER=ollama LLM_MODEL=llama3.1`.
 
 ## 4. Specifications
 
@@ -264,6 +276,36 @@ which is deliberate — `(context, prompt) → JSON` pairs are the easiest possi
 the specialised model that replaces the general one later. `store` keeps prompt, ops/program, notes and
 llm name for every version, so the training log accumulates by itself.
 
+### 4.5a Streaming and live previews
+
+Every provider streams (`LLM.complete(request, on_text)` receives the accumulated reply after each
+chunk). `core/preview.py` turns that into something visible before the model has finished:
+
+```
+LLM stream thread ──feed(text)──► latest snapshot ──► preview worker thread
+                                                        parse_partial → build spec → compile IFC
+                                                        (geometry-checked) → write output/partial/<id>.ifc
+                                                        → SSE "partial" {ifc_url, elements}
+browser: loads each preview into the viewer; the final version replaces it
+```
+
+- `core/partial_json.py` closes the JSON produced so far: it trims an open string, a dangling
+  `"key":` or a half literal, **drops any array element that is still open** (a half-generated room or
+  op never appears with default values), closes the brackets, and parses. Tested against every prefix
+  of a sample reply.
+- The worker only ever compiles the *latest* snapshot (tokens arrive faster than a ~0.3–1 s compile) and
+  skips snapshots whose spec is unchanged. Nothing is emitted unless the partial spec validates *and*
+  every product tessellates, so the viewer never shows a broken model. Previews use fresh GlobalIds;
+  only the final compile uses the project's id map.
+- For designs the partial `Program` is solved as usual; for edits the ops that are complete so far are
+  applied (incomplete ones skipped) or the partial redesign program is solved.
+- `close()` runs before the final compile, so IfcOpenShell is never used from two threads at once.
+- SSE `stream` events (every 0.5 s: chars received + the tail of the text) drive the status line.
+- Preview files are served by the `/models` static mount and pruned after 30 minutes.
+
+`parse_reply` also uses the partial parser as a fallback for a final answer cut by `max_tokens`, so
+the repair loop gets a concrete semantic complaint instead of a parse error.
+
 ### 4.6 Validate / repair loop
 
 `core/pipeline.py`. For each LLM call, up to `BIM_MAX_REPAIRS` (2) extra rounds:
@@ -331,8 +373,9 @@ storage replace this module with the same interface.
 | `POST /plan`, `/build`, `/generate` | | stateless one-shots (scripts, tests) |
 
 SSE events: `event: <stage>` + `data: {"stage", "message", "data"}` where stage ∈
-`program, edit, apply, solve, compile, done, error`. `done.data` is the version record incl. `ifc_url`;
-repair rounds carry `data.errors`.
+`program, edit, stream, partial, apply, solve, compile, done, error`. `done.data` is the version record
+incl. `ifc_url`; `partial.data` is `{ifc_url, elements}` for a geometry-checked preview; `stream.data`
+is `{chars, tail}`; repair rounds carry `data.errors`.
 
 ### 4.12 Frontend
 
@@ -367,10 +410,11 @@ Common ones: *backend not reachable* / a browser CORS error with *status (null)*
 
 ## 5. Tests
 
-`cd backend && python -m pytest` — 31 tests on the mock LLM, no network:
-ops semantics and error messages · solver determinism and id stability · compile→lift round trip ·
-GlobalId survival across modify/delete/redesign/revert · the SSE project API end to end (design, edit,
-conflict 409, ops, revert, import, bad import) · the legacy stateless endpoints.
+`cd backend && python -m pytest` — 56 tests on the mock LLM, no network:
+ops semantics and error messages · solver determinism and id stability · program coercion of
+small-model junk · partial-JSON parsing of every prefix of a reply · compile→lift round trip ·
+GlobalId survival across modify/delete/redesign/revert · the SSE project API end to end (design with
+streamed previews, edit, conflict 409, ops, revert, import, bad import) · the legacy stateless endpoints.
 `node frontend/scripts/check-ifc.mjs <file.ifc>` confirms web-ifc can tessellate a generated file.
 
 ## 6. Decisions and their reasons
@@ -385,6 +429,7 @@ conflict 409, ops, revert, import, bad import) · the legacy stateless endpoints
 | SSE over POST | the repair loop is visible; no WebSocket infrastructure |
 | SQLite + files | same shape as Postgres + object storage, zero infrastructure |
 | whole-model reload in the viewer | correct by construction; incremental patching is frontend work that proves nothing about the pipeline |
+| streamed replies + geometry-checked previews | the user sees the design grow within seconds; nothing invalid is ever rendered |
 | Tauri over Electron | smaller, uses the system WebView2, Rust side is 40 lines |
 
 ## 7. Not in v0 (designed, not built)
@@ -395,7 +440,7 @@ conflict 409, ops, revert, import, bad import) · the legacy stateless endpoints
 - **Selection as context**: pass clicked ids with the prompt; the context builder then includes those
   elements in full and summarises the rest (`core/context.py` already truncates past 400 elements).
 - **Smarter solver**: adjacency and target-area aware layout; pitched roofs; stairs.
-- **Incremental viewer updates** by GlobalId from the op list.
+- **Incremental viewer updates** by GlobalId from the op list (previews currently reload the whole model).
 - **Multi-user**: ops are already the right unit; only server-side ordering is missing.
 - **Fine-tuned model**: train on the stored `(context, prompt) → ops/program` pairs; plug in via
   `LLM_PROVIDER=openai` pointing at its server.

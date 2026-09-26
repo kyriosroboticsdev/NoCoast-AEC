@@ -59,18 +59,52 @@ async function showVersion(v: api.Version | null) {
   setBusy(false);
 }
 
+// Partial previews: the backend emits `partial` events with a geometry-checked IFC of what the model
+// has produced so far. Loads are serialised, only the newest pending preview is loaded, and nothing
+// is loaded once the final version has arrived.
+let previewChain = Promise.resolve();
+let pendingPreview: string | null = null;
+let finalArrived = false;
+
+function queuePreview(url: string) {
+  pendingPreview = url;
+  previewChain = previewChain.then(async () => {
+    const u = pendingPreview;
+    if (!u || finalArrived) return;
+    pendingPreview = null;
+    try {
+      const bytes = await api.fetchIfc(u);
+      if (finalArrived) return;
+      await viewer.load(bytes);
+      log("preview shown", u);
+    } catch (err) {
+      log("preview skipped:", String(err));
+    }
+  });
+}
+
 const onEvent = (e: api.StageEvent) => {
   const errs = (e.data?.errors as string[] | undefined) ?? [];
+  if (e.stage === "stream") {
+    status.textContent = `${e.message} … ${String(e.data?.tail ?? "").replace(/\s+/g, " ")}`;
+    return;
+  }
+  if (e.stage === "partial" && typeof e.data?.ifc_url === "string") queuePreview(e.data.ifc_url);
   setStatus(`${e.stage}: ${e.message}${errs.length ? " — " + errs.join("; ") : ""}`);
 };
 
 async function run(work: () => Promise<api.Version>) {
   if (busy) return;
   setBusy(true);
+  finalArrived = false;
   try {
-    await showVersion(await work());
+    const version = await work();
+    finalArrived = true;
+    await previewChain; // let an in-flight preview finish before the final model replaces it
+    await showVersion(version);
     setStatus(`v${head!.number} loaded`);
   } catch (err) {
+    finalArrived = true;
     console.error("[nocoast] request failed:", err);
     setStatus(String(err instanceof Error ? err.message : err), true);
     setBusy(false);
