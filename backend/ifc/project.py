@@ -140,6 +140,7 @@ def create_project(spec: BuildingSpec, guids: GuidMap | None = None, design_json
         storey = ifcopenshell.api.root.create_entity(model, ifc_class="IfcBuildingStorey", name=level.name)
         storey.GlobalId = guids[key_for_level(level.id)]
         storey.Elevation = level.elevation
+        storey.Description = level.id  # the viewer maps step events (level ids) to storeys through this
         add_spec_pset(model, storey, level.model_dump_json())
         ifcopenshell.api.geometry.edit_object_placement(model, product=storey, matrix=translate(z=level.elevation))
         ifcopenshell.api.aggregate.assign_object(model, products=[storey], relating_object=building)

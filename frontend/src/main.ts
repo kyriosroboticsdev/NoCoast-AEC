@@ -24,12 +24,12 @@ const stepsJson = $<HTMLInputElement>("steps-json");
 const stepsVerbose = $<HTMLInputElement>("steps-verbose");
 const layerSlider = $<HTMLInputElement>("layerSlider");
 const layerLabel = $<HTMLSpanElement>("layerLabel");
+const layerSnaps = $<HTMLDataListElement>("layerSnaps");
+const followBuild = $<HTMLInputElement>("followBuild");
 
 let projectId = "";
 let head: api.Version | null = null;
 let busy = false;
-let currentLayers: api.SliceLayer[] = [];
-let layerHeight = 0.2;
 
 const viewer = new Viewer($<HTMLCanvasElement>("viewport"), (p) => {
   picked.textContent = p ? `${p.type} ${p.tag || p.name} ${p.globalId}` : "";
@@ -49,31 +49,102 @@ function setBusy(b: boolean) {
 function updateControls() {
   send.disabled = busy;
   undo.disabled = busy || !head || head.number < 2;
-  layerSlider.disabled = busy || currentLayers.length <= 1;
 }
 
-// Cross-section slider: a shared clipping plane in the viewer reveals the model up to a height,
-// matching the horizontal cross-sections `slicer/slice.py` computed server-side from the real IFC geometry.
-function setLayerCutoff(i: number) {
-  if (!currentLayers.length) return;
-  const cutoff = Math.max(0, Math.min(i, currentLayers.length - 1));
-  const isTop = cutoff === currentLayers.length - 1;
-  const z = isTop ? Infinity : currentLayers[cutoff].z + layerHeight / 2; // top step: show the whole model
-  viewer.setLayerCutoff(z);
-  layerSlider.value = String(cutoff);
-  layerLabel.textContent = isTop ? "full height" : `cut at ${currentLayers[cutoff].z.toFixed(1)} m`;
+// Cross-section slider: a shared clipping plane in the viewer hides everything above a height. The
+// range is the loaded model's own extent in 0.1 m steps (previews included), with sticky snap points at
+// each storey's floor and just under its ceiling, read from the IFC in the browser.
+let sectionCut: number | null = Number(new URLSearchParams(location.search).get("section")) || null; // metres; null = full height (?section=2.4 presets it for smoke tests)
+let sectionSnaps: { z: number; label: string }[] = [];
+let modelBottom = 0;
+let modelTop = 0;
+
+function refreshSection() {
+  const b = viewer.bounds();
+  if (!b) {
+    layerSlider.disabled = true;
+    layerLabel.textContent = "";
+    sectionSnaps = [];
+    return;
+  }
+  modelBottom = Math.floor(b.min * 10) / 10;
+  modelTop = Math.ceil(b.max * 10) / 10;
+  layerSlider.min = String(Math.round(modelBottom * 10));
+  layerSlider.max = String(Math.round(modelTop * 10));
+  layerSlider.step = "1";
+  sectionSnaps = [];
+  for (const s of viewer.storeys()) {
+    sectionSnaps.push({ z: s.elevation, label: `${s.name} floor` });
+    sectionSnaps.push({ z: Math.round((s.top - 0.3) * 10) / 10, label: `inside ${s.name}` });
+  }
+  layerSnaps.replaceChildren(...sectionSnaps.map((s) => Object.assign(document.createElement("option"), { value: String(Math.round(s.z * 10)), label: s.label })));
+  layerSlider.disabled = false;
+  applySection();
 }
 
-function setLayers(slices: api.Slices) {
-  currentLayers = slices.layers;
-  layerHeight = slices.layer_height;
-  layerSlider.max = String(Math.max(0, currentLayers.length - 1));
-  updateControls();
-  if (currentLayers.length) setLayerCutoff(currentLayers.length - 1); // fully built by default
-  else layerLabel.textContent = "";
+function applySection() {
+  const full = sectionCut === null || sectionCut >= modelTop;
+  const cut = full ? modelTop : (sectionCut as number);
+  viewer.setLayerCutoff(full ? Infinity : cut);
+  layerSlider.value = String(Math.round(cut * 10));
+  const snap = full ? null : sectionSnaps.find((s) => Math.abs(s.z - cut) < 0.05);
+  layerLabel.textContent = full ? "full height" : `cut at ${cut.toFixed(1)} m${snap ? " · " + snap.label : ""}`;
 }
 
-layerSlider.oninput = () => setLayerCutoff(Number(layerSlider.value));
+layerSlider.oninput = () => {
+  let z = Number(layerSlider.value) / 10;
+  const near = sectionSnaps.find((s) => Math.abs(s.z - z) <= 0.2);
+  if (near) z = near.z;
+  sectionCut = z >= modelTop ? null : z;
+  following = false; // the user took over the cut for this build
+  applySection();
+};
+
+// "Follow build": while a request runs, the section cut sits just under the ceiling of the storey the
+// current steps are working on (a dollhouse view, roof and upper storeys hidden), and releases to full
+// height when the roof lands or the request finishes. Dragging the slider takes over for that build.
+let following = false;
+let followLevel: string | null = null; // level id the latest step worked on
+const roomLevels: Record<string, string> = {}; // room id → level id, learned from room/layout steps
+followBuild.checked = localStorage.getItem("nocoast.follow") !== "0";
+followBuild.onchange = () => localStorage.setItem("nocoast.follow", followBuild.checked ? "1" : "0");
+
+function applyFollow() {
+  if (!following) return;
+  if (followLevel === null) {
+    sectionCut = null;
+  } else {
+    const storey = viewer.storeys().find((st) => st.id === followLevel);
+    if (!storey) return; // not in the model yet; the next preview will have it
+    sectionCut = Math.round((storey.top - 0.3) * 10) / 10;
+  }
+  applySection();
+}
+
+const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+/** Remember room names and levels from an accepted step, and which level the build is working on. */
+function learnStep(step: Record<string, unknown>) {
+  const k = step.step;
+  if (k === "room" && typeof step.name === "string") {
+    const id = typeof step.id === "string" ? step.id : slug(step.name);
+    roomNames[id] = roomNames[slug(step.name)] = step.name;
+    if (typeof step.level === "string") roomLevels[id] = step.level;
+  }
+  if (k === "layout" && Array.isArray(step.rooms)) {
+    for (const r of step.rooms as { name?: string }[]) {
+      if (typeof r.name !== "string") continue;
+      roomNames[slug(r.name)] = r.name;
+      if (typeof step.level === "string") roomLevels[slug(r.name)] = step.level;
+    }
+  }
+  if (k === "roof") {
+    followLevel = null;
+    return;
+  }
+  const level = typeof step.level === "string" ? step.level : typeof step.room === "string" ? roomLevels[step.room] : undefined;
+  if (level && k !== "building" && k !== "level") followLevel = level;
+}
 
 // The camera is framed on the first model of a project and then left alone: previews and new
 // versions load into the same view, so the building grows in place instead of jumping around.
@@ -82,6 +153,8 @@ let framed = false;
 async function loadIntoViewer(bytes: Uint8Array) {
   await viewer.load(bytes, framed);
   framed = true;
+  refreshSection(); // the section cut survives reloads; the range follows the new model's extent
+  applyFollow();
 }
 
 async function showVersion(v: api.Version | null) {
@@ -102,19 +175,11 @@ async function showVersion(v: api.Version | null) {
     shownRow?.classList.remove("shown");
     shownRow = null;
     setShowing(`v${v.number} · final · ${v.summary.elements} elements`, false);
-    // The cross-section slider is a nice-to-have on top of the model: a slow or failed /slices call
-    // must never take down the model load it rides along with.
-    try {
-      setLayers(await api.fetchSlices(projectId, v.number));
-    } catch (err) {
-      log("layer slices unavailable:", String(err));
-      setLayers({ layer_height: layerHeight, layers: [] });
-    }
   } else {
     notes.textContent = "";
     viewer.clear();
     setShowing("", false);
-    setLayers({ layer_height: layerHeight, layers: [] });
+    refreshSection();
   }
   setBusy(false);
 }
@@ -165,12 +230,14 @@ function friendlyStep(step: Record<string, unknown>, ok: boolean, message: strin
     case "building": return name ? `Calling the building “${name}”` : "Describing the building";
     case "level": return `Adding ${levelName(step.id ?? step.level)}${step.height ? `, ${step.height} m high` : ""}`;
     case "room": {
-      if (name && typeof step.id === "string") roomNames[step.id] = name;
-      if (name) roomNames[name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")] = name;
       const verb = message.includes("updated") ? "Moving" : "Adding";
       return `${verb} the ${name || roomName(step.id).replace(/^the /, "")} on ${levelName(step.level)}${size}`;
     }
-    case "layout": return `Rearranging the rooms on ${levelName(step.level)}`;
+    case "layout": {
+      const names = Array.isArray(step.rooms) ? (step.rooms as { name?: string }[]).map((r) => r.name).filter(Boolean) : [];
+      const verb = message.includes("; removed") || message.includes("updated") ? "Rearranging" : "Laying out";
+      return `${verb} ${levelName(step.level)}${names.length ? ": " + names.join(", ") : ""}`;
+    }
     case "door": {
       const to = String(step.to ?? "outside");
       if (to === "outside" || to === "exterior") return `${step.kind === "garage" ? "Garage door" : "Entrance door"} on the ${side(step.side) || "outer"} side of ${roomName(step.room)}`;
@@ -404,6 +471,14 @@ const onEvent = (e: api.StageEvent) => {
   }
   events.push(e);
   streamRow = null;
+  if (e.stage === "step" && e.data?.ok !== false && e.data?.step) {
+    learnStep(e.data.step as Record<string, unknown>);
+    applyFollow();
+  }
+  if (e.stage === "done") {
+    followLevel = null;
+    applyFollow();
+  }
   const row = appendRow(e);
   if (e.stage === "partial" && typeof e.data?.ifc_url === "string") {
     queuePreview({ url: e.data.ifc_url, label: `preview ${e.data.preview} · ${e.data.elements} elements`, row });
@@ -416,6 +491,8 @@ async function run(work: () => Promise<api.Version>) {
   if (busy) return;
   setBusy(true);
   finalArrived = false;
+  following = followBuild.checked;
+  followLevel = null;
   resetSteps();
   try {
     const version = await work();
