@@ -43,18 +43,50 @@ class _Element(BaseModel):
 
 
 class Wall(_Element):
+    """A wall centred on its axis: straight from `start` to `end`, or faceted along `path` (a curved
+    wall is one wall whose path is the chord polyline; `start`/`end` are then its first/last point)."""
+
     type: Literal["wall"] = "wall"
     level: str
     start: Point
     end: Point
+    path: Optional[list[Point]] = Field(None, min_length=2, description="Polyline axis for faceted (curved) walls")
     height: Optional[float] = Field(None, gt=0, description="Defaults to the level height")
     thickness: float = Field(0.2, gt=0)
     external: bool = False
     material: Optional[WallMaterial] = None
+    radius: Optional[float] = Field(None, gt=0, description="True radius of a curved wall, kept for information")
+
+    @model_validator(mode="after")
+    def _ends(self) -> "Wall":
+        if self.path:
+            if len(self.path) == 2:
+                self.start, self.end, self.path = self.path[0], self.path[1], None
+            else:
+                self.start, self.end = self.path[0], self.path[-1]
+        return self
+
+    @property
+    def axis(self) -> list[Point]:
+        return list(self.path) if self.path else [self.start, self.end]
 
     @property
     def length(self) -> float:
-        return math.dist(self.start, self.end)
+        pts = self.axis
+        return sum(math.dist(a, b) for a, b in zip(pts, pts[1:]))
+
+    def frame_at(self, offset: float) -> tuple[Point, float]:
+        """Point on the axis `offset` metres from the start, and the axis direction there (radians)."""
+        pts = self.axis
+        left = max(0.0, offset)
+        for a, b in zip(pts, pts[1:]):
+            seg = math.dist(a, b)
+            angle = math.atan2(b[1] - a[1], b[0] - a[0])
+            if left <= seg or (a, b) == (pts[-2], pts[-1]):
+                k = 0.0 if seg == 0 else min(left, seg) / seg
+                return (a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k), angle
+            left -= seg
+        return pts[0], 0.0
 
 
 class Slab(_Element):
@@ -151,6 +183,32 @@ class Fixture(_Element):
     height: float = Field(gt=0)
 
 
+class ShapePart(BaseModel):
+    """One solid of a CustomFixture, in the fixture's own local frame: `x, y, z` is the part's min
+    corner (matching ifc/geometry.py::box), `w`/`d`/`h` its size. A "round" part ignores `d` and is
+    a `w`-diameter cylinder instead of a box — for a round table top, a column, a cup."""
+
+    shape: Literal["box", "round"] = "box"
+    x: float = 0.0
+    y: float = 0.0
+    z: float = Field(0.0, ge=0)
+    w: float = Field(gt=0, description="width (box) or diameter (round)")
+    d: float = Field(0.1, gt=0, description="depth; ignored for a round part")
+    h: float = Field(gt=0)
+
+
+class CustomFixture(_Element):
+    """A furniture/fixture piece the model designed itself out of `parts`, instead of picking a
+    `Fixture.kind` from the fixed catalog — for shapes the catalog doesn't cover: a round table, an
+    L-shaped bench, a custom plinth. `position` is the assembly's bounding-box centre, like Fixture."""
+
+    type: Literal["custom"] = "custom"
+    level: str
+    position: Point
+    rotation: float = 0.0
+    parts: list[ShapePart] = Field(min_length=1, max_length=12)
+
+
 class Railing(_Element):
     type: Literal["railing"] = "railing"
     level: str
@@ -203,13 +261,14 @@ class Wire(_Element):
 
 
 Element = Annotated[
-    Union[Wall, Slab, Roof, Door, Window, Column, Beam, Space, Stair, Fixture, Railing, Pipe, Outlet, LightFixture, Panel, Wire],
+    Union[Wall, Slab, Roof, Door, Window, Column, Beam, Space, Stair, Fixture, CustomFixture, Railing, Pipe,
+          Outlet, LightFixture, Panel, Wire],
     Field(discriminator="type"),
 ]
 
 ELEMENT_ORDER = {"wall": 0, "slab": 1, "space": 2, "column": 3, "beam": 4, "roof": 5, "pipe": 6, "door": 7,
-                 "window": 8, "stair": 9, "outlet": 10, "panel": 11, "wire": 12, "fixture": 13, "light": 14,
-                 "railing": 15}
+                 "window": 8, "stair": 9, "outlet": 10, "panel": 11, "wire": 12, "fixture": 13, "custom": 13,
+                 "light": 14, "railing": 15}
 
 
 def polygon_area(outline: list[Point]) -> float:

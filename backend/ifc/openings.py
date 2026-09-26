@@ -21,7 +21,8 @@ def add_opening(ctx: BuildContext, item: Door | Window) -> None:
     level = wall.level
     sill = item.sill_height if isinstance(item, Window) else 0.0
     t = wall.thickness
-    frame = wall_matrix(ctx, wall)
+    # The frame sits at the opening's centre (so a faceted wall's local chord is the right one), x back by half the width.
+    frame = wall_matrix(ctx, wall, item.offset + item.width / 2) @ translate(-item.width / 2, 0, 0)
 
     opening = ifcopenshell.api.root.create_entity(m, ifc_class="IfcOpeningElement", name=f"{item.id} opening")
     opening.GlobalId = ctx.guids[key_for_opening(item.id)]
@@ -29,7 +30,7 @@ def add_opening(ctx: BuildContext, item: Door | Window) -> None:
         m, context=ctx.body, length=item.width, height=item.height, thickness=t + 2 * CLEARANCE
     )
     ifcopenshell.api.geometry.edit_object_placement(
-        m, product=opening, matrix=frame @ translate(item.offset, -t / 2 - CLEARANCE, sill)
+        m, product=opening, matrix=frame @ translate(0, -t / 2 - CLEARANCE, sill)
     )
     ifcopenshell.api.geometry.assign_representation(m, product=opening, representation=opening_rep)
     ifcopenshell.api.feature.add_feature(m, feature=opening, element=host)
@@ -52,5 +53,5 @@ def add_opening(ctx: BuildContext, item: Door | Window) -> None:
         )
         kind, pset = "Window", ("Pset_WindowCommon", {"IsExternal": wall.external})
 
-    finish_element(ctx, element, rep, frame @ translate(item.offset, -t / 2, sill), kind, level, pset=pset, item=item)
+    finish_element(ctx, element, rep, frame @ translate(0, -t / 2, sill), kind, level, pset=pset, item=item)
     ifcopenshell.api.feature.add_filling(m, opening=opening, element=element)

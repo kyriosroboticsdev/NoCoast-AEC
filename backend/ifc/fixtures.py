@@ -1,5 +1,6 @@
 """Furniture, appliances and sanitary fittings (IfcFurniture / IfcElectricAppliance /
-IfcSanitaryTerminal), plus IfcRailing and IfcBeam. Everything is a few boxes: enough
+IfcSanitaryTerminal), plus IfcRailing, IfcBeam and model-composed CustomFixture pieces.
+Everything is a few boxes (or, for a "round" custom part, a many-sided extrusion): enough
 for a viewer to read a plan, cheap to tessellate."""
 
 from __future__ import annotations
@@ -9,9 +10,11 @@ import math
 import ifcopenshell.api.geometry
 import ifcopenshell.api.root
 
-from ifc.geometry import body, box, oriented_box
+from ifc.geometry import body, box, extrude, oriented_box
 from ifc.project import BuildContext, finish_element, placement, translate
-from schemas.bim import Beam, Fixture, Railing
+from schemas.bim import Beam, CustomFixture, Fixture, Railing
+
+ROUND_SIDES = 16  # vertices approximating a circle for a "round" custom part
 
 # kind -> (ifc class, predefined type, style, default (width, depth, height))
 CATALOG: dict[str, tuple[str, str, str, tuple[float, float, float]]] = {
@@ -99,6 +102,25 @@ def add_fixture(ctx: BuildContext, fx: Fixture) -> None:
     items = [box(m, *part) for part in _parts(fx.kind, fx.width, fx.depth, fx.height)]
     frame = placement(fx.position[0], fx.position[1], level.elevation, math.radians(fx.rotation))
     finish_element(ctx, element, body(ctx, items), frame, style, fx.level, item=fx)
+
+
+def add_custom(ctx: BuildContext, cs: CustomFixture) -> None:
+    m = ctx.model
+    level = ctx.level(cs.level)
+    items = []
+    for p in cs.parts:
+        if p.shape == "round":
+            r = p.w / 2
+            cx, cy = p.x + r, p.y + r
+            outline = [(cx + r * math.cos(2 * math.pi * i / ROUND_SIDES), cy + r * math.sin(2 * math.pi * i / ROUND_SIDES))
+                      for i in range(ROUND_SIDES)]
+            items.append(extrude(m, outline, p.h, origin=(0, 0, p.z)))
+        else:
+            items.append(box(m, p.x, p.y, p.z, p.w, p.d, p.h))
+    element = ifcopenshell.api.root.create_entity(m, ifc_class="IfcFurniture", predefined_type="USERDEFINED", name=cs.name or cs.id)
+    element.ObjectType = "custom"
+    frame = placement(cs.position[0], cs.position[1], level.elevation, math.radians(cs.rotation))
+    finish_element(ctx, element, body(ctx, items), frame, "Fixture:wood", cs.level, item=cs)
 
 
 def add_railing(ctx: BuildContext, rail: Railing) -> None:

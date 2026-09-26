@@ -12,14 +12,26 @@ from __future__ import annotations
 import json
 import re
 
+from agents import shapes
 from agents.template_planner import parse_requirements, template_steps
 from core.derive import DesignError, analyze
 from llm.base import LLMRequest, OnNote, OnText
+from schemas.bim import FixtureKind
 from schemas.design import Design, RoomDef, slug
 from solver.layout import place_rooms
 
 NUM = r"(\d+(?:\.\d+)?)"
 STREAM_STEPS = 8  # the mock "streams" its answer in slices so the preview path gets exercised
+
+
+def _custom_parts(item: str) -> list[dict]:
+    """A plausible shape for a furniture request that isn't in the fixed FixtureKind catalog —
+    the mock's stand-in for a real model actually designing the piece with a `custom` step."""
+    if "round" in item:  # a round top on four legs, ~1.1 m across, ~0.72 m tall (dining/coffee table height)
+        legs = [(0.05, 0.05), (0.99, 0.05), (0.05, 0.99), (0.99, 0.99)]
+        return [{"shape": "round", "x": 0.0, "y": 0.0, "z": 0.72, "w": 1.1, "h": 0.05}] + [
+            {"shape": "box", "x": x, "y": y, "z": 0.0, "w": 0.06, "d": 0.06, "h": 0.72} for x, y in legs]
+    return [{"shape": "box", "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0, "d": 0.6, "h": 0.75}]  # generic table-ish block
 
 
 class MockLLM:
@@ -123,10 +135,43 @@ class MockLLM:
                     return [{"step": "balcony", "room": room.id, "side": side}, {"step": "door", "room": room.id, "to": "outside", "side": side, "kind": "sliding"}]
                 return [{"step": "stair", "room": room.id, "side": "W"}]
 
+        m = re.search(r"\bmake (the )?([\w -]+?) l-shaped", text)
+        if m and design.room(m.group(2).strip()):
+            room = design.room(m.group(2).strip())
+            poly = shapes.l_shape(design, room)
+            if poly:
+                return [{"step": "room", "id": room.id, "poly": poly}]
+        m = re.search(r"\b(curved|rounded|round|bow) (wall|window|side)\b.*?\b(to|on|in|for) (the )?([\w -]+?)(?: on the (north|south|east|west)( side)?)?$", text)
+        if m and design.room(m.group(5).strip()):
+            room = design.room(m.group(5).strip())
+            poly = shapes.curved_side(design, room, (m.group(6) or "")[:1].upper() or None)
+            if poly:
+                return [{"step": "room", "id": room.id, "poly": poly}]
+        m = re.search(r"\badd (a |an )?(carport|courtyard|patio|terrace|pergola|gazebo|garden wall|fence|deck)\b", text)
+        if m:
+            what = m.group(2)
+            top = design.levels[-1].id
+            if what == "carport":
+                return [{"step": "room", "name": "Carport", "kind": "carport", "level": "L1", "rect": shapes.beside(design, "L1", 6, 6)}]
+            if what in ("courtyard", "patio"):
+                return [{"step": "room", "name": "Courtyard", "kind": "courtyard", "level": "L1", "rect": shapes.beside(design, "L1", 4, 4)}]
+            if what == "terrace":
+                return [{"step": "room", "name": "Terrace", "kind": "terrace", "level": top, "rect": shapes.beside(design, top, 4, 4)}]
+            if what in ("pergola", "gazebo"):
+                return shapes.pergola_steps(design)
+            if what in ("garden wall", "fence"):
+                return shapes.garden_wall_steps(design)
+            return shapes.deck_steps(design)
+
         m = re.search(r"\bput (a |an )?([\w ]+?) in (the )?([\w -]+)", text)
         if m and design.room(m.group(4).strip()):
-            kind = m.group(2).strip().replace(" ", "_")
-            return [{"step": "furniture", "room": design.room(m.group(4).strip()).id, "kind": kind, "side": "N"}]
+            room = design.room(m.group(4).strip())
+            item = m.group(2).strip()
+            kind = item.replace(" ", "_").replace("-", "_")
+            if kind in FixtureKind.__args__:
+                return [{"step": "furniture", "room": room.id, "kind": kind, "side": "N"}]
+            # Not in the fixed catalog: compose it instead of failing outright.
+            return [{"step": "custom", "room": room.id, "name": item.title(), "side": "center", "parts": _custom_parts(item)}]
 
         if re.search(r"\badd (a |an |another )?(storey|floor|level)\b", text):
             lid = f"L{len(design.levels) + 1}"
