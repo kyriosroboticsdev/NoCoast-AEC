@@ -9,6 +9,7 @@ import ifcopenshell
 import ifcopenshell.geom
 
 from core.guids import GuidMap, ensure_guids
+from ifc.components import add_component
 from ifc.fixtures import add_beam, add_custom, add_fixture, add_railing
 from ifc.mep import add_light, add_outlet, add_panel, add_pipe, add_wire
 from ifc.openings import add_opening
@@ -17,7 +18,7 @@ from ifc.roofs import add_roof
 from ifc.slabs import add_column, add_slab, add_space
 from ifc.stairs import add_stair, add_stair_wells
 from ifc.walls import add_wall
-from schemas.bim import (Beam, BuildingSpec, Column, CustomFixture, Door, Fixture, LightFixture, Outlet, Panel,
+from schemas.bim import (Beam, BuildingSpec, Column, Component, CustomFixture, Door, Fixture, LightFixture, Outlet, Panel,
                          Pipe, Railing, Roof, Slab, Space, Stair, Wall, Window, Wire)
 
 BUILDERS = [  # construction order: foundation/floors, structure, roof, plumbing+electrical
@@ -35,6 +36,7 @@ BUILDERS = [  # construction order: foundation/floors, structure, roof, plumbing
     (Stair, add_stair),
     (Fixture, add_fixture),
     (CustomFixture, add_custom),
+    (Component, add_component),
     (LightFixture, add_light),
     (Railing, add_railing),
 ]

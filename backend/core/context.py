@@ -53,6 +53,8 @@ def describe_element(el) -> str:
     if el.type == "custom":
         parts = "; ".join(f"{p.shape} ({p.x:g},{p.y:g},{p.z:g}) {p.w:g}x{p.d:g}x{p.h:g}" for p in el.parts)
         return f"{head} at {_pt(el.position)} rot={el.rotation:g} parts=[{parts}]"
+    if el.type == "component":
+        return f"{head} component={el.asset} at {_pt(el.position)} rot={el.rotation:g} {el.width:g}x{el.depth:g}x{el.height:g}"
     if el.type == "railing":
         return f"{head} path={_outline(el.path)} h={el.height:g}"
     if el.type == "pipe":
@@ -177,6 +179,17 @@ def describe_focus(design: Design, focus: str) -> str:
     return f"the element {fid}"
 
 
+def describe_assets(design: Design) -> str | None:
+    """Uploaded IFC components the model may place: id, name, size and what they contain."""
+    if not design.assets:
+        return None
+    rows = []
+    for a in design.assets.values():
+        kinds = ", ".join(f"{n}× {k.removeprefix('Ifc')}" for k, n in a.counts.items())
+        rows.append(f'{a.id} "{a.name}" {a.width:g} x {a.depth:g} x {a.height:g} m ({kinds})')
+    return "\n".join(rows)
+
+
 def describe_design(design: Design, derived: Derived | None = None) -> str:
     """The semantic model as the edit prompt sees it."""
     lines = [f'building "{design.name}"' + (f": {design.description}" if design.description else "")]
@@ -214,6 +227,10 @@ def describe_design(design: Design, derived: Derived | None = None) -> str:
         lines.append("stairs: " + "; ".join(f"{s.id} in {s.room}{_where(s)} to={s.to_level or 'level above'}" for s in design.stairs))
     if design.fixtures:
         lines.append("furniture: " + "; ".join(f"{f.id} {f.kind} in {f.room}" + (_where(f) if f.near is not None or f.side != "center" else "") for f in design.fixtures))
+    if design.components:
+        lines.append("components: " + "; ".join(
+            f"{c.id} = {c.asset} in {c.room}" + (f" at {_pt(c.position)}" if c.position else _where(c) if c.near is not None or c.side != "center" else "")
+            + (f" rot={c.rotation:g}" if c.rotation is not None else "") for c in design.components))
     if design.balconies:
         lines.append("balconies: " + "; ".join(f"{b.id} {b.room}{_where(b)} depth={b.depth:g}" for b in design.balconies))
     if design.columns:

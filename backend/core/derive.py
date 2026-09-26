@@ -24,9 +24,9 @@ from shapely.geometry import LineString, MultiLineString, Point as ShpPoint, Pol
 from shapely.ops import unary_union
 
 from ifc.fixtures import default_size
-from schemas.bim import (Beam, BuildingSpec, Column, CustomFixture, Door, Fixture, Level, LightFixture, Outlet, Panel,
+from schemas.bim import (Beam, BuildingSpec, Column, Component, CustomFixture, Door, Fixture, Level, LightFixture, Outlet, Panel,
                          Pipe, Railing, Roof, ShapePart, Slab, Space, Stair, Wall, Window, Wire, is_axis_rectangle)
-from schemas.design import (CustomShapeDef, Design, DoorDef, FixtureDef, FreeDef, LevelDef, Pt, RoomDef, Segment, Side,
+from schemas.design import (ComponentDef, CustomShapeDef, Design, DoorDef, FixtureDef, FreeDef, LevelDef, Pt, RoomDef, Segment, Side,
                             StairDef, WindowDef, arc_points)
 from solver.layout import place_rooms
 
@@ -639,6 +639,30 @@ def _fixture(f: FixtureDef, design: Design, infos: dict[str, RoomInfo], level: L
                    position=pos, rotation=f.rotation if f.rotation is not None else rot, width=w, depth=d, height=h)
 
 
+def _component(c: ComponentDef, design: Design, infos: dict[str, RoomInfo], level: Level) -> Component:
+    """An uploaded IFC component: a rigid w × d footprint placed like furniture (shared _place_piece),
+    or with its footprint centre at an explicit `position`, which must still lie inside the room."""
+    what = f"component '{c.id}'"
+    room = design.room(c.room)
+    if room is None:
+        raise DesignError(f"{what}: unknown room '{c.room}'")
+    asset = design.assets.get(c.asset)
+    if asset is None:
+        raise DesignError(f"{what}: the uploaded component '{c.asset}' is no longer attached to the project")
+    w, d = asset.width, asset.depth
+    if c.position is not None:
+        rot = c.rotation if c.rotation is not None else 0.0
+        if not _fits(infos[room.id].polygon, _rect_at(c.position[0], c.position[1], w, d, math.radians(rot))):
+            raise DesignError(f"{what}: a {w:.2f} x {d:.2f} m component at {c.position} does not fit inside room '{room.id}'")
+        pos = (_r(c.position[0]), _r(c.position[1]))
+    else:
+        pos, rot = _place_piece(what, room, infos[room.id], c.side, c.near, c.at, w, d)
+        rot = c.rotation if c.rotation is not None else rot
+    return Component(id=c.id, name=f"{c.name or asset.name} in {room.name}", level=room.level, asset=asset.id,
+                     source=asset.source, position=pos, rotation=rot, width=w, depth=d, height=asset.height,
+                     origin=asset.origin, products=asset.products)
+
+
 def _custom_shape(cs: CustomShapeDef, design: Design, infos: dict[str, RoomInfo], level: Level) -> CustomFixture:
     """A shape the model composed itself out of parts (box/round), instead of the fixed
     FixtureKind catalog — placed the same way a catalog fixture would be."""
@@ -976,6 +1000,7 @@ def analyze(design: Design, prune: bool = False) -> Derived:
     each("stairs", lambda st, level: _stair(st, design, infos, level))
     each("fixtures", lambda f, level: _fixture(f, design, infos, level))
     each("custom_shapes", lambda cs, level: _custom_shape(cs, design, infos, level))
+    each("components", lambda c, level: _component(c, design, infos, level))
     each("balconies", lambda b, level: _balcony(b, design, infos, level, els, sides))
     for c in design.columns:
         if c.level not in level_by_id:

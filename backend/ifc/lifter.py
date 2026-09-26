@@ -32,6 +32,11 @@ def _json_pset(entity, name: str) -> dict | None:
     return json.loads(payload) if payload else None
 
 
+def _is_component_part(product) -> bool:
+    """A copied element of an uploaded component other than its head (see ifc/components.py)."""
+    return "NoCoast_ComponentPart" in ifcopenshell.util.element.get_psets(product)
+
+
 def lift(path: str | Path) -> tuple[BuildingSpec, Design | None, GuidMap]:
     model = ifcopenshell.open(str(path))
     projects, sites, buildings = model.by_type("IfcProject"), model.by_type("IfcSite"), model.by_type("IfcBuilding")
@@ -54,8 +59,8 @@ def lift(path: str | Path) -> tuple[BuildingSpec, Design | None, GuidMap]:
 
     elements = []
     for product in model.by_type("IfcElement") + model.by_type("IfcSpace"):
-        if product.is_a("IfcOpeningElement"):
-            continue
+        if product.is_a("IfcOpeningElement") or _is_component_part(product):
+            continue  # component parts travel with their component (ifc/components.py)
         data = _json_pset(product, SPEC_PSET)
         if data is None:
             raise LiftError(f"{product.is_a()} '{product.Name}' has no {SPEC_PSET} pset")

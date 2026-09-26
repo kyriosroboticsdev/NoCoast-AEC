@@ -1,7 +1,7 @@
 import { IfcTurnCard } from "@nocoast/ifc-viewer";
 import { ChevronDown, ChevronUp, Code, Database, Eye, ListChecks, RotateCcw, Sparkles, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { getSpec, type Version } from "../api/client";
+import { getSpec, type ComponentRecord, type Version } from "../api/client";
 import type { Message, Session } from "../state/sessions";
 import { turnId } from "../turns";
 import { Composer } from "./Composer";
@@ -18,6 +18,12 @@ interface Props {
   /** Viewer selection that the next prompt will be about. */
   focus: { id: string; label: string } | null;
   onClearFocus: () => void;
+  components: ComponentRecord[];
+  onAttachComponents: () => void;
+  onRemoveComponent: (id: string) => void;
+  uploading: string | null;
+  uploadErrors: { filename: string; error: string }[];
+  onDismissErrors: () => void;
   /** Key of the model in the workspace (`<session>:v<n>.ifc`). */
   viewing: string | null;
   onView: (v: Version) => void;

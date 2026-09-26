@@ -234,3 +234,41 @@ export async function exportVersion(
     validation: res.headers.get("X-Validation-Status") === "failed" ? "failed" : "passed",
   };
 }
+
+// --- Uploaded IFC components ---------------------------------------------------
+
+/** An IFC file attached to a project that the model can place as a rigid object. */
+export interface ComponentRecord {
+  id: string;
+  project_id: string;
+  name: string;
+  filename: string;
+  schema_in: string;
+  unit_in: string;
+  width: number;
+  depth: number;
+  height: number;
+  counts: Record<string, number>;
+  elements: number;
+  created: number;
+}
+
+export interface ComponentUpload {
+  added: ComponentRecord[];
+  errors: { filename: string; error: string }[];
+}
+
+export const listComponents = (projectId: string) => getJson<ComponentRecord[]>(`/projects/${projectId}/components`);
+
+export async function uploadComponents(projectId: string, files: { name: string; data: Uint8Array }[]): Promise<ComponentUpload> {
+  const form = new FormData();
+  for (const f of files) form.append("files", new Blob([f.data as BlobPart], { type: "application/octet-stream" }), f.name);
+  const res = await fetch(`${BACKEND}/projects/${projectId}/components`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(`upload failed: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+export async function deleteComponent(projectId: string, componentId: string): Promise<void> {
+  const res = await fetch(`${BACKEND}/projects/${projectId}/components/${componentId}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`delete failed: ${res.status}`);
+}

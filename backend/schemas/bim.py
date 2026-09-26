@@ -209,6 +209,24 @@ class CustomFixture(_Element):
     parts: list[ShapePart] = Field(min_length=1, max_length=12)
 
 
+class Component(_Element):
+    """An uploaded IFC component placed as a rigid object. Its products are copied from `source`
+    (IFC4, metres) at compile time; `position` is where its footprint centre goes on `level`, rotated
+    by `rotation` degrees about its own vertical axis."""
+
+    type: Literal["component"] = "component"
+    level: str
+    asset: str
+    source: str
+    position: Point
+    rotation: float = 0.0
+    width: float = Field(gt=0)
+    depth: float = Field(gt=0)
+    height: float = Field(gt=0)
+    origin: tuple[float, float, float]
+    products: list[str] = Field(min_length=1)
+
+
 class Railing(_Element):
     type: Literal["railing"] = "railing"
     level: str
@@ -261,13 +279,13 @@ class Wire(_Element):
 
 
 Element = Annotated[
-    Union[Wall, Slab, Roof, Door, Window, Column, Beam, Space, Stair, Fixture, CustomFixture, Railing, Pipe,
+    Union[Wall, Slab, Roof, Door, Window, Column, Beam, Space, Stair, Fixture, CustomFixture, Component, Railing, Pipe,
           Outlet, LightFixture, Panel, Wire],
     Field(discriminator="type"),
 ]
 
 ELEMENT_ORDER = {"wall": 0, "slab": 1, "space": 2, "column": 3, "beam": 4, "roof": 5, "pipe": 6, "door": 7,
-                 "window": 8, "stair": 9, "outlet": 10, "panel": 11, "wire": 12, "fixture": 13, "custom": 13,
+                 "window": 8, "stair": 9, "outlet": 10, "panel": 11, "wire": 12, "fixture": 13, "custom": 13, "component": 13,
                  "light": 14, "railing": 15}
 
 

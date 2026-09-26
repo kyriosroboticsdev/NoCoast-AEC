@@ -414,6 +414,41 @@ class CustomShapeDef(BaseModel):
         return None if v is None else _pt(v)
 
 
+class AssetRef(BaseModel):
+    """An IFC file uploaded to the project that can be placed as a component (components/assets.py
+    measured it on upload). Kept on the design so a version records exactly what it could use."""
+
+    id: str
+    name: str
+    source: str = Field(description="path of the normalised IFC4/metre file, relative to the output directory")
+    width: float = Field(gt=0, description="x extent in metres")
+    depth: float = Field(gt=0, description="y extent in metres")
+    height: float = Field(gt=0, description="z extent in metres")
+    origin: tuple[float, float, float] = Field(description="min corner of the file's geometry, in its own coordinates")
+    products: list[str] = Field(description="GlobalIds of the top-level elements that make up the component")
+    counts: dict[str, int] = Field(default_factory=dict)
+
+
+class ComponentDef(BaseModel):
+    """An uploaded component placed in a room: rigid, not reshaped, placed like furniture (against a
+    wall by side/near/at, or in the middle), or at an explicit plan `position` (its footprint centre)."""
+
+    id: str
+    asset: str
+    room: str
+    name: Optional[str] = None
+    side: Literal["N", "S", "E", "W", "center"] = "center"
+    near: Optional[Pt] = None
+    at: float = Field(0.5, ge=0, le=1)
+    rotation: Optional[float] = None
+    position: Optional[Pt] = None
+
+    @field_validator("near", "position", mode="before")
+    @classmethod
+    def _pts(cls, v):
+        return None if v is None else _pt(v)
+
+
 class BalconyDef(BaseModel):
     id: str
     room: str
@@ -510,6 +545,8 @@ class Design(BaseModel):
     stairs: list[StairDef] = Field(default_factory=list)
     fixtures: list[FixtureDef] = Field(default_factory=list)
     custom_shapes: list[CustomShapeDef] = Field(default_factory=list)
+    components: list[ComponentDef] = Field(default_factory=list, description="Uploaded IFC components placed in rooms")
+    assets: dict[str, AssetRef] = Field(default_factory=dict, description="Uploaded components available to place, by id")
     balconies: list[BalconyDef] = Field(default_factory=list)
     columns: list[ColumnDef] = Field(default_factory=list)
     elements: list[FreeDef] = Field(default_factory=list, description="Free-standing walls, slabs, roofs, columns, beams")
@@ -548,8 +585,18 @@ class Design(BaseModel):
         ids = {r.id for r in self.rooms} | {d.id for d in self.doors} | {w.id for w in self.windows}
         ids |= {s.id for s in self.stairs} | {f.id for f in self.fixtures} | {b.id for b in self.balconies}
         ids |= {c.id for c in self.columns} | {l.id for l in self.levels} | {e.id for e in self.elements}
-        ids |= {cs.id for cs in self.custom_shapes}
+        ids |= {cs.id for cs in self.custom_shapes} | {c.id for c in self.components}
         return ids
+
+    def asset(self, ref: str | None) -> AssetRef | None:
+        """An available component by id, then by name (case-insensitive), then by slug of the name."""
+        if not ref:
+            return None
+        key = ref.strip()
+        if key in self.assets:
+            return self.assets[key]
+        low, sl = key.lower(), slug(key)
+        return next((a for a in self.assets.values() if a.name.lower() == low or slug(a.name) == sl), None)
 
     def unique_id(self, base: str) -> str:
         ids = self.all_ids()

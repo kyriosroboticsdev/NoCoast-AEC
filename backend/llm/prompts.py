@@ -21,7 +21,9 @@ Rules:
   anything the catalog lacks — a round table, an odd bench), balconies, a porch, flat/gable/hip roofs, exterior
   wall materials.
   It CANNOT do: split levels, pools, landscaping, elevators, specific brands, HVAC,
-  interior finishes/colours. Mark such requirements supported=false and keep them in the list.
+  interior finishes/colours. Mark such requirements supported=false and keep them in the list. Exception: an item
+  the user uploaded as an IFC component (listed under AVAILABLE COMPONENTS) CAN be placed; make it kind=other,
+  supported=true.
 - Aesthetic wishes ("modern", "cozy") are kind=style; they are not checked.
 - `summary`: one sentence describing the building.
 Return only the JSON object."""
@@ -64,6 +66,10 @@ Steps (fields not listed are left null):
         design your own furniture/object when the furniture catalog above has nothing close (a round table, an
         L-shaped bench, a plinth) — 1-12 solids that together make the shape, each x,y,z its own min corner in the
         shape's local frame (box: w×d×h; round: w-diameter cylinder, d ignored); a round top plus box legs is a table
+  {"step":"component","component":<available component id>,"room","side":"N|S|E|W|center"|"near","at","rotation"} or
+        {"step":"component","component","room","position":[x,y],"rotation"}   place an IFC component the user uploaded
+        (listed under AVAILABLE COMPONENTS) as a rigid object; position = its footprint centre. Re-emit with the same
+        id to move or rotate it; remove it by id. Never try to rebuild an uploaded component out of other steps
   {"step":"balcony","room","side"|"near","depth"}   {"step":"porch","side","depth"}   {"step":"roof","kind":"flat|gable|hip","pitch"}
   {"step":"material","material":"masonry|concrete|timber|plaster|stone|glass"}      {"step":"column","level","x","y"}
   {"step":"layout","level","rooms":[{"name","kind","rect"|"poly"}, …]}   replaces ALL rooms of that storey at once (rooms
@@ -82,6 +88,8 @@ Rules:
 - Give a garage a door to the house; the garage door itself is added automatically.
 - If the user asks for a specific piece the furniture catalog doesn't have (a round table, a built-in bench, an
   odd-shaped counter), use a custom step instead of the closest catalog kind.
+- If the user refers to something they uploaded (an item listed under AVAILABLE COMPONENTS, by name or loosely),
+  place THAT component with a component step; it is the real product, so prefer it over catalog or custom pieces.
 - Two storeys need a stair, and the hall/landing it stands in must be at least 5 m long along the stair's side.
 - Satisfy every requirement in the checklist; if one is impossible, say so in a note step.
 - When EDITING an existing design: emit only the steps that change it. A room step with an existing id replaces
@@ -96,6 +104,7 @@ FIX_INTRO = "SOME STEPS WERE REJECTED. The current design is shown above; emit O
 UNMET_INTRO = "The design does not yet satisfy every requirement. The current design is shown above; emit ONLY steps that fix these:"
 
 
+COMPONENTS_INTRO = "AVAILABLE COMPONENTS (IFC files the user uploaded; place them with component steps):"
 FOCUS_INTRO = "SELECTED IN THE VIEWER: "
 FOCUS_RULE = " — the request refers to this element unless it clearly says otherwise."
 
@@ -110,12 +119,14 @@ def requirements_user_message(prompt: str, errors: list[str] | None = None, focu
 
 
 def build_user_message(prompt: str, checklist: list[str], context: str | None, problems: list[str] | None = None,
-                       unmet: list[str] | None = None, focus: str | None = None) -> str:
+                       unmet: list[str] | None = None, focus: str | None = None, components: str | None = None) -> str:
     parts = []
     if context:
         parts.append("CURRENT DESIGN:\n" + context)
     else:
         parts.append("CURRENT DESIGN: empty (new building)")
+    if components:
+        parts.append(COMPONENTS_INTRO + "\n" + components)
     parts.append("REQUEST:\n" + prompt.strip())
     if focus:
         parts.append(FOCUS_INTRO + focus + FOCUS_RULE)

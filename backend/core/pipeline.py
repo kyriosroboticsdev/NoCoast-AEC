@@ -22,8 +22,9 @@ import ifcopenshell
 from pydantic import ValidationError
 
 import config
+from components.store import component_store
 from core.checks import CheckResult, check, score, unmet_lines
-from core.context import describe_design, describe_focus
+from core.context import describe_assets, describe_design, describe_focus
 from core.derive import DesignError, analyze, derive
 from core.guids import GuidMap, prune_guids
 from core.ops import OpError, apply_ops
@@ -137,7 +138,7 @@ def build_round(llm: LLM, prompt: str, design: Design, checklist: list[str], emi
     stream = StepStream(emit, design, guids, first_index)
     meta = {"prompt": prompt, "design": design.model_dump(mode="json"), "problems": problems or [], "unmet": unmet or [],
             "editing": editing, "focus": focus}
-    raw = _call(llm, LLMRequest(system=BUILD_SYSTEM, user=build_user_message(prompt, checklist, context, problems, unmet, focus),
+    raw = _call(llm, LLMRequest(system=BUILD_SYSTEM, user=build_user_message(prompt, checklist, context, problems, unmet, focus, describe_assets(design)),
                                 schema=STEPS_SCHEMA, schema_name="build", meta=meta), emit, stream)
     # Anything the streaming parser did not see (non-streaming adapters, or a reply that only parsed whole).
     try:
@@ -186,6 +187,9 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
         raise ConflictError(f"project is at version {head.number}, you edited version {base_version}")
     editing = head is not None and head.design is not None
     design = head.design.model_copy(deep=True) if editing else Design()
+    # Uploaded IFC components the model may place (components/store.py); refreshed every prompt so
+    # uploads and deletions since the last version count.
+    design.assets = component_store().assets(project_id)
     guids: GuidMap = dict(head.guids) if head else {}
     notes: list[str] = []
     if head is not None and not editing:

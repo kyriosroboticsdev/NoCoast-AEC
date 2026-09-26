@@ -18,7 +18,7 @@ from pathlib import Path
 
 import config
 from ifc.builder import compile_ifc
-from schemas.bim import (Beam, BuildingSpec, Column, CustomFixture, Door, Element, Fixture, LightFixture, Outlet,
+from schemas.bim import (Beam, BuildingSpec, Column, Component, CustomFixture, Door, Element, Fixture, LightFixture, Outlet,
                           Panel, Pipe, Railing, Roof, Slab, Space, Stair, Wall, Window, Wire)
 from store.db import VersionData
 
@@ -34,7 +34,7 @@ PHASES: list[tuple[str, tuple[type, ...]]] = [
     ("plumbing", (Pipe,)),
     ("spaces", (Space,)),
     ("electrical", (Outlet, Panel, Wire)),
-    ("details", (Door, Window, Railing, Fixture, CustomFixture, LightFixture)),
+    ("details", (Door, Window, Railing, Fixture, CustomFixture, Component, LightFixture)),
 ]
 
 

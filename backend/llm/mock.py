@@ -34,6 +34,77 @@ def _custom_parts(item: str) -> list[dict]:
     return [{"shape": "box", "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0, "d": 0.6, "h": 0.75}]  # generic table-ish block
 
 
+# --- uploaded IFC components -------------------------------------------------------------
+
+_SIDE_WORDS = {"north": "N", "south": "S", "east": "E", "west": "W", "middle": "center", "centre": "center", "center": "center"}
+
+
+def _asset_in(text: str, design: Design):
+    """The uploaded component the prompt names (by id or name), longest name first."""
+    for a in sorted(design.assets.values(), key=lambda a: -len(a.name)):
+        if a.id in text or a.name.lower() in text:
+            return a
+    return None
+
+
+def _placed_in(text: str, design: Design):
+    """A placed component the prompt names (by its id, or by its asset's name)."""
+    for c in design.components:
+        a = design.assets.get(c.asset)
+        if c.id in text or (a and a.name.lower() in text) or (c.name and c.name.lower() in text):
+            return c
+    return None
+
+
+def _room_after(text: str, design: Design, rooms: list[str] | None = None):
+    m = re.search(r"\b(?:in|into|to) (?:the )?([\w -]+?)(?:[,.]| against| along| on| rotated| facing|$)", text)
+    if m:
+        room = design.room(m.group(1).strip())
+        if room:
+            return room.id
+        if rooms:
+            want = m.group(1).strip().replace(" ", "-")
+            return next((r for r in rooms if r == want or r.startswith(want)), None)
+    return None
+
+
+def _component_edit(text: str, design: Design) -> list[dict] | None:
+    """Deterministic component steps for the mock: place / move / rotate an uploaded component."""
+    if not design.assets:
+        return None
+    placed = _placed_in(text, design)
+    if placed and re.search(r"\b(remove|delete)\b", text):
+        return [{"step": "remove", "id": placed.id}]
+    m = re.search(r"\brotate\b.*?(-?\d+(?:\.\d+)?)\s*(?:°|deg|degrees)?", text)
+    if placed and m:
+        return [{"step": "component", "id": placed.id, "rotation": float(m.group(1))}]
+    m = re.search(r"\b(?:move|push|put)\b.*?\b(north|south|east|west|middle|centre|center)\b", text)
+    if placed and m and re.search(r"\bmove\b|\bpush\b", text):
+        room = _room_after(text, design) or placed.room
+        return [{"step": "component", "id": placed.id, "room": room, "side": _SIDE_WORDS[m.group(1)]}]
+    asset = _asset_in(text, design)
+    if asset and re.search(r"\b(place|put|add|use|insert|drop)\b", text):
+        room = _room_after(text, design) or (design.rooms[0].id if design.rooms else None)
+        if room is None:
+            return None
+        side = next((v for k, v in _SIDE_WORDS.items() if re.search(rf"\b{k}\b", text)), "center")
+        return [{"step": "component", "component": asset.id, "room": room, "side": side}]
+    return None
+
+
+def _mentioned_components(text: str, design: Design, steps: list[dict]) -> list[dict]:
+    """New designs: place any uploaded component the prompt mentions, in the room it names."""
+    asset = _asset_in(text, design)
+    if asset is None:
+        return []
+    rooms = [slug(r.get("name", "")) for st in steps if st.get("step") == "layout" for r in st.get("rooms", [])]
+    rooms += [slug(st.get("name", "")) for st in steps if st.get("step") == "room"]
+    if not rooms:
+        return []
+    room = _room_after(text, design, rooms) or rooms[0]
+    return [{"step": "component", "component": asset.id, "room": room, "side": "center"}]
+
+
 class MockLLM:
     name = "mock"
 
@@ -47,7 +118,9 @@ class MockLLM:
             elif request.meta.get("editing"):
                 reply = {"steps": self._edit(prompt, Design.model_validate(request.meta["design"]), request.meta.get("focus"))}
             else:
-                reply = {"steps": template_steps(prompt)}
+                steps = template_steps(prompt)
+                design = Design.model_validate(request.meta["design"]) if request.meta.get("design") else Design()
+                reply = {"steps": steps + _mentioned_components(prompt.lower(), design, steps)}
         else:
             raise ValueError(f"mock has no answer for schema '{request.schema_name}'")
         if on_text:
@@ -67,6 +140,11 @@ class MockLLM:
     def _edit(self, prompt: str, design: Design, focus: str | None = None) -> list[dict]:
         text = prompt.lower().strip()
         steps: list[dict] = []
+
+        # Uploaded components first: their names ("kitchen island") collide with catalogue and room words.
+        comp = _component_edit(text, design)
+        if comp:
+            return comp
 
         # A viewer selection (see core.context.describe_focus) stands in for the place the prompt leaves out.
         if focus:

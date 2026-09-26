@@ -71,6 +71,10 @@ export default function App() {
   const [exporting, setExporting] = useState<api.Version | null>(null);
   // Viewer selection sent with the next prompt as `focus` ("add a window" → on the selected wall).
   const [focus, setFocus] = useState<{ id: string; label: string } | null>(null);
+  // IFC components attached to each session's project, and the state of an upload in flight.
+  const [components, setComponents] = useState<Record<string, api.ComponentRecord[]>>({});
+  const [uploading, setUploading] = useState<string | null>(null);
+  const [uploadErrors, setUploadErrors] = useState<{ filename: string; error: string }[]>([]);
   const localFiles = useRef(new Map<string, Uint8Array>()); // session id → bytes of a file opened from disk
 
   useEffect(() => {
@@ -337,6 +341,63 @@ export default function App() {
     }
   }, [active, showModel]);
 
+  /** The session's backend project, created on first use (a prompt or an attachment). */
+  const ensureProject = useCallback(async (sid: string) => {
+    const existing = sessionsRef.current.find((s) => s.id === sid)?.project;
+    if (existing) return existing;
+    await api.waitForBackend();
+    const title = sessionsRef.current.find((s) => s.id === sid)?.title ?? "Untitled";
+    const project = { id: (await api.createProject(title)).id, head: null };
+    update(sid, (s) => ({ ...s, project }));
+    return project;
+  }, [update]);
+
+  // The active session's attached components (they live on the backend, per project).
+  const activeProject = active?.project?.id;
+  useEffect(() => {
+    if (!active || !activeProject || !backendUp) return;
+    const sid = active.id;
+    api.listComponents(activeProject).then((list) => setComponents((c) => ({ ...c, [sid]: list })), () => {});
+  }, [activeProject, backendUp]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Attach one or more IFC files as components; from Home this starts a session for them. */
+  const attachComponents = async (sid: string | null) => {
+    const files = await platform.openIfcs();
+    if (!files.length) return;
+    const id = sid ?? create(files.length === 1 ? files[0].name.replace(/\.ifc$/i, "") : `${files.length} components`);
+    setUploadErrors([]);
+    setUploading(`Uploading ${files.length} file${files.length === 1 ? "" : "s"}…`);
+    try {
+      const project = await ensureProject(id);
+      const res = await api.uploadComponents(project.id, files);
+      setComponents((c) => ({ ...c, [id]: [...(c[id] ?? []), ...res.added] }));
+      setUploadErrors(res.errors);
+      if (res.added.length) {
+        const names = res.added.map((c) => c.name).join(", ");
+        const example = res.added[0].name;
+        update(id, addMessage({
+          id: uid(), role: "assistant",
+          text: `Attached ${names}. Ask me to place ${res.added.length === 1 ? "it" : "them"}, for example "place the ${example} in the kitchen", or describe a building that uses ${res.added.length === 1 ? "it" : "them"}.`,
+        }));
+      }
+    } catch (e) {
+      setUploadErrors([{ filename: files.map((f) => f.name).join(", "), error: e instanceof Error ? e.message : String(e) }]);
+    } finally {
+      setUploading(null);
+    }
+  };
+
+  const removeComponent = async (sid: string, componentId: string) => {
+    const project = sessionsRef.current.find((s) => s.id === sid)?.project;
+    if (!project) return;
+    try {
+      await api.deleteComponent(project.id, componentId);
+      setComponents((c) => ({ ...c, [sid]: (c[sid] ?? []).filter((x) => x.id !== componentId) }));
+    } catch (e) {
+      setUploadErrors([{ filename: componentId, error: e instanceof Error ? e.message : String(e) }]);
+    }
+  };
+
   const removeSession = (id: string) => {
     const s = sessionsRef.current.find((x) => x.id === id);
     for (const m of s?.messages ?? []) if (m.run?.version) runtime.removeTurn(turnId(m.run.version));
@@ -464,6 +525,10 @@ export default function App() {
             <Assistant session={active} busy={busy} planners={planners} planner={planner} setPlanner={setPlanner}
               onSubmit={(t) => generate(active.id, t, active.project && loaded?.key.startsWith(`${active.id}:v`) ? focus : null)}
               onAttach={openFile}
+              components={components[active.id] ?? []}
+              onAttachComponents={() => void attachComponents(active.id)}
+              onRemoveComponent={(cid) => void removeComponent(active.id, cid)}
+              uploading={uploading} uploadErrors={uploadErrors} onDismissErrors={() => setUploadErrors([])}
               focus={active.project && loaded?.key.startsWith(`${active.id}:v`) ? focus : null}
               onClearFocus={() => { setFocus(null); void v?.clearSelection(); }}
               viewing={loaded?.key ?? null} onView={viewVersion} onRestore={(n) => restore(active.id, n)} />
@@ -471,7 +536,8 @@ export default function App() {
           {!active && (
             <div className="home-layer">
               <Home busy={busy} planners={planners} planner={planner} setPlanner={setPlanner}
-                onSubmit={startSession} onAttach={openFile} />
+                onSubmit={startSession} onAttach={openFile} onAttachComponents={() => void attachComponents(null)}
+                uploading={uploading} uploadErrors={uploadErrors} onDismissErrors={() => setUploadErrors([])} />
             </div>
           )}
         </div>

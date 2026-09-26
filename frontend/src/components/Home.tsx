@@ -14,6 +14,10 @@ interface Props {
   setPlanner: (p: string) => void;
   onSubmit: (text: string) => void;
   onAttach: () => void;
+  onAttachComponents?: () => void;
+  uploading?: string | null;
+  uploadErrors?: { filename: string; error: string }[];
+  onDismissErrors?: () => void;
 }
 
 export function Home(p: Props) {

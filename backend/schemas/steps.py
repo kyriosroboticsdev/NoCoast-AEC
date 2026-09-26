@@ -17,12 +17,12 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from schemas.bim import FixtureKind, RoofShape, WallMaterial
-from schemas.design import (MAX_STOREYS, UNROOFED_KINDS, UNWALLED_KINDS, BalconyDef, ColumnDef, CustomShapeDef, Design, DoorDef,
+from schemas.design import (MAX_STOREYS, UNROOFED_KINDS, UNWALLED_KINDS, BalconyDef, ColumnDef, ComponentDef, CustomShapeDef, Design, DoorDef,
                             DoorKind, Edge, FixtureDef, FreeDef, FreeKind, LevelDef, PorchDef, RoofDef, RoomDef, RoomKind,
                             ShapePartDef, Side, StairDef, WindowDef, WindowKind, guess_kind, slug)
 
-StepKind = Literal["building", "level", "room", "layout", "door", "window", "stair", "furniture", "custom", "balcony", "porch",
-                   "roof", "column", "material", "element", "remove", "note"]
+StepKind = Literal["building", "level", "room", "layout", "door", "window", "stair", "furniture", "custom", "component",
+                   "balcony", "porch", "roof", "column", "material", "element", "remove", "note"]
 
 
 class StepError(ValueError):
@@ -84,7 +84,8 @@ class Step(BaseModel):
     near: Optional[list[float]] = Field(None, description="[x, y]: a point on or next to the wall meant (any room shape)")
     wall: Optional[str] = Field(None, description="door/window: id of a free-standing wall element to sit in")
     at: Optional[float] = Field(None, description="0..1 position along the wall (0 = west/south end)")
-    position: Optional[list[float]] = Field(None, description="element column: [x, y]")
+    position: Optional[list[float]] = Field(None, description="element column: [x, y]; component: footprint centre [x, y]")
+    component: Optional[str] = Field(None, description="component: id or name of an uploaded component to place")
     start: Optional[list[float]] = Field(None, description="element beam: [x, y]")
     end: Optional[list[float]] = Field(None, description="element beam: [x, y]")
     thickness: Optional[float] = Field(None, description="element wall/slab/roof")
@@ -248,15 +249,16 @@ def _remove(design: Design, id_: str) -> str:
         rid = room.id
         design.rooms = [r for r in design.rooms if r.id != rid]
         n = (len(design.doors) + len(design.windows) + len(design.stairs) + len(design.fixtures)
-             + len(design.custom_shapes) + len(design.balconies))
+             + len(design.custom_shapes) + len(design.components) + len(design.balconies))
         design.doors = [d for d in design.doors if d.room != rid and d.to != rid]
         design.windows = [w for w in design.windows if w.room != rid]
         design.stairs = [s for s in design.stairs if s.room != rid]
         design.fixtures = [f for f in design.fixtures if f.room != rid]
         design.custom_shapes = [cs for cs in design.custom_shapes if cs.room != rid]
+        design.components = [c for c in design.components if c.room != rid]
         design.balconies = [b for b in design.balconies if b.room != rid]
         n -= (len(design.doors) + len(design.windows) + len(design.stairs) + len(design.fixtures)
-              + len(design.custom_shapes) + len(design.balconies))
+              + len(design.custom_shapes) + len(design.components) + len(design.balconies))
         return f"removed room {rid}" + (f" and {n} item(s) in it" if n else "")
     free = design.element(id_)
     if free is not None:
@@ -264,7 +266,7 @@ def _remove(design: Design, id_: str) -> str:
         design.doors = [x for x in design.doors if x.wall != id_]
         design.windows = [x for x in design.windows if x.wall != id_]
         return f"removed {free.kind} {id_}"
-    for attr in ("doors", "windows", "stairs", "fixtures", "custom_shapes", "balconies", "columns"):
+    for attr in ("doors", "windows", "stairs", "fixtures", "custom_shapes", "components", "balconies", "columns"):
         items = getattr(design, attr)
         keep = [i for i in items if i.id != id_]
         if len(keep) != len(items):
@@ -499,6 +501,32 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
         d.custom_shapes.append(CustomShapeDef(id=cid, room=room.id, name=name, side=side, near=_pt_or_none(step.near),
                                               at=step.at if step.at is not None else 0.5, rotation=step.rotation, parts=parts))
         return d, f"custom {cid}: \"{name}\" in {room.id} ({len(parts)} part(s))"
+
+    if k == "component":
+        cid = step.id
+        existing = next((c for c in d.components if c.id == cid), None) if cid else None
+        ref = step.component or (existing.asset if existing else None)
+        asset = d.asset(ref) if ref else None
+        if asset is None:
+            available = ", ".join(f"{a.id} (\"{a.name}\")" for a in d.assets.values()) or "none: the user has not attached any"
+            raise StepError(f"component: unknown component '{ref}'. Available components: {available}")
+        room = d.room(step.room) if step.room else (d.room(existing.room) if existing else None)
+        if room is None:
+            raise StepError(f"component: unknown room '{step.room}' (rooms: {', '.join(r.id for r in d.rooms)})")
+        side = _literal(step, step.side or (existing.side if existing and not step.position else "center"),
+                        ("N", "S", "E", "W", "center"), "side")
+        cid = cid or d.unique_id(slug(f"{asset.name}-{room.id}"))
+        position = _pt_or_none(step.position) if step.position is not None else (
+            existing.position if existing and step.side is None and step.near is None else None)
+        rotation = step.rotation if step.rotation is not None else (existing.rotation if existing else None)
+        comp = ComponentDef(id=cid, asset=asset.id, room=room.id, name=step.name or asset.name, side=side,
+                            near=_pt_or_none(step.near), at=step.at if step.at is not None else 0.5,
+                            rotation=rotation, position=position)
+        d.components = [x for x in d.components if x.id != cid]
+        d.components.append(comp)
+        where = f" at {position}" if position else ("" if side == "center" else f" against the {side} wall")
+        verb = "moved" if existing else "placed"
+        return d, f"component {cid}: {verb} \"{asset.name}\" ({asset.width} × {asset.depth} × {asset.height} m) in {room.id}{where}"
 
     if k == "balcony":
         room = d.room(_need(step, "room"))

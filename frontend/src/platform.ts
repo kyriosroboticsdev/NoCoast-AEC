@@ -36,6 +36,29 @@ export async function launchOptions(): Promise<LaunchOptions> {
   };
 }
 
+/** Pick several IFC files at once (component attachments). Returns [] when cancelled. */
+export async function openIfcs(): Promise<{ name: string; data: Uint8Array }[]> {
+  if (isDesktop) {
+    const picked = await open({ filters: IFC_FILTER, multiple: true, directory: false });
+    const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
+    return Promise.all(paths.map(async (path) => ({
+      name: path.split(/[\\/]/).pop()!,
+      data: new Uint8Array(await invoke<ArrayBuffer>("read_ifc", { path })),
+    })));
+  }
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".ifc";
+    input.multiple = true;
+    input.onchange = async () => {
+      const files = [...(input.files ?? [])];
+      resolve(await Promise.all(files.map(async (f) => ({ name: f.name, data: new Uint8Array(await f.arrayBuffer()) }))));
+    };
+    input.click();
+  });
+}
+
 export async function openIfc(): Promise<{ name: string; data: Uint8Array } | null> {
   if (isDesktop) {
     const path = await open({ filters: IFC_FILTER, multiple: false, directory: false });
