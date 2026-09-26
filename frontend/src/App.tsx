@@ -11,7 +11,7 @@ import * as platform from "./platform";
 import {
   addMessage, patchRun, SESSIONS_KEY, uid, upsertStep, useSessions, type Session, type TraceStep,
 } from "./state/sessions";
-import { stageTracer } from "./state/trace";
+import { stageTracer, type Preview } from "./state/trace";
 import { runtime, toTurn, turnId } from "./turns";
 import {
   BimViewer, type ElementRow, type ElementSummary, type LevelNode, type ModelStats, type PropertyGroup,
@@ -69,6 +69,8 @@ export default function App() {
   const [treeOpen, setTreeOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("model");
   const [exporting, setExporting] = useState<api.Version | null>(null);
+  // Viewer selection sent with the next prompt as `focus` ("add a window" → on the selected wall).
+  const [focus, setFocus] = useState<{ id: string; label: string } | null>(null);
   const localFiles = useRef(new Map<string, Uint8Array>()); // session id → bytes of a file opened from disk
 
   useEffect(() => {
@@ -79,7 +81,9 @@ export default function App() {
     viewer.setCategoryVisible("IFCSPACE", false); // room volumes hide the building
     viewer.onSelect = async (sel) => {
       setSelectedId(sel?.localId ?? null);
-      setSelected(sel ? await viewer.elementSummary(sel.localId) : null);
+      const summary = sel ? await viewer.elementSummary(sel.localId) : null;
+      setSelected(summary);
+      setFocus(summary?.specId ? { id: summary.specId, label: `${summary.name} · ${summary.category}${summary.level ? ` · ${summary.level}` : ""}` } : null);
       setProperties(sel ? await viewer.properties(sel.localId) : []);
     };
     viewer.init(hostRef.current).then(() => setViewerReady(true), (e) => {
@@ -116,7 +120,9 @@ export default function App() {
 
   // --- loading models into the viewer -----------------------------------------
 
-  const showModel = useCallback(async (bytes: Uint8Array, name: string, key: string, onProgress?: (p: number) => void) => {
+  const showModel = useCallback(async (
+    bytes: Uint8Array, name: string, key: string, onProgress?: (p: number) => void, opts: { keepCamera?: boolean } = {},
+  ) => {
     const v = viewerRef.current!;
     loadedKey.current = key;
     setLoadError(null);
@@ -126,7 +132,7 @@ export default function App() {
     setProperties([]);
     setStats(null);
     setRows(null);
-    await v.loadIfc(bytes, name, (p) => { setProgress(p); onProgress?.(p); });
+    await v.loadIfc(bytes, name, (p) => { setProgress(p); onProgress?.(p); }, opts);
     const head = new TextDecoder().decode(bytes.subarray(0, 4000));
     const schema = head.match(/FILE_SCHEMA\s*\(\s*\(\s*'([^']+)'/i)?.[1] ?? "";
     setLevels(await v.levels());
@@ -209,7 +215,38 @@ export default function App() {
         fail: (msg: string) => update(sid, upsertStep(aid, { ...base, status: "error", error: msg, ms: Math.round(performance.now() - t0) })),
       };
     };
-    const tracer = stageTracer((s) => update(sid, upsertStep(aid, s)));
+    // Previews stream in while the model works: load only the newest pending one, never after the
+    // final version arrived, and keep the camera so the building grows in place.
+    let finalArrived = false;
+    let pending: Preview | null = null;
+    let chain = Promise.resolve();
+    const inSession = () => activeRef.current === sid && !!loadedKey.current?.startsWith(`${sid}:`);
+    // The camera follows growth but not small changes: re-frame only when the model's extent clearly
+    // outgrows what was last framed (the first preview can be a single column).
+    const diag = (e: [number, number, number]) => Math.hypot(...e);
+    let framed = 0;
+    const growFrame = async (s: { extent: [number, number, number] }) => {
+      const d = diag(s.extent);
+      if (d > framed * 1.4) {
+        framed = d;
+        await viewerRef.current?.fit();
+      }
+    };
+    const queuePreview = (p: Preview) => {
+      pending = p;
+      chain = chain.then(async () => {
+        const next = pending;
+        pending = null;
+        if (!next || finalArrived || activeRef.current !== sid) return;
+        try {
+          const s = await showModel(await api.fetchBytes(next.url), `${next.label}.ifc`, `${sid}:preview`, undefined, { keepCamera: true });
+          await growFrame(s);
+        } catch {
+          // A preview is best effort: the final version replaces it anyway.
+        }
+      });
+    };
+    const tracer = stageTracer((s) => update(sid, upsertStep(aid, s)), { onPreview: queuePreview });
 
     let current: ReturnType<typeof step> | null = null;
     try {
@@ -232,6 +269,8 @@ export default function App() {
         tracer.event(e);
         if (e.stage === "apply" || e.stage === "solve" || e.stage === "compile") update(sid, patchRun(aid, { stage: "building" }));
       });
+      finalArrived = true;
+      await chain; // let an in-flight preview finish before the final model replaces it
       update(sid, (s) => ({
         ...patchRun(aid, { version, stage: "loading" })(s),
         project: { id: version.project_id, head: version.number },
@@ -251,7 +290,8 @@ export default function App() {
         const loaded = await showModel(bytes, name, `${sid}:${name}`, (p) => {
           const pct = Math.round(p * 100);
           if (pct >= shown + 10) { shown = pct; load.update(`converting IFC to fragments · ${pct}%`); }
-        });
+        }, { keepCamera: inSession() });
+        if (framed > 0) await growFrame(loaded);
         current.done(`${loaded.levels} levels · ${loaded.elements} elements · ${loaded.triangles.toLocaleString()} triangles`);
         current = null;
       }
@@ -271,10 +311,13 @@ export default function App() {
   }, [showModel, update]);
 
   /** First prompt in a session designs a building; later prompts edit its head version. */
-  const generate = useCallback((sid: string, prompt: string) => {
-    update(sid, addMessage({ id: uid(), role: "user", text: prompt }));
+  const generate = useCallback((sid: string, prompt: string, target: { id: string; label: string } | null = null) => {
+    update(sid, addMessage({ id: uid(), role: "user", text: target ? `${prompt}
+
+↳ ${target.label}` : prompt }));
+    setFocus(null);
     return execute(sid, "", (project, onEvent) =>
-      api.sendPrompt(project.id, prompt, project.head, onEvent, planner ?? undefined));
+      api.sendPrompt(project.id, prompt, project.head, onEvent, planner ?? undefined, target?.id));
   }, [execute, planner, update]);
 
   /** Make an older version the head again (recorded as a new version). */
@@ -419,7 +462,10 @@ export default function App() {
             roomsVisible={roomsVisible} onRooms={toggleRooms} />
           {active && assistantOpen && (
             <Assistant session={active} busy={busy} planners={planners} planner={planner} setPlanner={setPlanner}
-              onSubmit={(t) => generate(active.id, t)} onAttach={openFile}
+              onSubmit={(t) => generate(active.id, t, active.project && loaded?.key.startsWith(`${active.id}:v`) ? focus : null)}
+              onAttach={openFile}
+              focus={active.project && loaded?.key.startsWith(`${active.id}:v`) ? focus : null}
+              onClearFocus={() => { setFocus(null); void v?.clearSelection(); }}
               viewing={loaded?.key ?? null} onView={viewVersion} onRestore={(n) => restore(active.id, n)} />
           )}
           {!active && (

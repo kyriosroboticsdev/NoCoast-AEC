@@ -57,6 +57,8 @@ export interface ElementSummary {
   ifcClass: string;
   level: string;
   guid: string;
+  /** The backend's spec element id, for generated models; null for foreign files. */
+  specId: string | null;
 }
 
 type World = OBC.SimpleWorld<OBC.SimpleScene, OBC.OrthoPerspectiveCamera, OBC.SimpleRenderer>;
@@ -149,7 +151,11 @@ export class BimViewer {
   }
 
   /** Replace whatever is loaded with this IFC. */
-  async loadIfc(data: Uint8Array, name: string, onProgress?: (p: number) => void) {
+  /**
+   * Replace whatever is loaded with this IFC. `keepCamera` leaves the view where it is, so
+   * streamed previews and the final version grow in place instead of re-framing each time.
+   */
+  async loadIfc(data: Uint8Array, name: string, onProgress?: (p: number) => void, opts: { keepCamera?: boolean } = {}) {
     await this.clear();
     const model = await this.loader.load(data, true, name, {
       processData: { progressCallback: (p: number) => onProgress?.(p) },
@@ -157,8 +163,13 @@ export class BimViewer {
     await this.fragments.core.update(true);
     for (const cat of this.hiddenCategories) await this.setCategoryVisible(cat, false);
     this.applyZoomLimits();
-    await this.fit();
+    if (!opts.keepCamera) await this.fit();
     return model.modelId;
+  }
+
+  /** Drop the current selection (its highlight and the onSelect listeners get notified). */
+  async clearSelection() {
+    await this.highlighter.clear(SELECT);
   }
 
   async clear() {
@@ -384,6 +395,8 @@ export class BimViewer {
       ifcClass: ifcClass(cat),
       level: this.levelName(localId),
       guid: String(d._guid?.value ?? ""),
+      // NoCoast writes the spec element id into Tag (spaces carry it in Name).
+      specId: String(d.Tag?.value ?? (cat === "IFCSPACE" ? d.Name?.value ?? "" : "")) || null,
     };
   }
 

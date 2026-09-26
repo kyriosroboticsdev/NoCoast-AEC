@@ -18,6 +18,7 @@ from typing import Literal
 import ifcopenshell
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from api.routes import _project, _version, store
 from export.bundle import MAX_SNAPSHOTS, BundleFile, build_bundle, check_snapshot, safe_stem
@@ -60,7 +61,7 @@ def _open(path: str) -> ifcopenshell.file:
 
 
 @router.get("/projects/{project_id}/versions/{number}/validate")
-def validate_version(project_id: str, number: int, thorough: bool = False) -> ValidationReport:
+def validate_version(project_id: str, number: int, thorough: bool = False) -> ValidationReport:  # sync: runs in a worker thread
     return validate_ifc(_open(_version(project_id, number).ifc_path), thorough=thorough)
 
 
@@ -95,6 +96,13 @@ async def export_version(
             names.add(name)
             images.append(BundleFile(name, data))
 
+    # Validation, stamping and zipping take seconds of CPU; run them off the event loop so the server
+    # keeps answering (health checks, other requests) meanwhile.
+    return await run_in_threadpool(_export, project, version, number, opts, images)
+
+
+def _export(project, version, number: int, opts: ExportOptions, images: list[BundleFile]) -> Response:
+    project_id = project.id
     t0 = time.perf_counter()
     model = _open(version.ifc_path)  # a fresh copy; the stored file is never modified
     report = validate_ifc(model, thorough=opts.thorough)
