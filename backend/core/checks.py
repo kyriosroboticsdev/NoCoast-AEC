@@ -134,9 +134,14 @@ def _check_one(design: Design, d: Derived, req: Requirement) -> CheckResult:
         if not rooms:
             return CheckResult(req, "unmet", f"no room matches '{req.room}'")
         for r in rooms:
-            if req.side in d.rooms[r.id].sides:
+            info = d.rooms[r.id]
+            if req.side in info.sides:
                 return CheckResult(req, "met", f"{r.name} has an exterior {req.side} wall")
-        return CheckResult(req, "unmet", f"{rooms[0].name}'s exterior sides are {', '.join(d.rooms[rooms[0].id].sides) or 'none'}")
+            if req.side in info.open_sides:
+                return CheckResult(req, "met", f"{r.name} is open to the {req.side}")
+        info = d.rooms[rooms[0].id]
+        have = info.sides + [s for s in info.open_sides if s not in info.sides]
+        return CheckResult(req, "unmet", f"{rooms[0].name}'s exterior sides are {', '.join(have) or 'none'}")
 
     if k == "window":
         rooms = _match_rooms(design, req.room) if req.room else design.rooms
@@ -149,6 +154,14 @@ def _check_one(design: Design, d: Derived, req: Requirement) -> CheckResult:
     if k == "door":
         a = _match_rooms(design, req.room)
         if not a:
+            # A gate in a garden wall: a door hosted by a free-standing wall element named like the "room".
+            key = (req.room or "").lower()
+            walls = [e for e in design.elements if e.kind == "wall" and e.name and (key in e.name.lower() or e.name.lower() in key)]
+            gates = [d for d in design.doors if d.wall and d.wall in {w.id for w in walls}]
+            if gates:
+                return CheckResult(req, "met", f"door {gates[0].id} in {walls[0].name}")
+            if walls:
+                return CheckResult(req, "unmet", f"{walls[0].name} has no door")
             return CheckResult(req, "unmet", f"no room matches '{req.room}'")
         to_out = (req.room2 or "outside").lower() in ("outside", "exterior", "garden", "street")
         b = [] if to_out else _match_rooms(design, req.room2)

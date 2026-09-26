@@ -85,19 +85,36 @@ export class BimViewer {
     const world = worlds.create<OBC.SimpleScene, OBC.OrthoPerspectiveCamera, OBC.SimpleRenderer>();
     world.scene = new OBC.SimpleScene(this.components);
     world.scene.setup();
-    world.scene.three.background = new THREE.Color("#f6f6f4");
+    // kyriolexy's lighting rig from the old viewer (frontend/src/viewer.ts, pre-redesign): a dark
+    // background and hemisphere + directional lights read the IFC's own per-element surface colours much
+    // better than That Open's default single ambient + directional pair on a light background.
+    world.scene.three.background = new THREE.Color("#0f1115");
+    world.scene.deleteAllLights();
+    world.scene.three.add(new THREE.HemisphereLight(0xffffff, 0x444466, 1.2));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+    sun.position.set(30, 50, 20);
+    world.scene.three.add(sun);
     world.renderer = new OBC.SimpleRenderer(this.components, container);
     world.camera = new OBC.OrthoPerspectiveCamera(this.components);
     await world.camera.controls.setLookAt(25, 18, 25, 0, 2, 0);
     this.components.init();
     this.world = world;
+    world.renderer.showLogo = false; // no That Open attribution mark in the viewport
     // That Open defaults to infinityDolly, which pushes the orbit target forward instead of
     // stopping at minDistance, so the wheel flies through walls forever.
     world.camera.controls.infinityDolly = false;
     this.applyZoomLimits();
 
     const grid = this.components.get(OBC.Grids).create(world);
-    grid.material.uniforms.uColor.value = new THREE.Color("#c9c9c4");
+    grid.material.uniforms.uColor.value = new THREE.Color("#333844");
+    // A faint ground plane so basements read as below grade, matching the old viewer.
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(200, 200),
+      new THREE.MeshBasicMaterial({ color: "#0b0d12", transparent: true, opacity: 0.75, depthWrite: false }),
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.02;
+    world.scene.three.add(ground);
 
     this.fragments = this.components.get(OBC.FragmentsManager);
     this.fragments.init(workerUrl);
