@@ -24,8 +24,9 @@ def add_wall(ctx: BuildContext, wall: Wall) -> None:
         ctx.model, context=ctx.body, length=wall.length, height=height,
         thickness=wall.thickness, offset=-wall.thickness / 2,
     )
+    style = f"Wall:{wall.material}" if wall.material else "Wall"
     finish_element(
-        ctx, element, rep, wall_matrix(ctx, wall), "Wall", wall.level,
+        ctx, element, rep, wall_matrix(ctx, wall), style, wall.level,
         pset=("Pset_WallCommon", {"IsExternal": wall.external, "LoadBearing": wall.external}), item=wall,
     )
     ctx.walls[wall.id] = element

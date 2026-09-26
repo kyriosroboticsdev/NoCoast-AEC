@@ -1,9 +1,10 @@
 """Projects and their version history in SQLite; IFC files on disk next to it.
 
 Every accepted prompt (or raw op batch, or revert) appends a version. A version
-stores the full spec, the guid map and the ops that produced it, so history is
-both a snapshot log and an op log — undo is "add a version equal to an older one".
-Postgres + object storage would replace this module unchanged in interface.
+stores the full spec, the semantic design it was derived from, the guid map and the
+ops that produced it, so history is both a snapshot log and an op log — undo is
+"add a version equal to an older one". Postgres + object storage would replace this
+module unchanged in interface.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from pydantic import BaseModel
 
 from core.guids import GuidMap
 from schemas.bim import BuildingSpec
-from schemas.program import Program
+from schemas.design import Design
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -38,6 +39,8 @@ CREATE TABLE IF NOT EXISTS versions (
     llm TEXT,
     spec TEXT NOT NULL,
     program TEXT,
+    design TEXT,
+    checks TEXT,
     guids TEXT NOT NULL,
     ops TEXT NOT NULL,
     notes TEXT NOT NULL,
@@ -47,6 +50,7 @@ CREATE TABLE IF NOT EXISTS versions (
     UNIQUE(project_id, number)
 );
 """
+MIGRATIONS = ["ALTER TABLE versions ADD COLUMN design TEXT", "ALTER TABLE versions ADD COLUMN checks TEXT"]
 
 
 class Project(BaseModel):
@@ -60,11 +64,12 @@ class Version(BaseModel):
     number: int
     parent: int | None
     prompt: str | None
-    mode: str  # design | ops | redesign | revert | import
+    mode: str  # design | edit | ops | revert | import
     llm: str | None
     notes: list[str]
     summary: dict
     ops: list[dict]
+    checks: list[dict] = []
     ifc_path: str
     created: float
 
@@ -77,7 +82,7 @@ class VersionData(Version):
     """A version plus the heavy payloads the pipeline needs."""
 
     spec: BuildingSpec
-    program: Program | None
+    design: Design | None
     guids: GuidMap
 
     def as_version(self) -> Version:
@@ -92,6 +97,12 @@ class Store:
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(SCHEMA)
+        for stmt in MIGRATIONS:  # databases created by the previous pipeline
+            try:
+                self._conn.execute(stmt)
+            except sqlite3.OperationalError:
+                pass
+        self._conn.commit()
         self._lock = threading.Lock()
 
     # --- projects --------------------------------------------------------
@@ -118,19 +129,19 @@ class Store:
 
     def add_version(self, project_id: str, *, spec: BuildingSpec, guids: GuidMap, mode: str, summary: dict,
                     ifc_path: Path, prompt: str | None = None, llm: str | None = None, ops: list[dict] | None = None,
-                    notes: list[str] | None = None, program: Program | None = None) -> VersionData:
+                    notes: list[str] | None = None, design: Design | None = None, checks: list[dict] | None = None) -> VersionData:
         with self._lock:
             head = self._conn.execute("SELECT MAX(number) FROM versions WHERE project_id = ?", (project_id,)).fetchone()[0]
             number = (head or 0) + 1
             row: dict[str, Any] = dict(
                 project_id=project_id, number=number, parent=head, prompt=prompt, mode=mode, llm=llm,
-                spec=spec.model_dump_json(), program=program.model_dump_json() if program else None,
-                guids=json.dumps(guids), ops=json.dumps(ops or []), notes=json.dumps(notes or []),
-                summary=json.dumps(summary), ifc_path=str(ifc_path), created=time.time(),
+                spec=spec.model_dump_json(), design=design.model_dump_json() if design else None,
+                checks=json.dumps(checks or []), guids=json.dumps(guids), ops=json.dumps(ops or []),
+                notes=json.dumps(notes or []), summary=json.dumps(summary), ifc_path=str(ifc_path), created=time.time(),
             )
             self._conn.execute(
-                "INSERT INTO versions (project_id, number, parent, prompt, mode, llm, spec, program, guids, ops, notes, summary, ifc_path, created)"
-                " VALUES (:project_id, :number, :parent, :prompt, :mode, :llm, :spec, :program, :guids, :ops, :notes, :summary, :ifc_path, :created)",
+                "INSERT INTO versions (project_id, number, parent, prompt, mode, llm, spec, design, checks, guids, ops, notes, summary, ifc_path, created)"
+                " VALUES (:project_id, :number, :parent, :prompt, :mode, :llm, :spec, :design, :checks, :guids, :ops, :notes, :summary, :ifc_path, :created)",
                 row,
             )
             self._conn.commit()
@@ -152,11 +163,16 @@ class Store:
 
     @staticmethod
     def _to_data(row: dict) -> VersionData:
+        design = None
+        if row.get("design"):
+            try:
+                design = Design.model_validate_json(row["design"])
+            except ValueError:
+                design = None
         return VersionData(
             project_id=row["project_id"], number=row["number"], parent=row["parent"], prompt=row["prompt"],
             mode=row["mode"], llm=row["llm"], notes=json.loads(row["notes"]), summary=json.loads(row["summary"]),
-            ops=json.loads(row["ops"]), ifc_path=row["ifc_path"], created=row["created"],
-            spec=BuildingSpec.model_validate_json(row["spec"]),
-            program=Program.model_validate_json(row["program"]) if row["program"] else None,
-            guids=json.loads(row["guids"]),
+            ops=json.loads(row["ops"]), checks=json.loads(row["checks"]) if row.get("checks") else [],
+            ifc_path=row["ifc_path"], created=row["created"],
+            spec=BuildingSpec.model_validate_json(row["spec"]), design=design, guids=json.loads(row["guids"]),
         )

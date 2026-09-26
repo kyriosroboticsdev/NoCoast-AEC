@@ -5,11 +5,14 @@ Two layers:
 * **Typed ops** (`Op`): a discriminated union used internally, by the /ops endpoint and by
   `core/ops.py`. Precise, but as a JSON schema it is a union of seven op types each containing
   a union of seven element types — too large a grammar for constrained decoders.
-* **Flat ops** (`FlatOp`, inside `EditResponse`): what the LLM actually emits. One object with an
+* **Flat ops** (`FlatOp`): a one-object-per-op form that constrained decoders can handle. One object with an
   `op` enum and optional `id` / `element` / `level` / `set`; the element is a single object with a
   `type` enum and every field optional; the patch is one object covering every patchable field.
-  `EditResponse.typed_ops()` converts to typed ops and raises `OpError` with a model-readable
-  message when a required part is missing or a field doesn't apply to the target.
+  `FlatOp.typed()` converts to a typed op and raises `OpError` with a model-readable message when a
+  required part is missing or a field doesn't apply to the target.
+
+The language model no longer emits ops directly (it emits design steps, schemas/steps.py); ops remain
+the escape hatch for element-level edits from the UI or scripts and are stored as design overrides.
 
 Ops are applied to the current BuildingSpec and the result is re-validated as a whole, so an op
 can never leave the model in a state the IFC builder can't compile. Element ids are the stable
@@ -23,7 +26,6 @@ from typing import Annotated, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 
 from schemas.bim import Element, Level, Point
-from schemas.program import Program
 
 ElementKind = Literal["wall", "slab", "roof", "door", "window", "column", "space"]
 OpKind = Literal["add_element", "modify_element", "delete_element", "add_level", "modify_level", "delete_level", "set_building"]
@@ -78,6 +80,7 @@ Op = Annotated[
 ]
 
 _element_adapter = TypeAdapter(Element)
+op_adapter = TypeAdapter(Op)
 
 
 # --- flat layer (what the LLM emits) ------------------------------------------
@@ -183,25 +186,18 @@ class FlatOp(BaseModel):
             raise OpError(f"{n}: {msgs}") from exc
 
 
-class EditResponse(BaseModel):
-    """What the LLM returns for an edit prompt.
+class OpsResponse(BaseModel):
+    """A raw op batch (the /ops endpoint and stored overrides)."""
 
-    mode="ops": a minimal list of ops against the current spec.
-    mode="redesign": the change touches rooms/storeys/footprint/features, so a new Program
-    is produced and the layout solver regenerates the spec (ids that still exist keep their GlobalIds).
-    """
-
-    mode: Literal["ops", "redesign"]
     ops: list[FlatOp] = Field(default_factory=list)
-    program: Program | None = None
-    notes: list[str] = Field(default_factory=list, description="What was changed and why, for the user")
+    notes: list[str] = Field(default_factory=list)
 
     @field_validator("notes", "ops", mode="before")
     @classmethod
     def _listify(cls, v):
         if v is None:
             return []
-        return [v] if isinstance(v, (str, dict)) else v  # unconstrained models sometimes send a bare string/object
+        return [v] if isinstance(v, (str, dict)) else v
 
     def typed_ops(self) -> list[Op]:
         out = []

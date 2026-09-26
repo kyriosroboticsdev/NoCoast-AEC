@@ -13,6 +13,7 @@ export interface Version {
   notes: string[];
   summary: { counts: Record<string, number>; elements: number; storeys: string[]; spaces: string[] };
   ops: unknown[];
+  checks?: { text: string; status: string; detail: string }[];
   ifc_url: string;
   created: number;
 }
@@ -26,7 +27,7 @@ export interface Project {
 export interface StageEvent {
   seq: number; // ordinal within the request
   t: number; // seconds since the request started
-  stage: string; // llm | program | edit | stream | partial | validate | apply | solve | compile | done | error
+  stage: string; // requirements | build | llm | stream | step | partial | verify | validate | apply | compile | done | error
   message: string;
   data: Record<string, unknown> | null;
 }

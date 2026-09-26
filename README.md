@@ -1,9 +1,9 @@
 # NoCoast-AEC
 
-Text prompt → building model → **IFC**, with the language model kept swappable and edits applied as
-deltas so a design can be iterated on. Python/FastAPI backend (IfcOpenShell), vanilla TypeScript
-frontend rendering with [web-ifc](https://github.com/thatopen/engine_web-ifc) + three.js, wrapped in
-Tauri for the desktop.
+Text prompt → building model → **IFC**, with the language model kept swappable and the building built
+as a stream of small deltas so the user watches it grow and can iterate on it. Python/FastAPI backend
+(IfcOpenShell + shapely), vanilla TypeScript frontend rendering with
+[web-ifc](https://github.com/thatopen/engine_web-ifc) + three.js, wrapped in Tauri for the desktop.
 
 ![prototype](docs/screenshot.png)
 
@@ -13,53 +13,62 @@ Tauri for the desktop.
 
 ## 1. Design in one page
 
-**The LLM never writes IFC.** It writes a small semantic JSON, deterministic code compiles that to IFC.
+**The LLM never writes IFC, and never writes a wall.** It writes a checklist, then a stream of small
+semantic *steps* (a room here, a door there); deterministic code derives every wall, slab, opening and
+roof from those and compiles them to IFC after every step.
 
 ```
- prompt ──► LLM adapter ──► PROGRAM (rooms, storeys, features)  ──► layout solver ─┐
-                                  (new design)                                     ├─► BuildingSpec (IR)
- prompt + current IR ──► LLM adapter ──► EDIT ops / new PROGRAM ──► apply / solve ─┘        │
-                                  (iteration)                                                ▼
-                                                                 validate ─► IfcOpenShell compiler ─► IFC
-                                                                    ▲              (stable GlobalIds)   │
-                                                                    └── errors fed back (≤ N repairs)   ▼
-                                                                                              version store ─► viewer
+ prompt ──► LLM: REQUIREMENTS checklist  (atomic, typed, "supported" flag)
+        ──► LLM: BUILD STEPS, streamed ──► each complete step ─► apply to DESIGN ─► derive ─► preview IFC ─► viewer
+                                              (room, door, window, stair, furniture, roof …)      ▲     (≤ 1 s apart)
+                 rejected steps ─────────────────────────────── fix round (≤ N) ──────────────────┘
+        ──► deterministic CHECK of the design against the checklist ──► unmet → fix round
+        ──► derive BuildingSpec (IR) ─► IfcOpenShell compiler (stable GlobalIds) ─► version store ─► viewer
+ edit:  the same, starting from the head version's DESIGN; the model emits only the steps that change it
 ```
 
 Why this shape:
 
 | Problem with "LLM emits IFC" | What we do instead |
 |---|---|
-| STEP is a graph of `#123=` references; one wrong id breaks the file | LLM emits JSON validated by Pydantic; the compiler owns every IFC reference |
-| A small house is 50–200k tokens of IFC, ~1k tokens of IR | Context for edits is the IR rendered as one line per element (`core/context.py`) |
-| Geometry (placements, boolean openings, closed polygons) is where LLMs fail | LLMs decide *what* (program); a deterministic solver decides *where* |
-| Text-level diffs of IFC are meaningless (ids renumber) | Edits are **ops on stable element ids**; the IFC is recompiled with the **same GlobalIds** |
-| Swapping the model later | The model only implements `LLM.complete(request) -> dict` (`llm/base.py`) |
+| STEP is a graph of `#123=` references; one wrong id breaks the file | The LLM emits JSON validated by Pydantic; the compiler owns every IFC reference |
+| A small house is 50–200k tokens of IFC, ~600 tokens of design | Context for edits is the design rendered as text: rooms with rectangles, exterior sides, neighbours (`core/context.py`) |
+| Geometry (placements, boolean openings, closed polygons) is where LLMs fail | LLMs place rectangles on a grid and name sides; `core/derive.py` turns that into walls, openings and roofs that always compile |
+| One-shot answers hide what went wrong and show nothing until the end | Every step is applied and rendered as it streams; a bad step is rejected with a message the model gets back |
+| Detailed prompts lose detail | The checklist is extracted first, carried through the build prompt, checked deterministically at the end, and unmet items trigger a fix round; unsupported wishes are reported, not dropped |
+| Text-level diffs of IFC are meaningless (ids renumber) | Ids derive from room ids (`L1-wall-kitchen+hall`), so a room that moves keeps its walls' GlobalIds |
+| Swapping the model later | The model only implements `LLM.complete(request, on_text) -> dict` (`llm/base.py`) |
 
 ## 2. Repository layout
 
 ```
 backend/
-  schemas/bim.py        BuildingSpec — the IR: levels + walls/slabs/roofs/doors/windows/columns/spaces
-  schemas/program.py    Program — what the LLM decides for a new design (rooms, storeys, features)
-  schemas/ops.py        Edit ops + EditResponse — what the LLM returns when iterating
-  solver/layout.py      Program → BuildingSpec (deterministic two-row grid layout)
-  core/ops.py           apply ops to a spec (pure, cascading deletes, re-validates)
+  schemas/design.py     Design — what the LLM builds: levels, rooms as rectangles, doors, windows, stairs, fixtures, balconies, porch, roof
+  schemas/steps.py      Step — the flat step vocabulary the LLM streams, and apply_step (with rejection messages)
+  schemas/requirements.py  Requirement checklist (typed, checkable) extracted before building
+  schemas/bim.py        BuildingSpec — the geometric IR: walls/slabs/roofs/doors/windows/columns/beams/spaces/stairs/fixtures/railings
+  schemas/ops.py        Raw element ops (UI/scripts escape hatch; stored as design overrides)
+  core/derive.py        Design → BuildingSpec: walls from room edges, opening placement, stairs, roofs, balconies, porch
+  core/checks.py        deterministic verification of a design against its requirements
+  core/stream.py        apply steps as they stream; worker thread compiles previews (geometry-checks only what changed)
+  core/pipeline.py      the run: requirements → build stream → fix rounds → check → compile → version
+  core/ops.py           apply raw ops to a spec (pure, cascading deletes, re-validates)
   core/guids.py         element id ↔ IFC GlobalId map, kept per project
-  core/context.py       spec → compact text for the LLM
-  core/partial_json.py  close the JSON a model has produced so far
-  core/preview.py       worker thread: partial reply → geometry-checked preview IFC → SSE "partial"
-  core/pipeline.py      the run: LLM call → validate/repair loop → compile → new version
-  llm/                  adapter protocol + mock / ollama / openai-compatible implementations, prompts
-  ifc/                  IfcOpenShell compiler (project, walls, slabs, roofs, openings) + lifter (IFC → IR)
-  store/db.py           SQLite projects/versions; IFC files under backend/output/projects/<id>/vN.ifc
+  core/context.py       design / spec → compact text for the LLM
+  core/partial_json.py  close the JSON a model has produced so far (only complete array elements survive)
+  solver/layout.py      two-row packer for rooms that come without a rectangle (mock, fallback)
+  llm/                  adapter protocol + mock / llamacpp / claude / ollama / openai-compatible implementations, prompts
+  ifc/                  IfcOpenShell compiler: project, walls, slabs, roofs (flat/gable/hip), openings, stairs (+ slab wells),
+                        fixtures/railings/beams, geometry helpers; lifter (IFC → spec + design)
+  store/db.py           SQLite projects/versions (spec + design + checks); IFC files under backend/output/projects/<id>/vN.ifc
   api/routes.py         HTTP API; api/sse.py streams pipeline progress as Server-Sent Events
-  agents/               stateless planners for /plan and /generate (template regex, llm)
-  tests/                pytest; runs entirely on the mock LLM
+  agents/               stateless planners for /plan and /generate (template regex → steps, llm)
+  tests/                pytest; runs entirely on the mock LLM; tests/evals/prompts.json = accuracy set
+  tools/eval.py         score the configured model on the evaluation set
 frontend/
   src/viewer.ts         web-ifc → three.js meshes, orbit controls, click-to-identify
   src/api.ts            backend client incl. SSE-over-POST parser
-  src/main.ts           the rudimentary UI: prompt box, status, notes, undo, import, download
+  src/main.ts           the rudimentary UI: prompt box, step log, previews, notes, undo, import, download
   src-tauri/            Tauri 2 shell; spawns `python backend/main.py` on start, kills it on exit
   scripts/dev.mjs       `npm run start`: (re)starts the backend + Vite in one terminal
   scripts/copy-wasm.mjs copies web-ifc's wasm into public/wasm (postinstall)
@@ -77,7 +86,8 @@ cd backend
 pip install -r requirements.txt
 cp .env.example .env            # optional; defaults to the mock LLM
 python main.py                  # http://127.0.0.1:8765
-python -m pytest                # 31 tests, ~6 s
+python -m pytest                # 68 tests, ~12 s
+python tools/eval.py            # accuracy of the configured model on tests/evals/prompts.json
 
 # frontend (browser)
 cd frontend
@@ -100,13 +110,14 @@ switching provider, model or key takes effect without a restart — only paths a
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_WORKSPACE_ID` | `claude`: key (or an `ant auth login` profile); workspace id only for org-level keys |
 | `BIM_LOG_LEVEL` | `INFO` (default) or `DEBUG` (full LLM prompts and replies in the backend console) |
 | `LLM_MODEL`, `LLM_BASE_URL`, `LLM_API_KEY` | model id / endpoint / key for the chosen provider |
-| `BIM_MAX_REPAIRS` | validate→repair round trips per LLM call (default 2) |
+| `BIM_MAX_REPAIRS` | fix rounds for rejected steps per prompt (default 2) |
+| `BIM_VERIFY_ROUNDS` | fix rounds for unmet requirements per prompt (default 1; 0 = report only) |
 | `BIM_OUTPUT_DIR`, `BIM_DB_PATH`, `BIM_PORT` | storage and port |
 | `VITE_BACKEND_URL` (frontend) | backend origin, default `http://127.0.0.1:8765` |
 | `BIM_NO_BACKEND`, `BIM_BACKEND_DIR`, `BIM_PYTHON` (Tauri) | control how the shell spawns the backend |
 
-**Local `.gguf` models (recommended for development).** Fetch a prebuilt `llama-server` once, then point
-the backend at your model folder; the server is started on first use and stopped with the backend:
+**Local `.gguf` models.** Fetch a prebuilt `llama-server` once, then point the backend at your model
+folder; the server is started on first use and stopped with the backend:
 
 ```bash
 cd backend
@@ -117,17 +128,14 @@ LLM_MODELS_DIR=D:\Models
 LLM_MODEL=llama-3.2-3b-instruct-q4_k_m.gguf
 ```
 
-Measured on an RTX 5060 laptop (Vulkan): model load 4–50 s (first run compiles shaders, ~80 s), a new
-design 10–15 s, an edit 3–10 s. Llama-3.2-3B and Qwen3-4B both complete design + edits without repair
-rounds after the schema hardening described in §4.5.
-
 **Claude.** `LLM_PROVIDER=claude` and `ANTHROPIC_API_KEY=sk-ant-…` in `backend/.env` (optionally
 `LLM_MODEL=claude-sonnet-5` for cheaper runs). A key created at organisation level rather than inside a
 workspace is rejected with *"must include the anthropic-workspace-id header"* — add
 `ANTHROPIC_WORKSPACE_ID=wrkspc_…` (Console → Settings → Workspaces) or create the key inside a workspace.
 
-**Claude Opus 5.5 through the OpenAI API spec.** Anthropic serves `/v1/chat/completions`; the `openai`
-provider targets it directly (keys go in `.env`; `${VAR}` references expand to variables defined above them):
+**Claude Opus 5.5 through the OpenAI API spec (current default).** Anthropic serves
+`/v1/chat/completions`; the `openai` provider targets it directly (keys go in `.env`; `${VAR}` references
+expand to variables defined above them):
 
 ```
 CLAUDE_KEY=sk-ant-…
@@ -137,346 +145,321 @@ LLM_MODEL=claude-opus-5-5
 LLM_API_KEY=${CLAUDE_KEY}
 ```
 
-Three things the adapter handles for that host: `temperature` is omitted (Claude 5 rejects it), numeric
-bounds are stripped from the schema (its validator rejects `minimum`/`maximum`), and when the endpoint
-answers *"the compiled grammar is too large"* (it does for the edit schema) the request is retried once
-without constrained decoding and that schema stays unconstrained for the process — the step log shows
-the note, and Pydantic + the repair loop validate on our side. Measured: design 7 s, edits 5–14 s.
-(`LLM_PROVIDER=claude` uses the native SDK with real structured outputs instead.)
+The adapter handles that host's quirks: `temperature` is omitted (Claude 5 rejects it), numeric bounds
+are stripped from the schema (its validator rejects `minimum`/`maximum`), and if the endpoint ever answers
+*"the compiled grammar is too large"* the request is retried once without constrained decoding (the step
+log shows the note; Pydantic + the repair loop validate on our side). Measured on the family-house prompt
+in §4.3: checklist 11 s, then ~22 s before the first step (server-side latency; a trivial request answers
+in 1.6 s), then 77 steps at a median 0.8 s apart with 73 previews rendered; 15/16 requirements met.
+Edits 2 min including a fix round. `LLM_PROVIDER=claude` uses the native SDK with structured outputs.
 
 **Fireworks (or any other OpenAI-compatible API).** Same provider, streaming from `/chat/completions`
-with a JSON-schema `response_format`:
-
-```
-LLM_PROVIDER=openai
-LLM_BASE_URL=https://api.fireworks.ai/inference/v1
-LLM_MODEL=accounts/fireworks/models/qwen3p8-max
-LLM_API_KEY=fw_…
-```
-
-Measured with qwen3p8-max: a design in ~8 s, edits 4–17 s, no repair rounds on the test prompts. The same
-provider covers vLLM, LM Studio, a hosted API or a fine-tuned model. **Ollama:** `LLM_PROVIDER=ollama LLM_MODEL=llama3.1`.
+with a JSON-schema `response_format`: `LLM_BASE_URL=https://api.fireworks.ai/inference/v1`,
+`LLM_MODEL=accounts/fireworks/models/qwen3p8-max`, `LLM_API_KEY=fw_…`. The same provider covers vLLM,
+LM Studio, a hosted API or a fine-tuned model. **Ollama:** `LLM_PROVIDER=ollama LLM_MODEL=llama3.1`.
 
 ## 4. Specifications
 
-### 4.1 BuildingSpec — the intermediate representation
+### 4.1 Design — what the LLM builds
 
-`backend/schemas/bim.py`. Units are metres; plan coordinates `(x, y)`; `z` comes from levels.
-
-```jsonc
-{
-  "building": {"name": "Generated House", "description": "…"},
-  "levels": [{"id": "L1", "name": "Ground Floor", "height": 3.0, "elevation": 0.0}],   // elevation stacks when omitted
-  "elements": [
-    {"type": "wall",   "id": "L1-wall-S", "level": "L1", "start": [-0.15, 0], "end": [12.15, 0], "thickness": 0.3, "external": true, "height": null},
-    {"type": "door",   "id": "L1-door-entrance", "wall": "L1-wall-S", "offset": 0.75, "width": 1.0, "height": 2.1},
-    {"type": "window", "id": "L1-win-S1", "wall": "L1-wall-S", "offset": 4.5, "width": 1.2, "height": 1.2, "sill_height": 0.9},
-    {"type": "slab",   "id": "L1-floor", "level": "L1", "outline": [[0,0],[12,0],[12,9],[0,9]], "thickness": 0.2},
-    {"type": "roof",   "id": "roof", "level": "L2", "outline": [[…]], "thickness": 0.3, "shape": "flat"},
-    {"type": "space",  "id": "L1-space-kitchen", "name": "Kitchen", "level": "L1", "outline": [[…]]},
-    {"type": "column", "id": "porch-col-1", "level": "L1", "position": [0.3, -2.4], "width": 0.3, "depth": 0.3}
-  ]
-}
-```
-
-Conventions the whole system relies on:
-
-- **Every element has a stable string `id`** (auto-assigned as `<type>-<n>` if missing). Ids are immutable;
-  they are what ops, the UI, and the GlobalId map refer to.
-- Walls are centred on `start→end`. Openings are **parametric on their host wall**: `offset` from the wall
-  start to the opening's near edge. The LLM never computes opening coordinates.
-- Validation (`BuildingSpec._check`) is semantic, not just structural: unique ids, known levels and host
-  walls, openings inside their wall's length and height, outlines with area, walls with length.
-  Error strings are written to be fed back to a model.
-
-Supported element vocabulary (v0): storeys, walls, slabs, flat roofs, doors, windows, columns, spaces.
-Adding a type means: a Pydantic class in `bim.py`, a builder in `ifc/`, one line in `core/context.py`.
-
-### 4.2 Program — what the LLM decides for a new design
-
-`backend/schemas/program.py`. No coordinates at all.
+`backend/schemas/design.py`. Semantic, but with coarse geometry: rooms are axis-aligned rectangles
+`[x, y, width, depth]` (metres, `(x, y)` = south-west corner, x east, y north) on a storey; everything
+else refers to rooms and sides.
 
 ```jsonc
 {
-  "name": "Lakeside House", "description": "…",
-  "storeys": 2, "storey_height": 3.0,
-  "rooms": [
-    {"name": "Kitchen", "level": 0, "kind": "kitchen", "area": 18},
-    {"name": "Bedroom 1", "level": 1, "kind": "bedroom", "area": null}
-  ],
-  "footprint": [12, 9],          // optional [width, depth]; sized from rooms when null
-  "garage": true, "porch": false, "bright": false, "roof": "flat",
-  "notes": ["2 storeys", "bedrooms upstairs", "…"]     // shown to the user
+  "name": "Family House", "description": "…",
+  "levels":    [{"id": "L1", "name": "Ground Floor", "height": 3.0}, {"id": "L2", "height": 2.8}],
+  "rooms":     [{"id": "kitchen", "name": "Kitchen", "level": "L1", "kind": "kitchen", "rect": [3, 5, 3, 5]}, …],
+  "doors":     [{"id": "door-kitchen-hall", "room": "kitchen", "to": "hall", "at": 0.5, "kind": "single"},
+                {"id": "door-hall-s", "room": "hall", "to": "outside", "side": "S"}],
+  "windows":   [{"id": "win-kitchen-N", "room": "kitchen", "side": "N", "at": 0.5, "kind": "large"}],
+  "stairs":    [{"id": "stair-hall", "room": "hall", "side": "W", "to_level": null}],
+  "fixtures":  [{"id": "fridge-kitchen", "room": "kitchen", "kind": "fridge", "side": "E", "at": 0.8}],
+  "balconies": [{"id": "balcony-master-bedroom-S", "room": "master-bedroom", "side": "S", "depth": 1.5}],
+  "porch": {"side": "S", "depth": 2.4},
+  "roof": {"kind": "gable", "pitch": 30, "overhang": 0.3},
+  "wall_material": "timber",
+  "columns": [], "overrides": [], "notes": []
 }
 ```
 
-### 4.3 Layout solver
+Room kinds: living, kitchen, dining, office, bedroom, bathroom, hall, garage, utility, storage, other.
+Door kinds: single, double, sliding, french, garage. Window kinds: standard, large, floor, small.
+Fixture kinds (26): bed, double_bed, bunk_bed, sofa, armchair, coffee_table, tv_stand, dining_table,
+chair, desk, bookshelf, wardrobe, dresser, kitchen_counter, island, fridge, oven, sink, dishwasher,
+washing_machine, toilet, shower, bathtub, washbasin, fireplace, car. Roofs: flat, gable, hip.
+Exterior wall materials: masonry, concrete, timber, plaster, stone, glass.
 
-`backend/solver/layout.py`. Deterministic: same Program → byte-identical spec. Rooms go on a two-row
-grid per storey (public rooms in the south/front row, private in the back), spine wall between rows,
-cross walls between bays, doors on every partition, windows on every exterior bay, entrance in the
-first ground-floor bay, roof on the top storey, optional east garage and south porch. Footprint is
-taken from the program or sized from mean room area. **Element ids are derived from position**
-(`L2-wall-x1`, `L1-space-kitchen`), so a redesign that keeps a room keeps its ids and GlobalIds.
+### 4.2 Steps — the deltas the LLM streams
 
-The solver is intentionally simple. It is the piece to replace with constraint solving / optimisation
-when layouts need to honour adjacencies and target areas properly; nothing else changes.
+`backend/schemas/steps.py`. The model answers `{"steps": [ … ]}`; one flat object per step, every field
+optional except `step`, so the grammar is small and unconstrained models can be lenient (extra keys are
+ignored, `"north"`→`"N"`, `2`→`"L2"`, `{"x","y","w","d"}`→rect).
 
-### 4.4 Edit ops — the delta format
+| step | fields | effect |
+|---|---|---|
+| `building` | name, description | rename |
+| `level` | id (`L1`…, in order), name, height | add or update a storey |
+| `room` | name, level, kind, rect, area | add, or update by id/name (rect null → auto-placed by `solver/layout.py`) |
+| `layout` | level, rooms:[{name, kind, rect}] | replace **all** rooms of a storey atomically (rooms keep id + items when the name is unchanged) |
+| `door` | room, to (room id or `outside`), side, at, kind, width, height | add / replace by id |
+| `window` | room, side (must be exterior), at, kind, width, height, sill | add / replace by id |
+| `stair` | room, side, to_level, width | straight flight along that wall, well cut in the slab above |
+| `furniture` | room, kind, side (`N/S/E/W/center`), at, rotation, sizes | fixture against a wall or centred |
+| `balcony` | room, side, depth | slab + railing outside that wall |
+| `porch` | side, depth | deck + columns + roof along that side of the ground floor |
+| `roof` | kind, pitch, overhang | flat / gable / hip (pitched needs a rectangular footprint; else flat + note) |
+| `material` | material | exterior wall material (colour + IfcMaterial) |
+| `column` | level, x, y, width | free-standing column |
+| `remove` | id | anything by id; rooms and levels cascade to their items |
+| `note` | text | shown to the user |
 
-`backend/schemas/ops.py`, applied by `core/ops.py`.
+`apply_step` is pure (returns a new design) and raises `StepError` with a message written for the
+model: *"door: unknown room 'bedroom' (rooms: hall, kitchen, …)"*, *"levels must be added in order; the
+next level id is L2"*. After applying, the design is re-derived; a step that makes the design unbuildable
+(overlapping rooms, a window on an interior side, a stair that does not fit) is rejected with the derive
+message. Structural steps (`room`, `layout`, `level`, `remove`) instead **prune** openings, stairs,
+fixtures and balconies that no longer fit and say so in the step message.
 
-```jsonc
-{"mode": "ops",
- "ops": [
-   {"op": "add_element",    "element": {"type": "window", "id": "L1-win-W3", "wall": "L1-wall-W", "offset": 5.0}},
-   {"op": "modify_element", "id": "L1-wall-S", "set": {"thickness": 0.4}},
-   {"op": "delete_element", "id": "garage-door"},
-   {"op": "add_level",      "level": {"id": "L3", "name": "Level 3", "height": 3}},
-   {"op": "modify_level",   "id": "L1", "set": {"height": 3.5}},
-   {"op": "delete_level",   "id": "L3"},
-   {"op": "set_building",   "set": {"name": "Casa"}}
- ],
- "notes": ["…"]}
+### 4.3 Derivation — Design → BuildingSpec
+
+`backend/core/derive.py`, deterministic. Per storey:
+
+1. rooms without a rectangle are auto-placed; overlapping rooms are an error (they may share edges);
+2. every rectangle edge is split at the corners of all rooms on that storey; a piece touched by one room
+   becomes an **exterior wall** `L1-wall-<room>-<side>` (0.3 m; horizontal ones extended to the outer
+   face at real corners of the storey outline), a piece shared by two rooms a **partition**
+   `L1-wall-<a>+<b>` (0.12 m); the storey outline (shapely union of the rectangles) becomes the slab;
+3. roofs cover what a storey has that the storey above has not (a garage beside a two-storey block gets
+   its own lower roof); gable/hip only for rectangular pieces;
+4. doors go on the partition between their two rooms (longest piece) or on an exterior wall of the room
+   (`side`, else the first of S, E, W, N); windows on the named exterior side; `at ∈ [0,1]` chooses the
+   position along the wall and openings are nudged to the nearest free slot; garages get a garage door
+   automatically;
+5. stairs run along the named wall (rise from the level height, 0.18 m risers, 0.25 m goings; the room
+   must be ~5 m long along that side), with a well cut into the slab above; fixtures sit against the
+   named wall with their back to it (catalogue sizes in `ifc/fixtures.py`); balconies are a slab plus a
+   railing; the porch is a deck, columns and a roof along one side of the ground floor;
+6. stored raw ops (`overrides`) are replayed at the end; ones that no longer apply are dropped with a note.
+
+`analyze()` also returns per-room information — exterior sides, neighbours — used by the edit context and
+the checker. Everything raises `DesignError` with a model-readable message.
+
+### 4.4 Requirements and checks — accuracy on detailed prompts
+
+`schemas/requirements.py`, `core/checks.py`. Before building, the model turns the prompt into atomic
+requirements with a `kind` the checker understands:
+
+`storeys · room (room keyword, count, level) · room_level · area · adjacent · orientation (room has an exterior
+wall on side) · window (count, side) · door (room ↔ room/outside) · stair · furniture (kind, room, count) ·
+roof · feature (garage/porch/balcony) · dimension · material · style · other`
+
+plus `supported: false` for what the builder cannot do (curved walls, basements, pools …) — those are
+listed in the version notes instead of being silently dropped. After the build stream, `check()` runs each
+requirement against the design deterministically (`[met]`, `[UNMET] living room facing south — Living
+Room's exterior sides are N, W`, `[unsupported]`, `[not checked]` for style), the result goes to the step
+log and the version record, and unmet items trigger one fix round with the same build prompt.
+
+The same format is the evaluation set (`tests/evals/prompts.json`, 16 detailed prompts with hand-written
+requirements). `python tools/eval.py` runs the real pipeline on each and prints met/checkable per case
+and overall — the number to watch when changing prompts, schemas or models.
+
+### 4.5 Streaming, previews and the step log
+
+Every provider streams (`LLM.complete(request, on_text, on_note)` receives the accumulated reply after
+each chunk). `core/stream.py::StepStream`:
+
+```
+LLM stream thread ──feed(text)──► parse_partial → new complete steps → apply_step + analyze (ms)
+                                    ├─ ok:       SSE "step" {index, ok, message, elements}; design marked dirty
+                                    └─ rejected: SSE "step" {index, ok:false, error}; design unchanged
+preview worker thread ──────────► latest dirty design → derive → compile IFC, geometry-check ONLY changed
+                                    elements → output/partial/<id>.ifc → SSE "partial" {ifc_url, change, …}
+browser ────────────────────────► loads each preview (newest pending only); final version replaces it
 ```
 
-or `{"mode": "redesign", "program": {…}, "notes": […]}` when the change is at program level
-(rooms, storeys, footprint, features). Two representations of the same ops exist: the **typed**
-discriminated union (`Op`, used internally and by `POST /projects/{id}/ops`) and the **flat** form the
-LLM emits (`FlatOp`: one object with an `op` enum and optional `id`/`element`/`level`/`set`, the element
-one object with a `type` enum and every field optional). The flat schema is a fraction of the grammar
-size of the union-of-unions, which matters for constrained decoders; `EditResponse.typed_ops()`
-converts and raises model-readable errors ("add_element needs `element`", "`thickness` is not a level
-field"). Rules enforced by `apply_ops`:
+- steps land at the model's token rate: the family house above emitted 77 steps at a median 0.8 s
+  apart; a preview compile of a 100-element house is ~0.3 s, so the coalescing worker keeps up;
+- `core/partial_json.py` closes the JSON produced so far and **drops any array element that is still
+  open**, so a half-generated step never appears;
+- nothing is emitted unless the derived spec validates *and* the changed products tessellate; previews use
+  the project's GlobalId map so ids are stable even between previews;
+- while the model is silent (queueing, thinking) a `stream` heartbeat says *"waiting for the model… 12 s"*
+  every 3 s; SSE `stream` events (every 0.4 s once text flows) drive the live model-output pane;
+- `close()` runs before the final compile, so IfcOpenShell is never used from two threads at once;
+- preview files are served by the `/models` static mount and pruned after 30 minutes.
 
-- pure: returns a new spec, input untouched; the result is re-validated as a whole
-- `modify_*` merges fields; `type` and `id` cannot change
-- deleting a wall deletes its openings; deleting a level deletes its elements (both reported as notes)
-- an explicit delete of something already cascade-deleted is not an error (models do this)
-- level elevations are re-stacked after height changes unless an op set an elevation on purpose
-- every failure raises `OpError` with a message naming known ids — it goes straight back to the model
+**Step log (transparency).** Every SSE event carries `seq` and `t`; stages: `requirements` (the checklist,
+unsupported items flagged), `build` (which round and why: rejected steps / unmet requirements listed),
+`llm` (what was sent to which model; then chars, seconds, steps applied/rejected, previews), `stream`,
+`step` (one per step: applied with its effect, or rejected with the reason and the raw step), `partial`
+(diff against the previous preview, rooms per level, counts, compile time, how many elements were
+re-checked), `verify` (every requirement with met/unmet/unsupported and the detail), `compile`, `done`,
+`error`. The UI renders these as a timeline on the right; preview rows are clickable to re-show any
+intermediate render, an overlay says what the viewer is showing, a checkbox reveals the raw model output,
+and the notes under the prompt list unsupported / unmet requirements for the version.
 
-**Delta vs whole file.** The op batch is the delta; it is what the model emits, what is logged, what
-undo replays. The IFC file itself is regenerated in full from the IR each version (cheap: ~0.5 s for a
-house) **but with the GlobalIds of the previous version** (§4.6), so to any consumer the result is
-indistinguishable from an in-place patch. In-place patching of the IFC entities with
-`ifcopenshell.api` is a pure optimisation for very large models and can be added behind the same
-`compile_ifc(spec, guids)` call.
+### 4.6 BuildingSpec — the geometric IR
 
-### 4.5 LLM adapter and prompts
+`backend/schemas/bim.py`. Units are metres; plan coordinates `(x, y)`; `z` comes from levels. Element
+types: `wall` (start/end/thickness/external/material), `slab`, `roof` (outline + shape/pitch/ridge),
+`door` (host wall + offset + kind), `window` (+ sill), `column`, `beam`, `space`, `stair` (position,
+direction, width, risers/goings, `to_level`), `fixture` (kind, centre, rotation, w×d×h), `railing`
+(path, height). Every element has a stable string `id`; walls are centred on `start→end`; openings are
+parametric on their host wall. Validation (`BuildingSpec._check`) is semantic: unique ids, known levels
+and host walls, openings inside their wall, outlines with area, pitched roofs on rectangles.
+
+### 4.7 Raw element ops
+
+`backend/schemas/ops.py` / `core/ops.py` remain for the UI and scripts (`POST /projects/{id}/ops`):
+`add_element`, `modify_element`, `delete_element`, `add_level`, `modify_level`, `delete_level`,
+`set_building`, in a typed and a flat form. On a project with a design they are stored as
+`design.overrides` and replayed after every derivation, so a later design edit keeps them (or drops the
+ones that no longer apply, with a note). Deleting a wall deletes its openings; level elevations re-stack.
+
+### 4.8 LLM adapter and prompts
 
 `backend/llm/`. The contract:
 
 ```python
 @dataclass
 class LLMRequest:
-    system: str; user: str; schema: dict; schema_name: str  # "program" | "edit"
+    system: str; user: str; schema: dict; schema_name: str  # "requirements" | "build"
     meta: dict                                              # side channel for the mock only
 
 class LLM(Protocol):
     name: str
-    def complete(self, request: LLMRequest) -> dict: ...
+    def complete(self, request: LLMRequest, on_text=None, on_note=None) -> dict: ...
 ```
 
 | provider | how JSON is enforced | notes |
 |---|---|---|
-| `mock` | regexes over the prompt (`llm/mock.py`) | no network; backs the tests; fallback when a model is down |
-| `llamacpp` | starts `llama-server` on a local `.gguf`, then `openai` below (`llm/llamacpp.py`) | grammar-constrained by llama.cpp; server log in `backend/.llama/server.log` |
-| `claude` | Anthropic SDK, `output_config.format` json_schema (`llm/claude.py`) | `claude-opus-5` by default |
-| `ollama` | `/api/chat` with `format: <json schema>` (grammar-constrained) | local models via Ollama |
-| `openai` | `/chat/completions` with `response_format: json_schema` | vLLM, LM Studio, hosted, fine-tuned |
+| `mock` | regexes + the template layout (`llm/mock.py`, `agents/template_planner.py`) | no network; backs the tests |
+| `llamacpp` | starts `llama-server` on a local `.gguf`, then `openai` below | grammar-constrained by llama.cpp |
+| `claude` | Anthropic SDK, `output_config.format` json_schema | structured outputs |
+| `ollama` | `/api/chat` with `format: <json schema>` | local models via Ollama |
+| `openai` | `/chat/completions` with `response_format: json_schema` (strict) | Anthropic's compat endpoint, Fireworks, vLLM, LM Studio, fine-tuned models |
 
-Every provider receives the schema through `llm/schema.py::strict_schema`: all properties required,
-objects closed, tuples as fixed-length arrays. This came out of testing 3–4B local models, which skip
-optional keys (rooms lost their `level`) and, once keys are required, fill unused ones with junk — so the
-Program coerces junk (`footprint: [0, 0]`, `storey_height: 0`) to "unspecified", rooms name storeys by id
-(`"L2"`, the same ids the model sees in the context) instead of a 0-based index, `program` is ignored in
-`mode="ops"`, and unknown-id errors suggest the closest real ids. The context lists elements as
-`wall id=L1-wall-S …` because small models otherwise merge type and id into `wall-L1-wall-S`.
+Every provider receives the schema through `llm/schema.py::strict_schema` (all properties required,
+objects closed, tuples as arrays, `oneOf`→`anyOf`, optionally without numeric bounds). Two prompts exist
+(`llm/prompts.py`): **requirements** and **build**; the build prompt carries the step vocabulary, the
+coordinate conventions, typical room sizes, the construction order (levels → rooms → roof → doors →
+windows → stairs → furniture, so the building grows visibly), completeness rules (every room a door and a
+window, kitchens a counter/fridge/oven/sink …), and the edit rules (emit only changes; use one `layout`
+step to rearrange a storey because rooms may never overlap between steps). The user message is
+`CURRENT DESIGN` (empty or the rendered design) + `REQUEST` + `CHECKLIST` (+ rejected steps or unmet
+requirements in fix rounds). `(context, prompt) → steps` pairs are stored with every version — the
+fine-tuning target for a specialised model later.
 
-Two calls exist (`llm/prompts.py`): **program** (`PROGRAM_SYSTEM`, user = request) and **edit**
-(`EDIT_SYSTEM`, user = current model as text + request). Both are single-shot and schema-constrained,
-which is deliberate — `(context, prompt) → JSON` pairs are the easiest possible fine-tuning target for
-the specialised model that replaces the general one later. `store` keeps prompt, ops/program, notes and
-llm name for every version, so the training log accumulates by itself.
-
-### 4.5a Streaming and live previews
-
-Every provider streams (`LLM.complete(request, on_text)` receives the accumulated reply after each
-chunk). `core/preview.py` turns that into something visible before the model has finished:
-
-```
-LLM stream thread ──feed(text)──► latest snapshot ──► preview worker thread
-                                                        parse_partial → build spec → compile IFC
-                                                        (geometry-checked) → write output/partial/<id>.ifc
-                                                        → SSE "partial" {ifc_url, elements}
-browser: loads each preview into the viewer; the final version replaces it
-```
-
-- `core/partial_json.py` closes the JSON produced so far: it trims an open string, a dangling
-  `"key":` or a half literal, **drops any array element that is still open** (a half-generated room or
-  op never appears with default values), closes the brackets, and parses. Tested against every prefix
-  of a sample reply.
-- The worker only ever compiles the *latest* snapshot (tokens arrive faster than a ~0.3–1 s compile) and
-  skips snapshots whose spec is unchanged. Nothing is emitted unless the partial spec validates *and*
-  every product tessellates, so the viewer never shows a broken model. Previews use fresh GlobalIds;
-  only the final compile uses the project's id map.
-- For designs the partial `Program` is solved as usual; for edits the ops that are complete so far are
-  applied (incomplete ones skipped) or the partial redesign program is solved.
-- `close()` runs before the final compile, so IfcOpenShell is never used from two threads at once.
-- SSE `stream` events (every 0.4 s: chars received + the live reply text) drive the status line and
-  the "show model output" pane.
-- Preview files are served by the `/models` static mount and pruned after 30 minutes.
-
-**Step log (transparency).** Every SSE event carries `seq` and `t` (seconds since the request), and the
-pipeline emits one for each decision: `llm` (what was sent to which model, then chars/seconds/previews
-when the reply completes, plus provider notes such as the unconstrained-decoding fallback), `stream`,
-`partial` (with room lists per level, element counts by type, compile time, and a one-line diff against
-the previous preview: "+7 elements; L2: +Bedroom 3, Bedroom 2"), `validate` (accepted with rooms/ops
-listed, or rejected with the exact errors sent back), `apply` (ops and cascaded deletes), `solve`,
-`compile`, `done`. The UI renders these as a timeline on the right; preview rows are clickable to
-re-show any intermediate render, an overlay says what the viewer is showing (`preview 3 · 39 elements`
-vs `v4 · final`), and a checkbox reveals the model's output as it streams. `?prompt=…` in the URL
-sends a prompt on load (smoke tests, demos).
-
-`parse_reply` also uses the partial parser as a fallback for a final answer cut by `max_tokens`, so
-the repair loop gets a concrete semantic complaint instead of a parse error.
-
-### 4.6 Validate / repair loop
-
-`core/pipeline.py`. For each LLM call, up to `BIM_MAX_REPAIRS` (2) extra rounds:
-
-1. schema validation of the JSON (Pydantic) → field-level messages
-2. semantic validation (`BuildingSpec._check`, `apply_ops`) → e.g. `door 'd1': runs past the end of wall 'w1' (3.50 > 2.00 m)`
-3. geometry check: every product is tessellated with IfcOpenShell (`ifc/builder.py::check_geometry`);
-   failures are also fed back
-
-Errors are appended to the user message as *"YOUR PREVIOUS ANSWER WAS REJECTED. Fix these problems"*.
-After the last attempt a `PipelineError` reaches the client as an SSE `error` event (HTTP-style code
-422; 409 for a stale `base_version`).
-
-### 4.7 GlobalId stability
+### 4.9 GlobalId stability
 
 `core/guids.py`. Per project a map `{"project", "site", "building", "level:<id>", "element:<id>",
-"opening:<id>"} → GlobalId` is stored with each version. `compile_ifc(spec, guids)` assigns ids from
-the map and mints new ones only for new keys; `prune_guids` drops keys that left the spec (a deleted
-and re-added id gets a *new* GlobalId, on purpose). Tested in `tests/test_ifc_roundtrip.py` and
-`tests/test_projects_api.py`: modify-in-place, delete, redesign and revert all keep GlobalIds for
-surviving elements.
+"opening:<id>"} → GlobalId` is stored with each version. `compile_ifc(spec, guids)` assigns ids from the
+map and mints new ones only for new keys; `prune_guids` drops keys that left the spec. Because derived
+element ids are functions of room ids and sides, moving or resizing a room keeps its walls', windows' and
+furniture's GlobalIds; adding a neighbour turns `L1-wall-a-E` into `L1-wall-a+b` (a new element, as it
+should be). Tested in `tests/test_ifc_roundtrip.py` and `tests/test_projects_api.py`.
 
-### 4.8 IFC compiler
+### 4.10 IFC compiler
 
-`backend/ifc/`. IFC4, `ifcopenshell.api` throughout. Project → Site → Building → Storeys (elevations
-from levels). Walls: `add_wall_representation` (extruded rectangle centred on the axis, local frame at
-`start` rotated along the wall). Slabs/roofs/spaces: `add_slab_representation` from the outline
-(slab top at storey elevation; roof on top of its storey; spaces aggregated into storeys). Doors and
-windows: an `IfcOpeningElement` box cut through the host wall (`feature.add_feature`) and filled with
-a parametric door/window representation (`feature.add_filling`). Styles (colour, glass transparency),
-materials, `Pset_*Common`, and a **`NoCoast_Spec` pset with the element's spec JSON** on every element,
-storey and the building (that is what makes the lifter lossless).
+`backend/ifc/`. IFC4, `ifcopenshell.api` for the standard pieces and hand-built solids
+(`ifc/geometry.py`) for the rest. Walls: extruded rectangle on the wall axis, IfcMaterial and a colour per
+material. Slabs/spaces: extruded outlines. Roofs: flat = extruded outline; gable = chevron profile with
+gable-end infills; hip = faceted brep (pyramid when square). Doors/windows: an `IfcOpeningElement` cut
+through the host wall and a parametric door/window filling (`OperationType` from the door kind). Stairs:
+`IfcStair` (STRAIGHT_RUN_STAIR) as a sawtooth profile extruded across the width, plus an opening cut into
+the slab of the level it reaches. Fixtures: `IfcFurniture` / `IfcSanitaryTerminal` /
+`IfcElectricAppliance` (car and fireplace as `IfcBuildingElementProxy`) from a few boxes each; railings
+as posts + handrail; beams as boxes. Every element, storey and the building carry a **`NoCoast_Spec`**
+pset with their spec JSON and the building a **`NoCoast_Design`** pset with the design, which is what
+makes the lifter lossless. `check_geometry` tessellates products (all of them for a version, only the
+changed ones for a preview).
 
-### 4.9 Lifter (IFC as context)
+### 4.11 Lifter (IFC as context)
 
-`backend/ifc/lifter.py`. Reads a NoCoast-generated IFC back into `(BuildingSpec, GuidMap)` from the
-`NoCoast_Spec` psets and GlobalIds — lossless, so a downloaded file can be re-imported into a fresh
-project (`POST /projects/{id}/import`) and edited with the same ids. A geometric lifter for *foreign*
-IFC files (reading placements/extrusions back into walls, slabs, openings; unknown classes as read-only
-opaque elements with a bounding box) is the designed next step and plugs into the same function.
+`backend/ifc/lifter.py`. Reads a NoCoast-generated IFC back into `(BuildingSpec, Design, GuidMap)` from
+the psets and GlobalIds, so a downloaded file can be re-imported (`POST /projects/{id}/import`) and
+edited with the same ids. A geometric lifter for *foreign* IFC files is the designed next step.
 
-### 4.10 Version store
+### 4.12 Version store and API
 
-`backend/store/db.py`, SQLite. `versions(project_id, number, parent, prompt, mode, llm, spec, program,
-guids, ops, notes, summary, ifc_path)`. Every accepted prompt, raw op batch, revert or import appends
-a version; the IFC for version *n* is `output/projects/<project>/v<n>.ifc`. History is linear;
-`revert/{n}` appends a new version equal to *n* (undo that is itself undoable). Optimistic concurrency:
-requests carry `base_version`; a mismatch is rejected (409) rather than merged. Postgres + object
-storage replace this module with the same interface.
-
-### 4.11 HTTP API
+`backend/store/db.py`, SQLite: `versions(project_id, number, parent, prompt, mode, llm, spec, design,
+checks, guids, ops, notes, summary, ifc_path)`. Modes: `design`, `edit`, `ops`, `revert`, `import`.
+History is linear; `revert/{n}` appends a copy of *n*; `base_version` gives optimistic concurrency (409).
 
 | method / path | body | result |
 |---|---|---|
 | `GET /health` | | `{ok, llm: {provider, model}}` |
 | `POST /projects` | `{name}` | project |
 | `GET /projects/{id}` | | `{project, head, versions}` |
-| `POST /projects/{id}/prompt` | `{prompt, base_version?, planner?}` | **SSE** |
-| `POST /projects/{id}/ops` | `{ops, base_version?}` | **SSE** — apply ops without an LLM |
+| `POST /projects/{id}/prompt` | `{prompt, base_version?}` | **SSE** — design or edit |
+| `POST /projects/{id}/ops` | `{ops, base_version?}` | **SSE** — raw element ops (stored as overrides) |
 | `POST /projects/{id}/revert/{n}` | | **SSE** |
 | `POST /projects/{id}/import` | multipart `file` (.ifc) | **SSE** |
 | `GET /projects/{id}/versions/{n}/ifc` | | the IFC file |
-| `GET /projects/{id}/versions/{n}/spec` | | `{version, spec, program, guids}` |
+| `GET /projects/{id}/versions/{n}/spec` | | `{version, spec, design, guids}` |
 | `GET /projects/{id}/versions/{n}/context` | | text — exactly what the LLM sees when editing |
 | `POST /plan`, `/build`, `/generate` | | stateless one-shots (scripts, tests) |
 
-SSE events: `event: <stage>` + `data: {"seq", "t", "stage", "message", "data"}` where stage ∈
-`program, edit, llm, stream, partial, validate, apply, solve, compile, done, error`. `done.data` is the
-version record incl. `ifc_url`; `partial.data` is `{ifc_url, preview, elements, counts, rooms, change,
-compile_ms}`; `stream.data` is `{chars, text}`; `validate`/`error` carry `data.errors`.
+SSE events: `event: <stage>` + `data: {"seq", "t", "stage", "message", "data"}`, stages as in §4.5.
+`done.data` is the version record incl. `ifc_url` and `checks`.
 
-### 4.12 Frontend
+### 4.13 Frontend
 
 Vanilla TypeScript + Vite. `viewer.ts` opens the IFC bytes with `web-ifc` (`IfcAPI.OpenModel` →
-`StreamAllMeshes` → `GetGeometry`/`GetVertexArray`/`GetIndexArray`), builds one three.js mesh per
-placed geometry with the IFC surface colour/transparency, and frames the model. web-ifc already
-converts to Y-up. Clicking an element shows `IfcType <spec id> <GlobalId>` (so the id can be used in
-the next prompt). After every accepted version the **whole IFC is reloaded** — parsing a house takes
-milliseconds, so incremental mesh patching by GlobalId is deferred. `main.ts` keeps one project id in
-`localStorage` (`?project=<id>` deep-links another), streams stages into the status line, and offers
-Undo (revert to n-1), Import IFC and Download IFC.
+`StreamAllMeshes`), builds one three.js mesh per placed geometry with the IFC surface colour/transparency,
+and frames the model. Clicking an element shows `IfcType <spec id> <GlobalId>`. After every preview and
+every accepted version the whole IFC is reloaded (milliseconds for a house). `main.ts` keeps one project
+id in `localStorage` (`?project=<id>` deep-links another, `?prompt=…` sends a prompt on load), renders
+the step log, and offers Undo, Import IFC and Download IFC. The Tauri shell (`src-tauri/`) spawns
+`python main.py` on startup (skip with `BIM_NO_BACKEND=1`) and kills it on exit.
 
-The Tauri shell (`src-tauri/`) adds nothing to the UI: it spawns `python main.py` in `backend/` on
-startup (skip with `BIM_NO_BACKEND=1`) and kills it on exit.
+## 4.14 Troubleshooting
 
-## 4.13 Troubleshooting
+- **Backend console** (`python main.py`): every request, LLM call with timing, each step applied or
+  rejected, and full tracebacks. `BIM_LOG_LEVEL=DEBUG` adds the complete prompts and replies.
+- **Browser console** (F12 → Console, filter `[nocoast]`): page/backend URL, health, every API call and
+  SSE event, IFC sizes, web-ifc init and mesh counts, uncaught errors.
 
-Both sides log verbosely so a failure can be diagnosed from two pastes:
-
-- **Backend console** (`python main.py`): every request, LLM call with timing, rejected answer with the
-  validation errors that went back to the model, and full tracebacks. `BIM_LOG_LEVEL=DEBUG` adds the
-  complete prompts and replies. `llama-server`'s own output is in `backend/.llama/server.log`.
-- **Browser console** (F12 → Console, filter `[nocoast]`): page/backend URL, health, project open, every
-  API call and SSE event, IFC size, web-ifc init and mesh counts, and uncaught errors. The status line
-  under the prompt shows the last event or error too.
-
-Common ones: *backend not reachable* / a browser CORS error with *status (null)* → nothing is listening on
-8765; use `npm run start`, or run `python main.py` in `backend/` in a second terminal (or set `VITE_BACKEND_URL`);
-*web-ifc init FAILED* → `npm install` did not run `scripts/copy-wasm.mjs`, so `public/wasm/` is empty;
-*language model unavailable* → the provider's own message follows (missing key, workspace id, model file,
-`llama-server` exit code with the last log line).
+Common ones: *backend not reachable* / CORS *status (null)* → nothing listens on 8765; use `npm run start`.
+*web-ifc init FAILED* → `public/wasm/` is empty; run `npm install`. *language model unavailable* → the
+provider's own message follows. *the model produced no applicable steps* → every step was rejected; the
+step log shows each reason (usually an edit request the model could not map onto existing ids).
 
 ## 5. Tests
 
-`cd backend && python -m pytest` — 56 tests on the mock LLM, no network:
-ops semantics and error messages · solver determinism and id stability · program coercion of
-small-model junk · partial-JSON parsing of every prefix of a reply · compile→lift round trip ·
-GlobalId survival across modify/delete/redesign/revert · the SSE project API end to end (design with
-streamed previews, edit, conflict 409, ops, revert, import, bad import) · the legacy stateless endpoints.
-`node frontend/scripts/check-ifc.mjs <file.ifc>` confirms web-ifc can tessellate a generated file.
+`cd backend && python -m pytest` — 68 tests on the mock LLM, no network: derivation (walls from shared
+and free edges, opening placement, stairs and wells, roofs over partial footprints, id stability when a
+room moves) · steps (application, rejection messages, cascades, the streaming runner rejecting an
+overlapping room mid-stream) · checks against a template design and the eval fixtures · raw ops
+semantics · partial-JSON parsing of every prefix · compile→lift round trip incl. the design · GlobalId
+survival across edits, ops, revert · the SSE project API end to end (design with streamed steps and
+previews, edits keeping GlobalIds, overrides replayed, conflict 409, import) · every element kind
+compiling. `python tools/eval.py` measures accuracy on the real model.
 
 ## 6. Decisions and their reasons
 
 | decision | reason |
 |---|---|
-| IR + compiler, not direct IFC generation | validation, token cost, deltas, and a clean fine-tuning target |
-| program → solver for new designs, ops for edits | LLMs are good at intent, bad at coordinates; the solver never emits invalid geometry |
-| ops as the delta unit, full IFC recompile with stable GlobalIds | simple and provably correct; in-place patching is an optimisation with the same interface |
-| single-shot schema-constrained LLM calls, no agent loop in v0 | keeps the swappable surface tiny; an agent loop (query/propose/apply/check tools) wraps these calls without changing them |
+| design layer + deterministic derivation, not direct IFC or wall-level JSON | the model reasons about rooms and sides; walls, offsets and polygons are where it fails |
+| rooms as rectangles the model places itself | the only way detailed layouts ("kitchen next to dining, living facing south") can be honoured; overlaps are caught per step |
+| steps streamed and applied one at a time | small deltas, ≤ 1 s cadence, each rejection is local and explained; nothing invalid is ever rendered |
+| requirements checklist + deterministic checker + fix round | accuracy becomes measurable and unmet detail is fed back instead of lost; unsupported wishes are surfaced |
+| ids derived from room ids | GlobalIds survive moves and resizes without a diffing step |
+| raw ops kept as overrides | element-level edits from the UI survive later design edits |
 | mock adapter in the tree | the whole system is testable and demoable with no model installed |
-| SSE over POST | the repair loop is visible; no WebSocket infrastructure |
-| SQLite + files | same shape as Postgres + object storage, zero infrastructure |
-| whole-model reload in the viewer | correct by construction; incremental patching is frontend work that proves nothing about the pipeline |
-| streamed replies + geometry-checked previews | the user sees the design grow within seconds; nothing invalid is ever rendered |
+| SSE over POST | the build is visible step by step; no WebSocket infrastructure |
+| whole-model reload in the viewer | correct by construction; incremental mesh patching is deferred |
 | Tauri over Electron | smaller, uses the system WebView2, Rust side is 40 lines |
 
 ## 7. Not in v0 (designed, not built)
 
 - **Geometric lifter** for arbitrary IFC files (foreign elements as opaque, read-only context).
-- **Agent loop**: `query_model`, `propose_ops` (dry run), `apply_ops`, `check(rules)`, `run_layout` as
-  tools around the same two LLM calls, for multi-step requests; bounded to ~10 steps.
-- **Selection as context**: pass clicked ids with the prompt; the context builder then includes those
-  elements in full and summarises the rest (`core/context.py` already truncates past 400 elements).
-- **Smarter solver**: adjacency and target-area aware layout; pitched roofs; stairs.
-- **Incremental viewer updates** by GlobalId from the op list (previews currently reload the whole model).
-- **Multi-user**: ops are already the right unit; only server-side ordering is missing.
-- **Fine-tuned model**: train on the stored `(context, prompt) → ops/program` pairs; plug in via
+- **Pitched roofs over non-rectangular footprints** (decompose into rectangles, or a straight-skeleton hip).
+- **L-shaped / two-flight stairs**; ramps; doors in `layout` steps.
+- **Incremental viewer updates** by GlobalId from the step list.
+- **Selection as context**: pass clicked ids with the prompt.
+- **Multi-user**: steps are already the right unit; only server-side ordering is missing.
+- **Fine-tuned model**: train on the stored `(context, prompt) → steps` pairs; plug in via
   `LLM_PROVIDER=openai` pointing at its server.

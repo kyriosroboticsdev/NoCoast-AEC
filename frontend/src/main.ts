@@ -49,7 +49,8 @@ async function showVersion(v: api.Version | null) {
   if (v) {
     download.href = api.BACKEND + v.ifc_url;
     download.download = `nocoast-v${v.number}.ifc`;
-    notes.textContent = [...v.notes, `elements: ${JSON.stringify(v.summary.counts)}`].join("\n");
+    const checks = (v.checks ?? []).filter((c) => c.status !== "met").map((c) => `${c.status === "unmet" ? "✗" : "–"} ${c.text}: ${c.detail}`);
+    notes.textContent = [...v.notes, ...checks, `elements: ${JSON.stringify(v.summary.counts)}`].join("\n");
     log("version", v.number, v.mode, "fetching", v.ifc_url);
     const bytes = await api.fetchIfc(v.ifc_url);
     log("ifc fetched:", bytes.length, "bytes; loading into web-ifc");
@@ -100,13 +101,30 @@ function detailFor(e: api.StageEvent): string | undefined {
   const errs = d.errors as string[] | undefined;
   if (errs?.length) return errs.map((x) => "• " + x).join("\n");
   if (e.stage === "llm" && d.model) return `${d.provider} ${d.model} · system ${d.system_chars} chars · user ${d.user_chars} chars`;
-  if (e.stage === "validate" && Array.isArray(d.rooms)) return (d.rooms as string[]).join(", ") + ((d.features as string[])?.length ? ` · ${(d.features as string[]).join(", ")}` : "");
-  if (e.stage === "validate" && Array.isArray(d.ops)) return (d.ops as string[]).map((x) => "• " + x).join("\n");
+  if (e.stage === "requirements" && Array.isArray(d.requirements)) {
+    const reqs = d.requirements as { text: string; kind: string; supported?: boolean }[];
+    return reqs.map((r) => `${r.supported === false ? "✗" : "•"} ${r.text} [${r.kind}]`).join("\n");
+  }
+  if (e.stage === "build") {
+    const p = (d.problems as string[]) ?? [];
+    const u = (d.unmet as string[]) ?? [];
+    return [...p, ...u].map((x) => "• " + x).join("\n") || undefined;
+  }
+  if (e.stage === "step") {
+    if (d.ok === false) return `${JSON.stringify(d.step)}\n${d.error}`;
+    return undefined;
+  }
+  if (e.stage === "verify" && Array.isArray(d.results)) {
+    const rs = d.results as { text: string; status: string; detail: string }[];
+    const mark: Record<string, string> = { met: "✓", unmet: "✗", unsupported: "–", skipped: "?" };
+    return rs.map((r) => `${mark[r.status] ?? "?"} ${r.text} — ${r.detail}`).join("\n");
+  }
+  if (e.stage === "validate" && Array.isArray(d.rooms)) return (d.rooms as string[]).join(", ");
   if (e.stage === "apply" && Array.isArray(d.cascade)) return (d.cascade as string[]).map((x) => "• " + x).join("\n");
-  if (e.stage === "partial") {
+  if (e.stage === "partial" && typeof d.ifc_url === "string") {
     const rooms = d.rooms as Record<string, string[]>;
     const roomLine = Object.entries(rooms ?? {}).map(([l, n]) => `${l}: ${n.join(", ") || "–"}`).join(" | ");
-    return `${JSON.stringify(d.counts)} · compiled in ${d.compile_ms} ms from ${d.chars} chars\n${roomLine}`;
+    return `${JSON.stringify(d.counts)} · compiled in ${d.compile_ms} ms after ${d.steps} steps (${d.checked} re-checked)\n${roomLine}`;
   }
   if (e.stage === "done") {
     const v = d as unknown as api.Version;
@@ -166,9 +184,12 @@ const onEvent = (e: api.StageEvent) => {
     status.textContent = `streaming: ${e.message}`;
     return;
   }
-  streamRow = null; // the next stream event (a repair round) starts a fresh row
+  if (e.stage !== "step" && e.stage !== "partial") streamRow = null; // the next stream event (a new round) starts a fresh row
   const row = stepRow(e, detailFor(e));
   if (e.stage === "validate" && errs.length) row.classList.add("bad");
+  if (e.stage === "step" && e.data?.ok === false) row.classList.add("bad");
+  if (e.stage === "verify" && ((e.data?.unmet as string[]) ?? []).length) row.classList.add("bad");
+  if (e.stage === "requirements" && ((e.data?.unsupported as string[]) ?? []).length) row.classList.add("bad");
   if (e.stage === "partial" && typeof e.data?.ifc_url === "string") {
     const label = `preview ${e.data.preview} · ${e.data.elements} elements`;
     const p = { url: e.data.ifc_url, label, row };

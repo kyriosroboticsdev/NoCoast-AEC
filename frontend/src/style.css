@@ -23,7 +23,10 @@ html, body { margin: 0; height: 100%; background: #0f1115; color: #e6e6e6; font:
 #steps-list li.partial:hover, #steps-list li.partial.shown { background: rgba(255, 212, 121, 0.12); }
 #steps-list li.done { border-left-color: #7ddc8e; }
 #steps-list li.error { border-left-color: #ff8080; color: #ff9d9d; }
-#steps-list li.validate.bad { color: #ffb070; }
+#steps-list li.validate.bad, #steps-list li.step.bad, #steps-list li.verify.bad, #steps-list li.requirements.bad { color: #ffb070; }
+#steps-list li.step { border-left-color: #6ea8ff; }
+#steps-list li.step.bad { border-left-color: #ff8080; }
+#steps-list li.verify { border-left-color: #b48cff; }
 #steps-list li.stream { opacity: 0.85; }
 #steps-text { margin: 0; max-height: 40%; overflow: auto; padding: 8px 10px; border-top: 1px solid #2a2f3a; font: 11px/1.35 ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; color: #b9c2d0; }
 

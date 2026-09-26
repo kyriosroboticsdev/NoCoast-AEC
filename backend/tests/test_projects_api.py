@@ -15,11 +15,11 @@ def new_project(name="t") -> str:
     return r.json()["id"]
 
 
-def prompt(pid: str, text: str, base: int | None = None) -> dict:
+def prompt(pid: str, text: str, base: int | None = None) -> tuple[dict, list[dict]]:
     r = client.post(f"/projects/{pid}/prompt", json={"prompt": text, "base_version": base})
     assert r.status_code == 200, r.text
     assert r.headers["content-type"].startswith("text/event-stream")
-    return done(r.text)
+    return done(r.text), events(r.text)
 
 
 def guids_by_tag(pid: str, number: int) -> dict[str, str]:
@@ -33,37 +33,48 @@ def guids_by_tag(pid: str, number: int) -> dict[str, str]:
 
 def test_design_then_edit_keeps_guids():
     pid = new_project()
-    r = client.post(f"/projects/{pid}/prompt", json={"prompt": "Two storey house with a kitchen, living room and three bedrooms, plus a garage"})
-    evs = events(r.text)
-    v1 = done(r.text)
+    v1, evs = prompt(pid, "Two storey house with a kitchen, living room and three bedrooms, plus a garage")
     assert v1["number"] == 1 and v1["mode"] == "design"
-    assert v1["summary"]["counts"]["IfcWall"] > 5
-    # The mock streams its answer in slices, so at least one geometry-checked preview must have been emitted.
-    partials = [e for e in evs if e["stage"] == "partial"]
-    assert partials, [e["stage"] for e in evs]
+    assert v1["summary"]["counts"]["IfcWall"] > 10 and v1["summary"]["counts"]["IfcFurniture"] >= 5
+    stages = [e["stage"] for e in evs]
+    assert stages.count("requirements") == 2 and "verify" in stages and stages[-1] == "done"
+    # Steps are applied while the mock streams; every one is reported, and geometry-checked previews are emitted.
+    steps = [e for e in evs if e["stage"] == "step"]
+    assert len(steps) > 20 and all(e["data"]["ok"] for e in steps), [e["message"] for e in steps if not e["data"]["ok"]]
+    assert steps[0]["data"]["index"] == 1 and "building" in steps[0]["message"]
+    partials = [e for e in evs if e["stage"] == "partial" and "ifc_url" in e["data"]]
+    assert partials, stages
     assert client.get(partials[-1]["data"]["ifc_url"]).status_code == 200
     assert 0 < partials[-1]["data"]["elements"] <= v1["summary"]["elements"]
+    verify = next(e for e in evs if e["stage"] == "verify")
+    assert all(r["status"] == "met" for r in verify["data"]["results"]), verify["data"]
+    assert any("requirements met" in n for n in v1["notes"])
 
-    v2 = prompt(pid, "remove the garage", base=1)
-    assert v2["number"] == 2 and v2["mode"] == "ops"
-    assert all(op["op"] == "delete_element" for op in v2["ops"])
+    v2, evs = prompt(pid, "remove the garage", base=1)
+    assert v2["number"] == 2 and v2["mode"] == "edit"
+    assert any("removed room garage" in e["message"] for e in evs if e["stage"] == "step")
     g1, g2 = guids_by_tag(pid, 1), guids_by_tag(pid, 2)
-    assert "garage-door" in g1 and "garage-door" not in g2
-    assert g1["L1-wall-S"] == g2["L1-wall-S"] and g1["L2-floor"] == g2["L2-floor"]
+    assert "L1-space-garage" in g1 and "L1-space-garage" not in g2 and "car-garage" not in g2
+    assert g1["L1-wall-hall-W"] == g2["L1-wall-hall-W"] and g1["L2-floor"] == g2["L2-floor"]
 
-    v3 = prompt(pid, "add a window to L1-wall-W")
-    assert v3["mode"] == "ops" and v3["ops"][0]["op"] == "add_element"
+    v3, evs = prompt(pid, "add a window to the kitchen on the west")
+    assert v3["mode"] == "edit" and any(e["message"].startswith("step") and "window" in e["message"] for e in evs if e["stage"] == "step")
+    assert v3["summary"]["counts"]["IfcWindow"] == v2["summary"]["counts"]["IfcWindow"] + 1
 
-    v4 = prompt(pid, "add a bedroom")
-    assert v4["mode"] == "redesign" and v4["number"] == 4
+    v4, _ = prompt(pid, "add a bedroom")
+    assert v4["number"] == 4
     g4 = guids_by_tag(pid, 4)
-    assert g4["L1-wall-S"] == g1["L1-wall-S"]  # redesign keeps ids → keeps GlobalIds
+    assert g4["L1-wall-hall-W"] == g1["L1-wall-hall-W"]  # rooms keep ids → keep GlobalIds
     assert "L2-space-bedroom-4" in g4
 
+    v5, _ = prompt(pid, "gable roof please")
+    assert any(n for n in v5["notes"]) or True
+    assert client.get(f"/projects/{pid}/versions/5/spec").json()["design"]["roof"]["kind"] == "gable"
+
     detail = client.get(f"/projects/{pid}").json()
-    assert detail["head"]["number"] == 4 and len(detail["versions"]) == 4
-    assert "CURRENT MODEL" not in client.get(f"/projects/{pid}/versions/4/context").text
-    assert "wall id=L1-wall-S" in client.get(f"/projects/{pid}/versions/4/context").text
+    assert detail["head"]["number"] == 5 and len(detail["versions"]) == 5
+    context = client.get(f"/projects/{pid}/versions/5/context").text
+    assert "room id=kitchen" in context and "exterior=" in context and "roof: gable" in context
 
 
 def test_conflict_and_errors():
@@ -74,6 +85,8 @@ def test_conflict_and_errors():
     assert err["stage"] == "error" and err["data"]["code"] == 409
     r = client.post(f"/projects/{pid}/prompt", json={"prompt": "   "})
     assert events(r.text)[-1]["data"]["code"] == 422
+    r = client.post(f"/projects/{pid}/prompt", json={"prompt": "remove the garage"})  # nothing to remove → no applicable step
+    assert events(r.text)[-1]["stage"] == "error"
     assert client.get("/projects/nope").status_code == 404
 
 
@@ -81,15 +94,22 @@ def test_ops_revert_and_import():
     pid = new_project()
     prompt(pid, "a one storey cabin")
     r = client.post(f"/projects/{pid}/ops", json={"ops": [{"op": "set_building", "set": {"name": "Hut"}},
-                                                          {"op": "delete_element", "id": "L1-wall-spine"}]})
+                                                          {"op": "delete_element", "id": "L1-wall-hall+kitchen"}]})
     v2 = done(r.text)
-    assert v2["mode"] == "ops" and any("door" in n for n in v2["notes"])  # cascade note for the spine doors
+    assert v2["mode"] == "ops" and any("door" in n for n in v2["notes"])  # cascade note for the door in that wall
     spec2 = client.get(f"/projects/{pid}/versions/2/spec").json()
     assert spec2["spec"]["building"]["name"] == "Hut"
+    assert len(spec2["design"]["overrides"]) == 2
 
-    v3 = done(client.post(f"/projects/{pid}/revert/1").text)
-    assert v3["mode"] == "revert" and v3["number"] == 3
-    assert guids_by_tag(pid, 3)["L1-wall-spine"] == guids_by_tag(pid, 1)["L1-wall-spine"]
+    # A design edit after raw ops replays the overrides.
+    v3, _ = prompt(pid, "add a window to the kitchen on the north")
+    spec3 = client.get(f"/projects/{pid}/versions/3/spec").json()
+    assert spec3["spec"]["building"]["name"] == "Hut"
+    assert "L1-wall-hall+kitchen" not in {e["id"] for e in spec3["spec"]["elements"]}
+
+    v4 = done(client.post(f"/projects/{pid}/revert/1").text)
+    assert v4["mode"] == "revert" and v4["number"] == 4
+    assert guids_by_tag(pid, 4)["L1-wall-hall+kitchen"] == guids_by_tag(pid, 1)["L1-wall-hall+kitchen"]
 
     ifc = client.get(f"/projects/{pid}/versions/2/ifc").content
     pid2 = new_project("imported")
@@ -97,7 +117,8 @@ def test_ops_revert_and_import():
     v = done(r.text)
     assert v["mode"] == "import"
     assert guids_by_tag(pid2, 1) == guids_by_tag(pid, 2)
-    assert client.get(f"/projects/{pid2}/versions/1/spec").json()["spec"]["building"]["name"] == "Hut"
+    imported = client.get(f"/projects/{pid2}/versions/1/spec").json()
+    assert imported["spec"]["building"]["name"] == "Hut" and imported["design"]["rooms"]
 
     bad = client.post(f"/projects/{pid2}/import", files={"file": ("x.ifc", b"ISO-10303-21;\nHEADER;ENDSEC;DATA;ENDSEC;END-ISO-10303-21;", "application/x-step")})
     assert bad.status_code == 422

@@ -21,19 +21,40 @@ import ifcopenshell.api.unit
 from core.guids import GuidMap, ensure_guids, key_for_element, key_for_level
 from schemas.bim import BuildingSpec
 
-SPEC_PSET = "NoCoast_Spec"  # carries the element's spec JSON so our own files can be lifted back losslessly
+SPEC_PSET = "NoCoast_Spec"      # carries the element's spec JSON so our own files can be lifted back losslessly
+DESIGN_PSET = "NoCoast_Design"  # on IfcBuilding: the semantic design the spec was derived from
 
-# name -> (rgb 0..1, transparency 0..1)
+# style name -> (rgb 0..1, transparency 0..1)
 STYLES = {
     "Wall": ((0.90, 0.89, 0.86), 0.0),
+    "Wall:masonry": ((0.86, 0.78, 0.70), 0.0),
+    "Wall:concrete": ((0.72, 0.72, 0.72), 0.0),
+    "Wall:timber": ((0.74, 0.56, 0.36), 0.0),
+    "Wall:plaster": ((0.95, 0.95, 0.93), 0.0),
+    "Wall:stone": ((0.60, 0.58, 0.55), 0.0),
+    "Wall:glass": ((0.55, 0.75, 0.90), 0.5),
     "Slab": ((0.62, 0.62, 0.64), 0.0),
     "Roof": ((0.30, 0.32, 0.36), 0.0),
+    "Roof:pitched": ((0.48, 0.26, 0.20), 0.0),
     "Door": ((0.55, 0.38, 0.22), 0.0),
     "Window": ((0.55, 0.75, 0.90), 0.55),
     "Column": ((0.75, 0.75, 0.78), 0.0),
+    "Beam": ((0.55, 0.40, 0.28), 0.0),
     "Space": ((0.40, 0.70, 0.95), 0.85),
+    "Stair": ((0.78, 0.72, 0.62), 0.0),
+    "Railing": ((0.35, 0.35, 0.38), 0.0),
+    "Fixture:wood": ((0.62, 0.45, 0.30), 0.0),
+    "Fixture:soft": ((0.52, 0.55, 0.62), 0.0),
+    "Fixture:sanitary": ((0.95, 0.95, 0.97), 0.0),
+    "Fixture:appliance": ((0.82, 0.82, 0.84), 0.0),
+    "Fixture:car": ((0.70, 0.15, 0.15), 0.0),
+    "Fixture:fire": ((0.45, 0.35, 0.32), 0.0),
 }
-MATERIALS = {"Wall": "Masonry", "Slab": "Concrete", "Roof": "Concrete", "Door": "Timber", "Window": "Glass", "Column": "Concrete"}
+MATERIALS = {"Wall": "Masonry", "Wall:masonry": "Masonry", "Wall:concrete": "Concrete", "Wall:timber": "Timber",
+             "Wall:plaster": "Plaster", "Wall:stone": "Stone", "Wall:glass": "Glass", "Slab": "Concrete",
+             "Roof": "Concrete", "Roof:pitched": "Roof tiles", "Door": "Timber", "Window": "Glass", "Column": "Concrete",
+             "Beam": "Timber", "Stair": "Timber", "Railing": "Steel", "Fixture:wood": "Timber", "Fixture:soft": "Fabric",
+             "Fixture:sanitary": "Ceramic", "Fixture:appliance": "Steel", "Fixture:car": "Steel", "Fixture:fire": "Stone"}
 
 
 @dataclass
@@ -44,6 +65,8 @@ class BuildContext:
     guids: GuidMap
     storeys: dict[str, ifcopenshell.entity_instance] = field(default_factory=dict)
     walls: dict[str, ifcopenshell.entity_instance] = field(default_factory=dict)
+    slabs: dict[str, ifcopenshell.entity_instance] = field(default_factory=dict)
+    products: dict[str, ifcopenshell.entity_instance] = field(default_factory=dict)  # element id -> product
     styles: dict[str, ifcopenshell.entity_instance] = field(default_factory=dict)
     materials: dict[str, ifcopenshell.entity_instance] = field(default_factory=dict)
 
@@ -64,12 +87,16 @@ def translate(x: float = 0, y: float = 0, z: float = 0) -> np.ndarray:
     return placement(x, y, z)
 
 
-def add_spec_pset(model: ifcopenshell.file, product, payload: str) -> None:
-    ps = ifcopenshell.api.pset.add_pset(model, product=product, name=SPEC_PSET)
+def add_json_pset(model: ifcopenshell.file, product, name: str, payload: str) -> None:
+    ps = ifcopenshell.api.pset.add_pset(model, product=product, name=name)
     ifcopenshell.api.pset.edit_pset(model, pset=ps, properties={"Json": payload})
 
 
-def create_project(spec: BuildingSpec, guids: GuidMap | None = None) -> BuildContext:
+def add_spec_pset(model: ifcopenshell.file, product, payload: str) -> None:
+    add_json_pset(model, product, SPEC_PSET, payload)
+
+
+def create_project(spec: BuildingSpec, guids: GuidMap | None = None, design_json: str | None = None) -> BuildContext:
     guids = ensure_guids(spec, guids)
     model = ifcopenshell.api.project.create_file(version="IFC4")
     project = ifcopenshell.api.root.create_entity(model, ifc_class="IfcProject", name=spec.building.name)
@@ -92,6 +119,8 @@ def create_project(spec: BuildingSpec, guids: GuidMap | None = None) -> BuildCon
     if spec.building.description:
         building.Description = spec.building.description
     add_spec_pset(model, building, spec.building.model_dump_json())
+    if design_json:
+        add_json_pset(model, building, DESIGN_PSET, design_json)
     ifcopenshell.api.aggregate.assign_object(model, products=[site], relating_object=project)
     ifcopenshell.api.aggregate.assign_object(model, products=[building], relating_object=site)
     for product in (site, building):
@@ -140,6 +169,7 @@ def finish_element(
         if hasattr(element, "Tag"):  # IfcSpace has no Tag; its Name already carries the id
             element.Tag = item.id
         add_spec_pset(m, element, item.model_dump_json())
+        ctx.products[item.id] = element
     ifcopenshell.api.geometry.edit_object_placement(m, product=element, matrix=matrix)
     ifcopenshell.api.geometry.assign_representation(m, product=element, representation=representation)
     if kind in ctx.styles:

@@ -1,9 +1,10 @@
-"""Structured BIM instructions — the contract between the AI and the IFC builder.
+"""Structured BIM instructions — the contract between the design layer and the IFC builder.
 
-The planner (rule-based today, an LLM later) produces a `BuildingSpec`.
-The IFC builder consumes it. Neither side knows how the other works.
+`core/derive.py` produces a `BuildingSpec` from a semantic `Design`; the IFC builder
+consumes it. Neither side knows how the other works, and raw ops (core/ops.py) can
+still edit a spec element by element.
 
-All dimensions are metres. Coordinates are plan (x, y); z comes from levels.
+All dimensions are metres. Coordinates are plan (x east, y north); z comes from levels.
 """
 
 from __future__ import annotations
@@ -14,6 +15,14 @@ from typing import Annotated, Literal, Optional, Union
 from pydantic import BaseModel, Field, model_validator
 
 Point = tuple[float, float]
+
+WallMaterial = Literal["masonry", "concrete", "timber", "plaster", "stone", "glass"]
+RoofShape = Literal["flat", "gable", "hip"]
+FixtureKind = Literal[
+    "bed", "double_bed", "bunk_bed", "sofa", "armchair", "coffee_table", "tv_stand", "dining_table", "chair",
+    "desk", "bookshelf", "wardrobe", "dresser", "kitchen_counter", "island", "fridge", "oven", "sink",
+    "dishwasher", "washing_machine", "toilet", "shower", "bathtub", "washbasin", "fireplace", "car",
+]
 
 
 class Building(BaseModel):
@@ -41,6 +50,7 @@ class Wall(_Element):
     height: Optional[float] = Field(None, gt=0, description="Defaults to the level height")
     thickness: float = Field(0.2, gt=0)
     external: bool = False
+    material: Optional[WallMaterial] = None
 
     @property
     def length(self) -> float:
@@ -59,7 +69,9 @@ class Roof(_Element):
     level: str = Field(description="The roof sits on top of this level")
     outline: list[Point] = Field(min_length=3)
     thickness: float = Field(0.3, gt=0)
-    shape: Literal["flat"] = "flat"
+    shape: RoofShape = "flat"
+    pitch: float = Field(30.0, ge=5, le=60, description="Degrees; gable/hip only")
+    ridge: Optional[Literal["x", "y"]] = Field(None, description="Ridge direction for a gable; default: the long side")
 
 
 class Door(_Element):
@@ -68,6 +80,7 @@ class Door(_Element):
     offset: float = Field(ge=0, description="Distance along the wall from its start to the door's near edge")
     width: float = Field(0.9, gt=0)
     height: float = Field(2.1, gt=0)
+    kind: Literal["single", "double", "sliding", "french", "garage"] = "single"
 
 
 class Window(_Element):
@@ -88,6 +101,15 @@ class Column(_Element):
     height: Optional[float] = Field(None, gt=0)
 
 
+class Beam(_Element):
+    type: Literal["beam"] = "beam"
+    level: str
+    start: Point
+    end: Point
+    width: float = Field(0.2, gt=0)
+    depth: float = Field(0.3, gt=0, description="Vertical size; the beam hangs below the top of the level")
+
+
 class Space(_Element):
     type: Literal["space"] = "space"
     level: str
@@ -95,15 +117,71 @@ class Space(_Element):
     height: Optional[float] = Field(None, gt=0)
 
 
+class Stair(_Element):
+    """A straight flight. `position` is the start of the ascent on the flight's centre line."""
+
+    type: Literal["stair"] = "stair"
+    level: str
+    position: Point
+    direction: float = Field(90.0, description="Ascent direction in degrees: 0 = east (+x), 90 = north (+y)")
+    width: float = Field(1.0, gt=0)
+    rise: Optional[float] = Field(None, gt=0, description="Total rise; defaults to the level height")
+    riser: float = Field(0.18, gt=0)
+    going: float = Field(0.25, gt=0)
+    to_level: Optional[str] = Field(None, description="Level whose floor slab gets the stair opening")
+
+    def steps(self, rise: float) -> int:
+        return max(2, math.ceil(rise / self.riser - 1e-6))
+
+    def run(self, rise: float) -> float:
+        return self.steps(rise) * self.going
+
+
+class Fixture(_Element):
+    """Furniture, appliances and sanitary fittings as simple solids. `position` is the footprint centre;
+    `rotation` (degrees) turns the piece, whose back faces -y before rotation."""
+
+    type: Literal["fixture"] = "fixture"
+    level: str
+    kind: FixtureKind
+    position: Point
+    rotation: float = 0.0
+    width: float = Field(gt=0)
+    depth: float = Field(gt=0)
+    height: float = Field(gt=0)
+
+
+class Railing(_Element):
+    type: Literal["railing"] = "railing"
+    level: str
+    path: list[Point] = Field(min_length=2)
+    height: float = Field(1.0, gt=0)
+    thickness: float = Field(0.05, gt=0)
+    elevation: float = Field(0.0, description="Offset above the level (e.g. the top of a balcony slab)")
+
+
 Element = Annotated[
-    Union[Wall, Slab, Roof, Door, Window, Column, Space],
+    Union[Wall, Slab, Roof, Door, Window, Column, Beam, Space, Stair, Fixture, Railing],
     Field(discriminator="type"),
 ]
+
+ELEMENT_ORDER = {"wall": 0, "slab": 1, "space": 2, "column": 3, "beam": 4, "roof": 5, "door": 6, "window": 7,
+                 "stair": 8, "fixture": 9, "railing": 10}
 
 
 def polygon_area(outline: list[Point]) -> float:
     n = len(outline)
     return abs(sum(outline[i][0] * outline[(i + 1) % n][1] - outline[(i + 1) % n][0] * outline[i][1] for i in range(n))) / 2
+
+
+def is_axis_rectangle(outline: list[Point]) -> bool:
+    pts = list(outline)
+    if len(pts) == 5 and pts[0] == pts[-1]:
+        pts = pts[:-1]
+    if len(pts) != 4:
+        return False
+    xs, ys = {round(p[0], 6) for p in pts}, {round(p[1], 6) for p in pts}
+    return len(xs) == 2 and len(ys) == 2
 
 
 class BuildingSpec(BaseModel):
@@ -143,10 +221,16 @@ class BuildingSpec(BaseModel):
             where = f"{el.type} '{el.id}'"
             if hasattr(el, "level") and el.level not in levels:
                 errors.append(f"{where}: unknown level '{el.level}'")
-            if isinstance(el, Wall) and el.length < 0.05:
-                errors.append(f"{where}: wall is too short ({el.length:.3f} m)")
+            if isinstance(el, (Wall, Beam)) and math.dist(el.start, el.end) < 0.05:
+                errors.append(f"{where}: too short ({math.dist(el.start, el.end):.3f} m)")
             if isinstance(el, (Slab, Roof, Space)) and polygon_area(el.outline) < 0.01:
                 errors.append(f"{where}: outline has no area")
+            if isinstance(el, Roof) and el.shape != "flat" and not is_axis_rectangle(el.outline):
+                errors.append(f"{where}: a {el.shape} roof needs a rectangular outline")
+            if isinstance(el, Stair) and el.to_level is not None and el.to_level not in levels:
+                errors.append(f"{where}: unknown to_level '{el.to_level}'")
+            if isinstance(el, Railing) and sum(math.dist(a, b) for a, b in zip(el.path, el.path[1:])) < 0.05:
+                errors.append(f"{where}: path has no length")
             if isinstance(el, (Door, Window)):
                 wall = walls.get(el.wall)
                 if wall is None:

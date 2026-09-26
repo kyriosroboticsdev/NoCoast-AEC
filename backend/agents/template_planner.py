@@ -1,7 +1,7 @@
-"""Rule-based planner: reads counts and keywords from the prompt into a Program,
-then hands it to the layout solver. No AI — it proves the prompt → program →
-spec → IFC → viewer pipeline, backs the mock LLM, and is the fallback when an
-LLM is unavailable.
+"""Rule-based planner: reads counts and keywords from the prompt and lays the rooms out
+itself, producing the same build steps a language model would. No AI — it proves the
+steps → design → spec → IFC → viewer pipeline, backs the mock LLM, and is the
+fallback when an LLM is unavailable.
 """
 
 from __future__ import annotations
@@ -9,8 +9,11 @@ from __future__ import annotations
 import re
 
 from agents.base import PlanResult
-from schemas.program import MAX_STOREYS, Program, Room
-from solver.layout import solve
+from core.derive import DesignError, analyze
+from schemas.design import Design, LevelDef, RoomDef, slug
+from schemas.requirements import Requirement
+from schemas.steps import Step, StepError, apply_step
+from solver.layout import place_rooms
 
 NUMBERS = {"one": 1, "a": 1, "an": 1, "single": 1, "two": 2, "double": 2, "three": 3, "four": 4,
            "five": 5, "six": 6, "seven": 7, "eight": 8}
@@ -26,6 +29,12 @@ ROOM_WORDS = [  # (regex, display name, kind)
 ]
 NUM = r"(\d+|" + "|".join(NUMBERS) + r")"
 FT = 0.3048
+FURNITURE = {  # kind -> [(fixture kind, side)]
+    "bedroom": [("double_bed", "N"), ("wardrobe", "E")], "living": [("sofa", "W"), ("coffee_table", "center")],
+    "kitchen": [("kitchen_counter", "N"), ("fridge", "E"), ("oven", "N"), ("sink", "N")], "dining": [("dining_table", "center")],
+    "bathroom": [("toilet", "N"), ("washbasin", "E"), ("shower", "W")], "office": [("desk", "N"), ("chair", "center")],
+    "garage": [("car", "center")],
+}
 
 
 def _num(word: str) -> int:
@@ -37,41 +46,34 @@ def _count(text: str, noun: str) -> int | None:
     return _num(m.group(1)) if m else None
 
 
-def parse_program(prompt: str) -> Program:
-    """Regex interpretation of a prompt. Deliberately simple; an LLM does this better."""
+def parse_requirements(prompt: str) -> list[Requirement]:
+    """The checklist the mock 'extracts': storeys, rooms per kind, features, roof."""
     text = prompt.lower()
-    notes: list[str] = []
-
-    storeys = _count(text, r"(stor(e)?y|stories|storeys|floors?|levels?)") or 1
-    storeys = max(1, min(storeys, MAX_STOREYS))
-    notes.append(f"{storeys} storey{'s' if storeys > 1 else ''}")
-
-    rooms = _assign_rooms(text, storeys, notes)
-    garage = "garage" in text
-    porch = bool(re.search(r"porch|columns?|pillars?|veranda", text))
-    bright = bool(re.search(r"natural light|lots of windows|large windows|bright|glass", text))
-
-    footprint = None
-    size = re.search(r"(\d+(?:\.\d+)?)\s*(?:x|by|×)\s*(\d+(?:\.\d+)?)\s*(m|meters?|metres?|ft|feet|foot|')?", text)
-    if size:
-        scale = FT if (size.group(3) or "").startswith(("f", "'")) else 1.0
-        footprint = (float(size.group(1)) * scale, float(size.group(2)) * scale)
-        notes.append(f"footprint {footprint[0]:.1f} × {footprint[1]:.1f} m from prompt")
-
-    if re.search(r"gable|pitched|hip(ped)?\s*roof|sloped", text):
-        notes.append("only flat roofs are supported so far — used a flat roof")
-    if garage:
-        notes.append("attached single garage on the east side")
-    if porch:
-        notes.append("front porch with columns")
-    if bright:
-        notes.append("larger windows for natural light")
-
-    return Program(name="Generated House", description=f"{storeys}-storey rectangular house", storeys=storeys,
-                   rooms=rooms, footprint=footprint, garage=garage, porch=porch, bright=bright, notes=notes)
+    reqs: list[Requirement] = []
+    storeys = _count(text, r"(stor(e)?y|stories|storeys|floors?|levels?)")
+    if storeys:
+        reqs.append(Requirement(text=f"{storeys} storeys", kind="storeys", value=storeys))
+    for pattern, name, kind in ROOM_WORDS:
+        for hit in re.finditer(r"(?:\b" + NUM + r"[\s-]+)?\b(?:" + pattern + r")\b", text):
+            n = _num(hit.group(1)) if hit.group(1) else 1
+            reqs.append(Requirement(text=f"{n} {name.lower()}{'s' if n > 1 else ''}", kind="room", room=kind, value=n))
+            break
+    if "garage" in text:
+        reqs.append(Requirement(text="a garage", kind="feature", item="garage"))
+    if re.search(r"porch|veranda", text):
+        reqs.append(Requirement(text="a porch", kind="feature", item="porch"))
+    if re.search(r"balcon", text):
+        reqs.append(Requirement(text="a balcony", kind="feature", item="balcony"))
+    m = re.search(r"(gable|pitched|hip(ped)?|flat)\s*roof", text)
+    if m:
+        kind = {"pitched": "gable", "hipped": "hip"}.get(m.group(1), m.group(1))
+        reqs.append(Requirement(text=f"{kind} roof", kind="roof", item=kind))
+    if re.search(r"\bpool\b|basement|elevator|lift\b", text):
+        reqs.append(Requirement(text="pool/basement/elevator", kind="other", supported=False))
+    return reqs
 
 
-def _assign_rooms(text: str, storeys: int, notes: list[str]) -> list[Room]:
+def _assign_rooms(text: str, storeys: int) -> list[list[tuple[str, str]]]:
     floors: list[list[tuple[str, str]]] = [[] for _ in range(storeys)]
     unplaced: list[tuple[str, str]] = []
     for sentence in re.split(r"[.;\n]", text):
@@ -88,35 +90,102 @@ def _assign_rooms(text: str, storeys: int, notes: list[str]) -> list[Room]:
                 seen = {r for f in floors for r, _ in f} | {r for r, _ in unplaced}
                 names = [r for r in names if kind == "bedroom" or r not in seen]
                 (floors[target] if target is not None else unplaced).extend((r, kind) for r in names)
-
     for room, kind in unplaced:  # public rooms downstairs, private rooms upstairs
         public = kind in ("living", "kitchen", "dining", "office")
         if public or storeys == 1:
             floors[0].append((room, kind))
         else:
             floors[min(range(1, storeys), key=lambda i: len(floors[i]))].append((room, kind))
-
     if not floors[0]:
         floors[0] = [("Living Room", "living"), ("Kitchen", "kitchen")]
-        notes.append("no ground-floor rooms named — added living room and kitchen")
     for i in range(1, storeys):
         if not floors[i]:
             floors[i] = [("Bedroom 1", "bedroom"), ("Bedroom 2", "bedroom")] if i == 1 else [("Room", "other")]
-    # Number bedrooms uniquely across the whole house.
     k = 0
     for rooms in floors:
         for j, (r, kind) in enumerate(rooms):
             if kind == "bedroom":
                 k += 1
                 rooms[j] = (f"Bedroom {k}", kind)
+    return floors
+
+
+def template_steps(prompt: str) -> list[dict]:
+    """Build steps for a new design, in construction order."""
+    text = prompt.lower()
+    storeys = max(1, min(_count(text, r"(stor(e)?y|stories|storeys|floors?|levels?)") or 1, 6))
+    floors = _assign_rooms(text, storeys)
+    garage = "garage" in text
+    steps: list[dict] = [{"step": "building", "name": "Generated House", "description": f"{storeys}-storey house"}]
+    for i in range(storeys):
+        steps.append({"step": "level", "id": f"L{i + 1}"})
+    # Every storey gets a hall so there is somewhere for the stair and the doors to meet.
+    design = Design(levels=[])
     for i, rooms in enumerate(floors):
-        notes.append(f"level {i + 1}: {', '.join(r for r, _ in rooms)}")
-    return [Room(name=r, level=f"L{i + 1}", kind=kind) for i, rooms in enumerate(floors) for r, kind in rooms]
+        level = f"L{i + 1}"
+        design.levels.append(LevelDef(id=level))
+        defs = [RoomDef(id="hall" if i == 0 else f"landing-{i + 1}", name="Hall" if i == 0 else f"Landing {i + 1}", level=level, kind="hall", area=12)]
+        defs += [RoomDef(id=slug(r), name=r, level=level, kind=kind, area=18 if kind != "bathroom" else 8) for r, kind in rooms]
+        if i == 0 and garage:
+            defs.append(RoomDef(id="garage", name="Garage", level=level, kind="garage"))
+        rects = place_rooms([], defs)
+        for r in defs:
+            r.rect = rects[r.id]
+            design.rooms.append(r)
+            steps.append({"step": "room", "name": r.name, "level": level, "kind": r.kind, "rect": list(r.rect)})
+    m = re.search(r"(gable|pitched|hip(ped)?)\s*roof", text)
+    if m:
+        steps.append({"step": "roof", "kind": {"pitched": "gable", "hipped": "hip"}.get(m.group(1), m.group(1))})
+    # Doors: each room to the hall of its storey if adjacent, else to its first neighbour.
+    derived = analyze(design)
+    for i in range(storeys):
+        level = f"L{i + 1}"
+        hall = "hall" if i == 0 else f"landing-{i + 1}"
+        for r in design.rooms_on(level):
+            if r.id == hall:
+                continue
+            info = derived.rooms[r.id]
+            to = hall if hall in info.neighbours else (info.neighbours[0] if info.neighbours else None)
+            if to:
+                steps.append({"step": "door", "room": r.id, "to": to})
+        if i == 0:
+            side = "S" if "S" in derived.rooms[hall].sides else derived.rooms[hall].sides[0]
+            steps.append({"step": "door", "room": hall, "to": "outside", "side": side})
+    big = bool(re.search(r"natural light|lots of windows|large windows|bright|glass", text))
+    for r in design.rooms:
+        sides = derived.rooms[r.id].sides
+        if r.id == "hall" and len(sides) > 1:
+            sides = sides[1:]  # the entrance door is on the first exterior side
+        if sides and r.kind != "garage":
+            steps.append({"step": "window", "room": r.id, "side": sides[0], "kind": "large" if big else "standard"})
+    if storeys > 1:
+        steps.append({"step": "stair", "room": "hall", "side": "W"})
+    if re.search(r"porch|columns?|pillars?|veranda", text):
+        steps.append({"step": "porch", "side": "S"})
+    for r in design.rooms:
+        for kind, side in FURNITURE.get(r.kind, []):
+            steps.append({"step": "furniture", "room": r.id, "kind": kind, "side": side})
+    return steps
+
+
+def run_steps(steps: list[dict], design: Design | None = None) -> tuple[Design, list[str]]:
+    """Apply steps to a design, skipping the ones that fail (their messages are returned)."""
+    design = design or Design()
+    problems: list[str] = []
+    for raw in steps:
+        try:
+            candidate, _ = apply_step(design, Step.model_validate(raw))
+            analyze(candidate)
+            design = candidate
+        except (StepError, DesignError, ValueError) as exc:
+            problems.append(f"{raw}: {exc}")
+    return design, problems
 
 
 class TemplatePlanner:
     name = "template"
 
     def plan(self, prompt: str) -> PlanResult:
-        program = parse_program(prompt)
-        return PlanResult(spec=solve(program), planner=self.name, program=program, notes=program.notes)
+        design, problems = run_steps(template_steps(prompt))
+        derived = analyze(design)
+        return PlanResult(spec=derived.spec, planner=self.name, design=design, notes=derived.notes + problems)

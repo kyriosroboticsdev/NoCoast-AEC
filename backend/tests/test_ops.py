@@ -69,9 +69,9 @@ def test_errors_are_readable(ops, fragment):
 
 
 def test_flat_ops_convert_and_explain():
-    from schemas.ops import EditResponse
+    from schemas.ops import OpsResponse
 
-    resp = EditResponse.model_validate({"mode": "ops", "ops": [
+    resp = OpsResponse.model_validate({"ops": [
         {"op": "add_element", "element": {"type": "window", "id": "win2", "wall": "w1", "offset": 4.5}},
         {"op": "modify_element", "id": "w1", "set": {"thickness": 0.3}},
         {"op": "modify_level", "id": "L1", "set": {"height": 3.5}},
@@ -92,7 +92,7 @@ def test_flat_ops_convert_and_explain():
         ({"op": "delete_element"}, "needs `id`"),
     ]:
         with pytest.raises(OpError) as exc:
-            EditResponse.model_validate({"mode": "ops", "ops": [flat]}).typed_ops()
+            OpsResponse.model_validate({"ops": [flat]}).typed_ops()
         assert fragment in str(exc.value), str(exc.value)
 
 

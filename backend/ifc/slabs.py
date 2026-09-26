@@ -19,6 +19,7 @@ def add_slab(ctx: BuildContext, slab: Slab) -> None:
     # Top of the slab sits at the storey elevation.
     finish_element(ctx, element, rep, translate(z=level.elevation - slab.thickness), "Slab", slab.level,
                    pset=("Pset_SlabCommon", {"IsExternal": False}), item=slab)
+    ctx.slabs[slab.id] = element
 
 
 def add_space(ctx: BuildContext, space: Space) -> None:

@@ -1,6 +1,6 @@
 import json
 
-from core.pipeline import EDIT_SCHEMA, PROGRAM_SCHEMA
+from core.pipeline import REQUIREMENTS_SCHEMA, STEPS_SCHEMA
 from llm.schema import BOUND_KEYS, strict_schema
 
 
@@ -15,19 +15,20 @@ def _walk(node, seen):
 
 
 def test_strict_schema_shape():
-    for schema in (PROGRAM_SCHEMA, EDIT_SCHEMA):
+    for schema in (REQUIREMENTS_SCHEMA, STEPS_SCHEMA):
         s = strict_schema(schema)
         keys = set()
         _walk(s, keys)
         assert "oneOf" not in keys and "discriminator" not in keys and "default" not in keys and "prefixItems" not in keys
-        assert "anyOf" in keys  # the ops union survives as anyOf
+        assert "anyOf" in keys  # nullable fields survive as anyOf
         text = json.dumps(s)
         assert '"additionalProperties": false' in text
 
 
 def test_anthropic_variant_drops_bounds():
-    s = strict_schema(PROGRAM_SCHEMA, keep_bounds=False)
+    s = strict_schema(STEPS_SCHEMA, keep_bounds=False)
     keys = set()
     _walk(s, keys)
     assert not (keys & set(BOUND_KEYS)), keys & set(BOUND_KEYS)
-    assert "minimum" in json.dumps(strict_schema(PROGRAM_SCHEMA))  # the default keeps them for other servers
+    from schemas.design import Design
+    assert "minimum" in json.dumps(strict_schema(Design.model_json_schema()))  # the default keeps them for other servers

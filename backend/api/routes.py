@@ -27,7 +27,8 @@ from pydantic import BaseModel
 import config
 from agents import PLANNERS, PlanResult, get_planner
 from core import pipeline
-from core.context import describe_spec
+from core.context import describe_design, describe_spec
+from core.derive import DesignError, analyze
 from ifc.builder import write_ifc
 from ifc.lifter import LiftError, lift
 from llm import PROVIDERS, get_llm
@@ -146,15 +147,16 @@ async def import_ifc(project_id: str, file: UploadFile):
     with tmp.open("wb") as fh:
         shutil.copyfileobj(file.file, fh)
     try:
-        spec, guids = lift(tmp)
+        spec, design, guids = lift(tmp)
     except (LiftError, ValueError) as exc:
         raise HTTPException(422, f"cannot lift IFC: {exc}") from exc
     except Exception as exc:  # noqa: BLE001 - IfcOpenShell raises its own error types on unparseable files
         raise HTTPException(422, f"cannot read IFC: {exc}") from exc
     finally:
         shutil.rmtree(tmp.parent, ignore_errors=True)
-    notes = [f"imported {file.filename}: {len(spec.elements)} elements, {len(spec.levels)} levels"]
-    return sse_response(lambda emit: pipeline.import_spec(store, project_id, spec, guids, notes, emit))
+    notes = [f"imported {file.filename}: {len(spec.elements)} elements, {len(spec.levels)} levels"
+             + ("" if design else " (no design record: only raw element edits are possible)")]
+    return sse_response(lambda emit: pipeline.import_spec(store, project_id, spec, design, guids, notes, emit))
 
 
 def _version(project_id: str, number: int):
@@ -175,13 +177,19 @@ def version_ifc(project_id: str, number: int):
 def version_spec(project_id: str, number: int) -> dict:
     v = _version(project_id, number)
     return {"version": _with_url(v.as_version()), "spec": v.spec.model_dump(mode="json"),
-            "program": v.program.model_dump(mode="json") if v.program else None, "guids": v.guids}
+            "design": v.design.model_dump(mode="json") if v.design else None, "guids": v.guids}
 
 
 @router.get("/projects/{project_id}/versions/{number}/context", response_class=PlainTextResponse)
 def version_context(project_id: str, number: int) -> str:
-    """Exactly what the LLM sees as CURRENT MODEL when editing this version."""
-    return describe_spec(_version(project_id, number).spec)
+    """Exactly what the LLM sees as CURRENT DESIGN when editing this version (element listing if no design)."""
+    v = _version(project_id, number)
+    if v.design is None:
+        return describe_spec(v.spec)
+    try:
+        return describe_design(v.design, analyze(v.design))
+    except DesignError:
+        return describe_design(v.design)
 
 
 # --- stateless -----------------------------------------------------------------
