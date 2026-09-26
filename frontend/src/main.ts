@@ -21,10 +21,19 @@ const showing = $<HTMLDivElement>("showing");
 const stepsList = $<HTMLOListElement>("steps-list");
 const stepsText = $<HTMLPreElement>("steps-text");
 const stepsJson = $<HTMLInputElement>("steps-json");
+const layerSlider = $<HTMLInputElement>("layerSlider");
+const layerLabel = $<HTMLSpanElement>("layerLabel");
+const layerPlay = $<HTMLButtonElement>("layerPlay");
+const liveBuild = $<HTMLButtonElement>("liveBuild");
 
 let projectId = "";
 let head: api.Version | null = null;
 let busy = false;
+let currentLayers: api.SliceLayer[] = [];
+let layerHeight = 0.2;
+let playTimer: number | null = null;
+let buildingLive = false;
+let buildTimer: number | null = null;
 
 const viewer = new Viewer($<HTMLCanvasElement>("viewport"), (p) => {
   picked.textContent = p ? `${p.type} ${p.tag || p.name} ${p.globalId}` : "";
@@ -38,9 +47,115 @@ function setStatus(msg: string, error = false) {
 
 function setBusy(b: boolean) {
   busy = b;
-  send.disabled = b;
-  undo.disabled = b || !head || head.number < 2;
+  if (b) { stopPlay(); stopLiveBuild(); }
+  updateControls();
 }
+
+function updateControls() {
+  const blocked = busy || buildingLive;
+  send.disabled = blocked;
+  undo.disabled = blocked || !head || head.number < 2;
+  layerSlider.disabled = blocked || currentLayers.length <= 1;
+  layerPlay.disabled = blocked || currentLayers.length <= 1;
+  liveBuild.disabled = !head || (busy && !buildingLive); // stoppable anytime it's running, but not startable mid-prompt
+}
+
+// Layer-by-layer construction walkthrough: a shared clipping plane in the viewer reveals the model
+// slice by slice, bottom to top, matching the horizontal cross-sections `slicer/slice.py` computed
+// server-side from the real IFC geometry (same slices `/versions/{n}/gcode` turns into a preview G-code).
+function stopPlay() {
+  if (playTimer !== null) { clearInterval(playTimer); playTimer = null; }
+  layerPlay.textContent = "▶ Play";
+}
+
+function setLayerCutoff(i: number) {
+  if (!currentLayers.length) return;
+  const cutoff = Math.max(0, Math.min(i, currentLayers.length - 1));
+  const isTop = cutoff === currentLayers.length - 1;
+  const z = isTop ? Infinity : currentLayers[cutoff].z + layerHeight / 2; // top step: show the whole model, incl. anything above the last sampled midpoint
+  viewer.setLayerCutoff(z);
+  layerSlider.value = String(cutoff);
+  layerLabel.textContent = `layer ${cutoff + 1} / ${currentLayers.length} — z=${currentLayers[cutoff].z.toFixed(2)}m`;
+}
+
+function setLayers(slices: api.Slices) {
+  stopPlay();
+  currentLayers = slices.layers;
+  layerHeight = slices.layer_height;
+  layerSlider.max = String(Math.max(0, currentLayers.length - 1));
+  updateControls();
+  if (currentLayers.length) setLayerCutoff(currentLayers.length - 1); // fully built by default
+  else layerLabel.textContent = "";
+}
+
+layerSlider.oninput = () => { stopPlay(); setLayerCutoff(Number(layerSlider.value)); };
+
+layerPlay.onclick = () => {
+  if (playTimer !== null) return stopPlay();
+  let i = Number(layerSlider.value);
+  if (i >= currentLayers.length - 1) i = -1; // fully built already: replay from the foundation
+  setLayerCutoff(i);
+  layerPlay.textContent = "⏸ Pause";
+  playTimer = window.setInterval(() => {
+    setLayerCutoff(++i);
+    if (i >= currentLayers.length - 1) stopPlay();
+  }, 700);
+};
+
+// Live build: a background job on the backend actually writes this version's elements to disk one
+// at a time, in construction order (core/construction.py) — foundation, then structure, then roof,
+// spaces, and fixtures last. This polls for whatever's been written so far every 300ms and loads it,
+// so the viewer shows a real, growing IFC file rather than a clip-plane sweep over the finished one.
+function stopLiveBuild() {
+  if (buildTimer !== null) { clearTimeout(buildTimer); buildTimer = null; }
+  buildingLive = false;
+  liveBuild.textContent = "⏺ Live build";
+  updateControls();
+}
+
+async function pollLiveBuild(number: number, jobId: string, lastUrl: string | null) {
+  if (!buildingLive) return;
+  let s: api.ConstructionStatus;
+  try {
+    s = await api.constructionStatus(projectId, number, jobId);
+  } catch (err) {
+    log("live build poll failed:", String(err));
+    return stopLiveBuild();
+  }
+  if (s.ifc_url && s.ifc_url !== lastUrl) {
+    lastUrl = s.ifc_url;
+    try {
+      await viewer.load(await api.fetchIfc(s.ifc_url));
+    } catch (err) {
+      log("live build frame skipped:", String(err));
+    }
+  }
+  layerLabel.textContent = `building ${s.index} / ${s.total}`;
+  if (s.error) { setStatus(`live build error: ${s.error}`, true); return stopLiveBuild(); }
+  if (s.done) {
+    stopLiveBuild();
+    if (currentLayers.length) setLayerCutoff(Number(layerSlider.value)); // model was reloaded; reapply the slider's clip
+    return;
+  }
+  buildTimer = window.setTimeout(() => pollLiveBuild(number, jobId, lastUrl), 300);
+}
+
+liveBuild.onclick = async () => {
+  if (buildingLive) return stopLiveBuild();
+  if (!head || busy) return;
+  const number = head.number;
+  buildingLive = true;
+  liveBuild.textContent = "■ Stop";
+  updateControls();
+  try {
+    const s = await api.startConstruction(projectId, number);
+    pollLiveBuild(number, s.job_id, null);
+  } catch (err) {
+    log("live build failed to start:", String(err));
+    setStatus(`live build failed: ${err instanceof Error ? err.message : err}`, true);
+    stopLiveBuild();
+  }
+};
 
 async function showVersion(v: api.Version | null) {
   head = v;
@@ -59,10 +174,19 @@ async function showVersion(v: api.Version | null) {
     shownRow?.classList.remove("shown");
     shownRow = null;
     setShowing(`v${v.number} · final · ${v.summary.elements} elements`, false);
+    // The layer walkthrough is a nice-to-have on top of the model: a slow or failed /slices call
+    // must never take down the model load it rides along with (and, via boot()'s fallback, the project).
+    try {
+      setLayers(await api.fetchSlices(projectId, v.number));
+    } catch (err) {
+      log("layer slices unavailable:", String(err));
+      setLayers({ layer_height: layerHeight, layers: [] });
+    }
   } else {
     notes.textContent = "";
     viewer.clear();
     setShowing("", false);
+    setLayers({ layer_height: layerHeight, layers: [] });
   }
   setBusy(false);
 }
@@ -218,6 +342,8 @@ $<HTMLInputElement>("import").onchange = (e) => {
 $<HTMLButtonElement>("new").onclick = () => openProject(null);
 
 async function openProject(id: string | null) {
+  stopPlay();
+  stopLiveBuild();
   if (!id) {
     id = (await api.createProject("Untitled")).id;
     localStorage.setItem("nocoast.project", id);

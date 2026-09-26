@@ -16,12 +16,12 @@ from ifc.slabs import add_column, add_slab, add_space
 from ifc.walls import add_wall
 from schemas.bim import BuildingSpec, Column, Door, Roof, Slab, Space, Wall, Window
 
-BUILDERS = [  # order matters: openings need their host walls
+BUILDERS = [  # construction order: foundation/floors, then structure, then roof, spaces, fixtures last
+    (Slab, add_slab),                  # (openings need their host walls already built — Wall precedes them)
     (Wall, add_wall),
-    (Slab, add_slab),
-    (Space, add_space),
     (Column, add_column),
     (Roof, add_roof),
+    (Space, add_space),
     ((Door, Window), add_opening),
 ]
 

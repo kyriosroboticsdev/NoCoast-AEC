@@ -31,6 +31,9 @@ PARTIAL_DIR = config.OUTPUT_DIR / "partial"   # served by the /models static mou
 PARTIAL_TTL = 1800                             # seconds before old preview files are pruned
 STREAM_EVERY = 0.4                             # seconds between "stream" progress events
 STREAM_TEXT_CAP = 30000                        # chars of live reply text sent with each stream event
+RENDER_EVERY = 0.3                             # floor between "partial" IFC renders, so the viewer's
+                                                # 300ms poll/update loop always has something new-ish
+                                                # to pick up without a fast local model spamming it
 
 
 def prune_partials() -> None:
@@ -81,6 +84,7 @@ class Preview:
         self._last_desc: dict | None = None
         self._last_stream = 0.0
         self._started = time.time()
+        self._last_render = 0.0
         self.count = 0
         self.skipped = 0
         prune_partials()
@@ -115,6 +119,10 @@ class Preview:
                 if self._latest is None:
                     return
                 text, self._latest = self._latest, None
+            wait = self._last_render + RENDER_EVERY - time.time()
+            if wait > 0:
+                time.sleep(wait)  # steady cadence, not "as fast as a compile allows"
+            self._last_render = time.time()
             try:
                 self._render(text)
             except Exception as exc:  # noqa: BLE001 - previews are best effort

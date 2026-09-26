@@ -23,10 +23,16 @@ export class Viewer {
   private modelID: number | null = null;
   private raycaster = new THREE.Raycaster();
   private ready: Promise<void>;
+  // Slicer-preview walkthrough: one shared plane clips every material at once, so revealing another
+  // layer is just moving `clipPlane.constant` — no per-mesh bookkeeping. web-ifc converts IFC's Z-up
+  // to three.js Y-up by relabeling the axis (no sign flip, no origin shift with COORDINATE_TO_ORIGIN
+  // false), so a slice height from the backend (`slicer/slice.py`, IFC Z) is used unchanged as a Y cutoff.
+  private clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e6);
 
   constructor(canvas: HTMLCanvasElement, private onPick: (p: Picked | null) => void) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(window.devicePixelRatio);
+    this.renderer.localClippingEnabled = true;
     this.scene.background = new THREE.Color(0x0f1115);
     this.camera = new THREE.PerspectiveCamera(50, 1, 0.1, 2000);
     this.camera.position.set(25, 20, 25);
@@ -98,7 +104,10 @@ export class Viewer {
         bg.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
         bg.setIndex(new THREE.BufferAttribute(new Uint32Array(index), 1));
         const { x, y, z, w } = pg.color;
-        const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(x, y, z), transparent: w < 1, opacity: w, side: THREE.DoubleSide });
+        const mat = new THREE.MeshLambertMaterial({
+          color: new THREE.Color(x, y, z), transparent: w < 1, opacity: w, side: THREE.DoubleSide,
+          clippingPlanes: [this.clipPlane],
+        });
         const m = new THREE.Mesh(bg, mat);
         m.matrix.fromArray(pg.flatTransformation);
         m.matrixAutoUpdate = false;
@@ -113,7 +122,13 @@ export class Viewer {
     this.frame();
   }
 
+  /** Reveal the model built up to (and including) `z` — the layer-by-layer construction walkthrough. Pass `Infinity` for everything. */
+  setLayerCutoff(z: number) {
+    this.clipPlane.constant = z;
+  }
+
   clear() {
+    this.clipPlane.constant = 1e6; // previews and fresh loads start fully visible; showVersion() re-applies the slider position
     for (const child of [...this.root.children]) {
       this.root.remove(child);
       const m = child as THREE.Mesh;
