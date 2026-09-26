@@ -295,7 +295,10 @@ let framed = false;
 
 async function loadIntoViewer(bytes: Uint8Array) {
   await viewer.load(bytes, framed);
-  framed = true;
+  // A first preview can be tiny (a riser and a panel before the rooms have streamed in); framing on that
+  // would leave the camera inside the building that follows, so the frame only counts once there is one.
+  const b = viewer.bounds();
+  framed = !!b && viewer.extent() >= 3;
   refreshSection(); // the section cut survives reloads; the range follows the new model's extent
   applyFollow();
 }

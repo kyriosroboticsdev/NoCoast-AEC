@@ -283,6 +283,11 @@ export class Viewer {
     return this.box.isEmpty() ? null : { min: this.box.min.y, max: this.box.max.y };
   }
 
+  /** Diagonal of the loaded model's bounding box in metres (0 when empty). */
+  extent(): number {
+    return this.box.isEmpty() ? 0 : this.box.getSize(new THREE.Vector3()).length();
+  }
+
   /** Storeys of the loaded model, lowest first. */
   storeys(): Storey[] {
     return this.storeyList;

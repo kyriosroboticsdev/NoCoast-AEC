@@ -725,6 +725,8 @@ def _mep(design: Design, levels: list[Level], infos: dict[str, RoomInfo], els: l
     """Electrical and plumbing rough-in — always added, on top of whatever furniture/fixtures the
     design already specified: every enclosed room gets a ceiling light and two outlets, wired back to
     one riser; a kitchen or bathroom also gets a plumbing riser. Not a routed network, see ifc/mep.py."""
+    if not design.rooms:
+        return  # nothing to wire yet
     ground = next((l for l in levels if design.level(l.id).index >= 0), levels[0])
     ground_rooms = design.rooms_on(ground.id)
     if ground_rooms:

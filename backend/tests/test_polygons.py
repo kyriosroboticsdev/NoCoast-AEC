@@ -172,3 +172,13 @@ def test_template_and_mock_cover_the_new_vocabulary():
     assert {s["kind"] for s in steps} == {"column", "beam", "roof"}
     steps = MockLLM()._edit("add a courtyard", r.design)
     assert steps[0]["kind"] == "courtyard"
+
+
+def test_orientation_check_counts_open_sides():
+    from core.checks import check
+    from schemas.requirements import Requirement
+    d = Design(rooms=[RoomDef(id="house", name="House", kind="living", rect=(0, 0, 6, 6)),
+                      RoomDef(id="carport", name="Carport", kind="carport", rect=(6, 0, 4, 6))])
+    res = check(d, analyze(d), [Requirement(text="carport on the east side", kind="orientation", room="carport", side="E"),
+                                Requirement(text="carport on the west side", kind="orientation", room="carport", side="W")])
+    assert [r.status for r in res] == ["met", "unmet"]

@@ -134,9 +134,14 @@ def _check_one(design: Design, d: Derived, req: Requirement) -> CheckResult:
         if not rooms:
             return CheckResult(req, "unmet", f"no room matches '{req.room}'")
         for r in rooms:
-            if req.side in d.rooms[r.id].sides:
+            info = d.rooms[r.id]
+            if req.side in info.sides:
                 return CheckResult(req, "met", f"{r.name} has an exterior {req.side} wall")
-        return CheckResult(req, "unmet", f"{rooms[0].name}'s exterior sides are {', '.join(d.rooms[rooms[0].id].sides) or 'none'}")
+            if req.side in info.open_sides:
+                return CheckResult(req, "met", f"{r.name} is open to the {req.side}")
+        info = d.rooms[rooms[0].id]
+        have = info.sides + [s for s in info.open_sides if s not in info.sides]
+        return CheckResult(req, "unmet", f"{rooms[0].name}'s exterior sides are {', '.join(have) or 'none'}")
 
     if k == "window":
         rooms = _match_rooms(design, req.room) if req.room else design.rooms
