@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import re
 
+from agents import shapes
 from agents.base import PlanResult
 from core.derive import DesignError, analyze
-from schemas.design import Design, LevelDef, RoomDef, slug
+from schemas.design import Design, Edge, LevelDef, RoomDef, slug
 from schemas.requirements import Requirement
 from schemas.steps import Step, StepError, apply_step
 from solver.layout import place_rooms
@@ -70,6 +71,13 @@ def parse_requirements(prompt: str) -> list[Requirement]:
         reqs.append(Requirement(text=f"{kind} roof", kind="roof", item=kind))
     if re.search(r"basement|cellar", text):
         reqs.append(Requirement(text="a basement", kind="feature", item="basement"))
+    for words, item, label in ((r"courtyard|patio|atrium", "courtyard", "a courtyard"), (r"carport", "carport", "a carport"),
+                               (r"pergola|gazebo", "pergola", "a pergola"), (r"roof terrace|terrace", "terrace", "a terrace"),
+                               (r"curved|rounded|bow window|round(ed)? wall", "curved wall", "a curved wall"),
+                               (r"l-shaped|l shaped", "l-shaped", "an L-shaped room"), (r"garden wall|fence", "garden wall", "a garden wall"),
+                               (r"\bdeck\b", "deck", "a deck")):
+        if re.search(words, text):
+            reqs.append(Requirement(text=label, kind="feature", item=item))
     if re.search(r"\bpool\b|elevator|lift\b", text):
         reqs.append(Requirement(text="pool/elevator", kind="other", supported=False))
     return reqs
@@ -140,7 +148,35 @@ def template_steps(prompt: str) -> list[dict]:
         for r in defs:
             r.rect = rects[r.id]
             design.rooms.append(r)
-        steps.append({"step": "layout", "level": level, "rooms": [{"name": r.name, "kind": r.kind, "rect": list(r.rect)} for r in defs]})
+        # Open-air and unwalled rooms sit against the block, not inside it.
+        extras: list[RoomDef] = []
+        if level == "L1" and re.search(r"carport", text):
+            extras.append(RoomDef(id="carport", name="Carport", level=level, kind="carport"))
+        if level == "L1" and re.search(r"courtyard|patio|atrium", text):
+            extras.append(RoomDef(id="courtyard", name="Courtyard", level=level, kind="courtyard"))
+        if level == level_ids[-1] and re.search(r"roof terrace|terrace", text):
+            extras.append(RoomDef(id="terrace", name="Terrace", level=level, kind="terrace"))
+        for i, r in enumerate(extras):
+            w, dpt = (6.0, 6.0) if r.kind == "carport" else (4.0, 4.0)
+            r.rect = tuple(shapes.beside(design, level, w, dpt, "E" if i == 0 else "N"))
+            design.rooms.append(r)
+            defs.append(r)
+        # Shapes asked for by name: "L-shaped living room", "curved wall in the lounge" / "a curved living room".
+        for r in defs:
+            words = r.name.lower().split()[0]
+            if re.search(r"l-shaped\s+(\w+\s+)?" + re.escape(words), text) or (r.kind == "living" and re.search(r"l-shaped", text) and not re.search(r"l-shaped\s+(\w+\s+)?(kitchen|bed|bath|hall|dining|office)", text)):
+                poly = shapes.l_shape(design, r)
+                if poly:
+                    r.poly = [Edge(to=p) for p in poly]
+                    r.rect = None
+            elif re.search(r"(curved|rounded|round|bow window)\s+(\w+\s+)?" + re.escape(words), text) or (r.kind == "living" and re.search(r"curved|rounded|bow window", text) and not re.search(r"(curved|rounded|round)\s+(\w+\s+)?(kitchen|bed|bath|hall|dining|office)", text)):
+                poly = shapes.curved_side(design, r)
+                if poly:
+                    r.poly = [Edge.model_validate(e) for e in poly]
+                    r.rect = None
+        steps.append({"step": "layout", "level": level, "rooms": [
+            {"name": r.name, "kind": r.kind, **({"poly": [e.model_dump(exclude_none=True, exclude_defaults=True) for e in r.poly]} if r.poly else {"rect": list(r.rect)})}
+            for r in defs]})
     m = re.search(r"(gable|pitched|hip(ped)?)\s*roof", text)
     if m:
         steps.append({"step": "roof", "kind": {"pitched": "gable", "hipped": "hip"}.get(m.group(1), m.group(1))})
@@ -149,32 +185,55 @@ def template_steps(prompt: str) -> list[dict]:
     for level in level_ids:
         hall = "hall" if level == "L1" else f"landing-{level.lower()}"
         for r in design.rooms_on(level):
-            if r.id == hall:
+            if r.id == hall or not r.enclosed:
                 continue
             info = derived.rooms[r.id]
             to = hall if hall in info.neighbours else (info.neighbours[0] if info.neighbours else None)
-            if to:
+            if to and (design.room(to).enclosed or design.room(to).roofed):
                 steps.append({"step": "door", "room": r.id, "to": to})
         if level == "L1":
             side = "S" if "S" in derived.rooms[hall].sides else derived.rooms[hall].sides[0]
             steps.append({"step": "door", "room": hall, "to": "outside", "side": side})
     big = bool(re.search(r"natural light|lots of windows|large windows|bright|glass", text))
     for r in design.rooms:
-        sides = derived.rooms[r.id].sides
+        info = derived.rooms[r.id]
+        sides = info.sides
         if r.id == "hall" and len(sides) > 1:
             sides = sides[1:]  # the entrance door is on the first exterior side
-        if sides and r.kind != "garage" and not design.level(r.level).below_ground:
-            steps.append({"step": "window", "room": r.id, "side": sides[0], "kind": "large" if big else "standard"})
+        if sides and r.kind not in ("garage", "carport", "courtyard", "terrace", "pergola") and not design.level(r.level).below_ground:
+            if r.poly:  # polygons name walls by a point: the middle of the longest wall on that side
+                wall = max(info.exterior[sides[0]], key=lambda w: w.length)
+                steps.append({"step": "window", "room": r.id, "near": list(wall.mid), "kind": "large" if big else "standard"})
+            else:
+                steps.append({"step": "window", "room": r.id, "side": sides[0], "kind": "large" if big else "standard"})
     if storeys > 1:
         steps.append({"step": "stair", "room": "hall", "side": "W"})
     if basement:
         steps.append({"step": "stair", "room": "landing-b1", "side": "W"})
-    if re.search(r"porch|columns?|pillars?|veranda", text):
+    if re.search(r"porch|pillars?|veranda", text):
         steps.append({"step": "porch", "side": "S"})
     for r in design.rooms:
         for kind, side in FURNITURE.get(r.kind, []):
-            steps.append({"step": "furniture", "room": r.id, "kind": kind, "side": side})
+            if r.poly and side != "center":  # against the longest wall facing that way, named by a point
+                walls = [w for w in derived.rooms[r.id].walls if _facing(w, derived.rooms[r.id].polygon) == side]
+                if not walls:
+                    continue
+                steps.append({"step": "furniture", "room": r.id, "kind": kind, "near": list(max(walls, key=lambda w: w.length).mid)})
+            else:
+                steps.append({"step": "furniture", "room": r.id, "kind": kind, "side": side})
+    if re.search(r"pergola|gazebo", text):
+        steps += shapes.pergola_steps(design)
+    if re.search(r"garden wall|fence", text):
+        steps += shapes.garden_wall_steps(design)
+    if re.search(r"\bdeck\b", text) and not re.search(r"roof deck", text):
+        steps += shapes.deck_steps(design)
     return steps
+
+
+def _facing(wall, poly) -> str:
+    from core.derive import compass
+    ix, iy = wall.inward(poly)
+    return compass(-ix, -iy)
 
 
 def run_steps(steps: list[dict], design: Design | None = None) -> tuple[Design, list[str]]:

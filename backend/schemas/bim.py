@@ -43,18 +43,50 @@ class _Element(BaseModel):
 
 
 class Wall(_Element):
+    """A wall centred on its axis: straight from `start` to `end`, or faceted along `path` (a curved
+    wall is one wall whose path is the chord polyline; `start`/`end` are then its first/last point)."""
+
     type: Literal["wall"] = "wall"
     level: str
     start: Point
     end: Point
+    path: Optional[list[Point]] = Field(None, min_length=2, description="Polyline axis for faceted (curved) walls")
     height: Optional[float] = Field(None, gt=0, description="Defaults to the level height")
     thickness: float = Field(0.2, gt=0)
     external: bool = False
     material: Optional[WallMaterial] = None
+    radius: Optional[float] = Field(None, gt=0, description="True radius of a curved wall, kept for information")
+
+    @model_validator(mode="after")
+    def _ends(self) -> "Wall":
+        if self.path:
+            if len(self.path) == 2:
+                self.start, self.end, self.path = self.path[0], self.path[1], None
+            else:
+                self.start, self.end = self.path[0], self.path[-1]
+        return self
+
+    @property
+    def axis(self) -> list[Point]:
+        return list(self.path) if self.path else [self.start, self.end]
 
     @property
     def length(self) -> float:
-        return math.dist(self.start, self.end)
+        pts = self.axis
+        return sum(math.dist(a, b) for a, b in zip(pts, pts[1:]))
+
+    def frame_at(self, offset: float) -> tuple[Point, float]:
+        """Point on the axis `offset` metres from the start, and the axis direction there (radians)."""
+        pts = self.axis
+        left = max(0.0, offset)
+        for a, b in zip(pts, pts[1:]):
+            seg = math.dist(a, b)
+            angle = math.atan2(b[1] - a[1], b[0] - a[0])
+            if left <= seg or (a, b) == (pts[-2], pts[-1]):
+                k = 0.0 if seg == 0 else min(left, seg) / seg
+                return (a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k), angle
+            left -= seg
+        return pts[0], 0.0
 
 
 class Slab(_Element):

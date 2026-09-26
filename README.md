@@ -173,8 +173,16 @@ LM Studio, a hosted API or a fine-tuned model. **Ollama:** `LLM_PROVIDER=ollama 
 ### 4.1 Design — what the LLM builds
 
 `backend/schemas/design.py`. Semantic, but with coarse geometry: rooms are axis-aligned rectangles
-`[x, y, width, depth]` (metres, `(x, y)` = south-west corner, x east, y north) on a storey; everything
-else refers to rooms and sides.
+`[x, y, width, depth]` (metres, `(x, y)` = south-west corner, x east, y north) or, when the plan needs
+it, polygons `poly: [[x,y], …]` listed counter-clockwise whose edges may be arcs
+(`{"to":[x,y],"through":[x,y]}`, a three-point arc faceted at 0.25 m) or open (`{"to":[x,y],"open":true}`:
+no wall, columns instead). The polygon is the inner face of the walls, so the area the model states is
+the area the checks measure. Everything else refers to rooms and walls; a wall is named by `side`
+(N/S/E/W, the compass direction its outside faces; enough for rectangles) or by `near: [x, y]`, a point
+on or next to it (any shape; required when a room has two walls facing the same way). `roofed: false`
+(courtyard, terrace) and `enclosed: false` (carport, pergola) are set by the room kind and can be
+overridden. `elements` holds free-standing walls (polylines, arcs allowed), slabs, roofs, columns and
+beams outside the room system; a door or window can sit in a free wall via `wall: <id>`.
 
 ```jsonc
 {
@@ -216,13 +224,14 @@ ignored, `"north"`→`"N"`, `2`→`"L2"`, `{"x","y","w","d"}`→rect).
 |---|---|---|
 | `building` | name, description | rename |
 | `level` | id (`L1`… in order, or `B1`… for basements), name, height, below_ground | add or update a storey or basement |
-| `room` | name, level, kind, rect, area | add, or update by id/name (rect null → auto-placed by `solver/layout.py`) |
-| `layout` | level, rooms:[{name, kind, rect}] | replace **all** rooms of a storey atomically (rooms keep id + items when the name is unchanged) |
-| `door` | room, to (room id or `outside`), side, at, kind, width, height | add / replace by id |
-| `window` | room, side (must be exterior), at, kind, width, height, sill | add / replace by id |
-| `stair` | room, side, to_level, width | straight flight along that wall, well cut in the slab above |
-| `furniture` | room, kind, side (`N/S/E/W/center`), at, rotation, sizes | fixture against a wall or centred |
-| `balcony` | room, side, depth | slab + railing outside that wall |
+| `room` | name, level, kind, rect *or* poly, roofed, enclosed, area | add, or update by id/name (rect null → auto-placed by `solver/layout.py`); kinds courtyard/terrace default to no roof, carport/pergola to no walls |
+| `layout` | level, rooms:[{name, kind, rect *or* poly, roofed, enclosed}] | replace **all** rooms of a storey atomically (rooms keep id + items when the name is unchanged) |
+| `door` | room, to (room id or `outside`), side *or* near, at, kind, width, height; or wall (a free wall id) | add / replace by id |
+| `window` | room, side *or* near (an exterior wall), at, kind, width, height, sill; or wall | add / replace by id |
+| `stair` | room, side *or* near, to_level, width | straight flight along that wall, well cut in the slab above |
+| `furniture` | room, kind, side (`N/S/E/W/center`) *or* near, at, rotation, sizes | fixture against a wall or centred |
+| `balcony` | room, side *or* near, depth | slab + railing outside that wall |
+| `element` | kind (`wall/slab/roof/column/beam`), name, level, path / poly / position / start+end, height, thickness, width, depth | free-standing structure (garden wall, deck, pergola, pier); unchecked except by name |
 | `porch` | side, depth | deck + columns + roof along that side of the ground floor |
 | `roof` | kind, pitch, overhang | flat / gable / hip (pitched needs a rectangular footprint; else flat + note) |
 | `material` | material | exterior wall material (colour + IfcMaterial) |
@@ -241,25 +250,38 @@ fixtures and balconies that no longer fit and say so in the step message.
 
 `backend/core/derive.py`, deterministic. Per storey:
 
-1. rooms without a rectangle are auto-placed; overlapping rooms are an error (they may share edges);
-2. every rectangle edge is split at the corners of all rooms on that storey; a piece touched by one room
-   becomes an **exterior wall** `L1-wall-<room>-<side>` (0.3 m; horizontal ones extended to the outer
-   face at real corners of the storey outline), a piece shared by two rooms a **partition**
-   `L1-wall-<a>+<b>` (0.12 m); the storey outline (shapely union of the rectangles) becomes the slab;
-3. roofs cover what a storey has that the storey above has not (a garage beside a two-storey block gets
-   its own lower roof); gable/hip only for rectangular pieces;
-4. doors go on the partition between their two rooms (longest piece) or on an exterior wall of the room
-   (`side`, else the first of S, E, W, N); windows on the named exterior side; `at ∈ [0,1]` chooses the
-   position along the wall and openings are nudged to the nearest free slot; garages get a garage door
-   automatically;
-5. stairs run along the named wall (rise from the level height, 0.18 m risers, 0.25 m goings; the room
-   must be ~5 m long along that side), with a well cut into the slab above; fixtures sit against the
-   named wall with their back to it (catalogue sizes in `ifc/fixtures.py`); balconies are a slab plus a
-   railing; the porch is a deck, columns and a roof along one side of the ground floor;
+1. rooms without an outline are auto-placed; overlapping rooms are an error (they may share edges);
+2. the boundaries of all rooms on the storey (arcs faceted) are **noded** against each other with shapely;
+   walking each room's boundary, consecutive pieces with the same classification merge into one wall: a
+   piece touched by one room is an **exterior wall** `L1-wall-<room>-<compass of its outward normal>`
+   (0.3 m, `-2` suffix when two walls face the same way, extended by half its thickness at outline
+   corners), a piece shared by two rooms a **partition** `L1-wall-<a>+<b>` (0.12 m). Rectangular rooms
+   therefore keep the ids they always had. The chords of one arc become one faceted wall (`Wall.path`,
+   true radius in the `NoCoast_Curve` pset). An **open** edge gets columns (both ends and every 4 m) and a
+   beam instead of a wall; a wall between a room and an open or unroofed neighbour belongs to the
+   enclosed room as its exterior wall (so it can take windows); an unroofed room's own free edges get a
+   railing. The storey outline (union of the rooms) becomes the slab (ground-floor courtyards are left
+   unpaved), spaces are the room polygons inset 0.06 m;
+3. roofs cover what a storey's **roofed** rooms have that the storey above has not (a garage beside a
+   two-storey block gets its own lower roof; a courtyard or terrace is a hole in it); gable/hip only for
+   rectangular pieces; basements get none;
+4. doors go on the partition between their two rooms or on an exterior wall of the room; windows and
+   balconies need an exterior wall. The wall is picked by `near` (closest wall of the room within 1.5 m,
+   position = the projection of the point), else by `side` (pieces of one straight edge count as one
+   wall; two separate walls facing the same way are rejected with both `near` points to choose from),
+   else the longest. `at ∈ [0,1]` chooses the position along the wall and openings are nudged to the
+   nearest free slot; garages get a garage door automatically; free walls host openings via `wall`;
+5. stairs run along the chosen straight wall (rise from the level height, 0.18 m risers, 0.25 m goings;
+   the wall must be ~5 m long and the flight must fit inside the room polygon), with a well cut into the
+   slab above; fixtures sit against the chosen wall with their back to it, rotated to the wall's angle
+   (catalogue sizes in `ifc/fixtures.py`, footprint checked against the polygon); balconies are a slab
+   plus a railing outside a straight exterior wall; the porch is a deck, columns and a roof along one
+   side of the ground floor; free-standing elements are added as written;
 6. stored raw ops (`overrides`) are replayed at the end; ones that no longer apply are dropped with a note.
 
-`analyze()` also returns per-room information — exterior sides, neighbours — used by the edit context and
-the checker. Everything raises `DesignError` with a model-readable message.
+`analyze()` also returns per-room information — exterior sides (compass of each exterior wall's outward
+normal), open sides, neighbours, the polygon — and the compass side every opening ended up on, used by
+the edit context and the checker. Everything raises `DesignError` with a model-readable message.
 
 ### 4.4 Requirements and checks — accuracy on detailed prompts
 
@@ -323,7 +345,8 @@ framed once per project and then kept, so previews and versions grow in place.
 ### 4.6 BuildingSpec — the geometric IR
 
 `backend/schemas/bim.py`. Units are metres; plan coordinates `(x, y)`; `z` comes from levels. Element
-types: `wall` (start/end/thickness/external/material), `slab`, `roof` (outline + shape/pitch/ridge),
+types: `wall` (start/end/thickness/external/material, or `path` for a faceted curved wall; `frame_at(offset)`
+gives the local frame an opening is cut in), `slab`, `roof` (outline + shape/pitch/ridge),
 `door` (host wall + offset + kind), `window` (+ sill), `column`, `beam`, `space`, `stair` (position,
 direction, width, risers/goings, `to_level`), `fixture` (kind, centre, rotation, w×d×h), `railing`
 (path, height). Every element has a stable string `id`; walls are centred on `start→end`; openings are
@@ -478,9 +501,11 @@ shows each reason (usually an edit request the model could not map onto existing
 
 ## 5. Tests
 
-`cd backend && python -m pytest` — 92 tests on the mock LLM, no network: derivation (walls from shared
+`cd backend && python -m pytest` — 95 tests on the mock LLM, no network: derivation (walls from shared
 and free edges, opening placement, stairs and wells, roofs over partial footprints, id stability when a
-room moves) · steps (application, rejection messages, cascades, the streaming runner rejecting an
+room moves, basements) · polygons (L-shaped rooms and their wall ids, ambiguous sides, curved walls as one
+faceted wall with a window, open edges and carports, courtyards, `near` errors, free elements with a gate
+in a garden wall, the template and mock vocabulary) · steps (application, rejection messages, cascades, the streaming runner rejecting an
 overlapping room mid-stream) · checks against a template design and the eval fixtures · raw ops
 semantics · partial-JSON parsing of every prefix · compile→lift round trip incl. the design · GlobalId
 survival across edits, ops, revert · the SSE project API end to end (design with streamed steps and
@@ -492,7 +517,9 @@ compiling. `python tools/eval.py` measures accuracy on the real model.
 | decision | reason |
 |---|---|
 | design layer + deterministic derivation, not direct IFC or wall-level JSON | the model reasons about rooms and sides; walls, offsets and polygons are where it fails |
-| rooms as rectangles the model places itself | the only way detailed layouts ("kitchen next to dining, living facing south") can be honoured; overlaps are caught per step |
+| rooms as rectangles the model places itself, polygons only when the plan needs them | the only way detailed layouts ("kitchen next to dining, living facing south") can be honoured; overlaps are caught per step; rectangles keep the compass vocabulary the model knows |
+| walls named by a nearby point, compass as sugar | compass sides do not survive L-shapes and curves; a point does, and the model already thinks in the coordinates it placed the rooms with |
+| curved walls as one faceted IfcWall | every IFC toolchain copes with a polygon profile; openings in true curved profiles are where they break; the radius is kept in a pset |
 | steps streamed and applied one at a time | small deltas, ≤ 1 s cadence, each rejection is local and explained; nothing invalid is ever rendered |
 | requirements checklist + deterministic checker + fix round | accuracy becomes measurable and unmet detail is fed back instead of lost; unsupported wishes are surfaced |
 | ids derived from room ids | GlobalIds survive moves and resizes without a diffing step |
@@ -507,8 +534,11 @@ compiling. `python tools/eval.py` measures accuracy on the real model.
 - **Geometric lifter** for arbitrary IFC files (foreign elements as opaque, read-only context).
 - **Pitched roofs over non-rectangular footprints** (decompose into rectangles, or a straight-skeleton hip).
 - **L-shaped / two-flight stairs**; ramps; doors in `layout` steps.
-- **Incremental viewer updates** by GlobalId from the step list.
-- **Selection as context**: pass clicked ids with the prompt.
+- **Bridges and civil structures as first-class kinds** (deck, span, pier, abutment with their own checks);
+  today they are free-standing elements.
+- **Lightwells** for basement windows; split levels.
+- **Incremental viewer updates** by GlobalId from the step list (today the whole model reloads and the
+  change is animated).
 - **Multi-user**: steps are already the right unit; only server-side ordering is missing.
 - **Fine-tuned model**: train on the stored `(context, prompt) → steps` pairs; plug in via
   `LLM_PROVIDER=openai` pointing at its server.

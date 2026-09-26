@@ -214,6 +214,8 @@ class StepStream:
                 log.debug("preview skipped: %s", exc)
 
     def _render(self, design: Design) -> None:
+        if not design.rooms and not design.elements:
+            return  # nothing to look at yet (levels only); the first preview waits for a room
         derived = analyze(design)
         spec = derived.spec
         elements = {e.id: e.model_dump_json() for e in spec.elements}
