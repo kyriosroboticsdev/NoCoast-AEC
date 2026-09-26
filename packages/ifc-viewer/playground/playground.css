@@ -1,0 +1,131 @@
+:root {
+  --pg-bg: #eef0f3;
+  --pg-surface: #ffffff;
+  --pg-border: #d9dce1;
+  --pg-text: #1c1f24;
+  --pg-muted: #6b7280;
+  --pg-user: #1f2937;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --pg-bg: #0f1113;
+    --pg-surface: #17191d;
+    --pg-border: #33373e;
+    --pg-text: #e8eaed;
+    --pg-muted: #9aa1ab;
+    --pg-user: #2b3240;
+    color-scheme: dark;
+  }
+}
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+body {
+  background: var(--pg-bg);
+  color: var(--pg-text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.pg-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.pg-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: var(--pg-surface);
+  border-bottom: 1px solid var(--pg-border);
+}
+.pg-header h1 {
+  margin: 0;
+  font-size: 15px;
+}
+.pg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.pg-actions button {
+  border: 1px solid var(--pg-border);
+  background: var(--pg-surface);
+  color: var(--pg-text);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+.pg-main {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(320px, 520px) 1fr;
+  gap: 16px;
+  padding: 16px;
+}
+@media (max-width: 900px) {
+  .pg-main {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 60vh;
+  }
+}
+.pg-chat {
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 4px;
+}
+.pg-side {
+  min-height: 0;
+}
+.pg-empty {
+  color: var(--pg-muted);
+  padding: 24px 8px;
+}
+.pg-transcript {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.pg-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pg-msg {
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+.pg-user {
+  align-self: flex-end;
+  max-width: 85%;
+  background: var(--pg-user);
+  color: #f3f4f6;
+}
+.pg-agent {
+  background: var(--pg-surface);
+  border: 1px solid var(--pg-border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pg-agent-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+.pg-meta {
+  color: var(--pg-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}

@@ -1,0 +1,38 @@
+[
+  {
+    "id": "turn-1",
+    "file": "turn-1.ifc",
+    "prompt": "Start a 12 x 8 m two-storey building. Add the ground and first floor slabs.",
+    "elements": 2
+  },
+  {
+    "id": "turn-2",
+    "file": "turn-2.ifc",
+    "prompt": "Add a column grid at the corners and midspan.",
+    "elements": 8
+  },
+  {
+    "id": "turn-3",
+    "file": "turn-3.ifc",
+    "prompt": "Enclose the ground floor with exterior walls.",
+    "elements": 12
+  },
+  {
+    "id": "turn-4",
+    "file": "turn-4.ifc",
+    "prompt": "Add first-floor walls and a row of windows on the south face.",
+    "elements": 20
+  },
+  {
+    "id": "turn-5",
+    "file": "turn-5.ifc",
+    "prompt": "Cap it with a roof slab and a perimeter beam.",
+    "elements": 22
+  },
+  {
+    "id": "broken",
+    "file": "broken.ifc",
+    "prompt": "Simulated failure: the agent wrote a truncated IFC file.",
+    "elements": 0
+  }
+]
