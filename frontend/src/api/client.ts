@@ -114,9 +114,13 @@ const jsonPost = (body: unknown): RequestInit => ({
   body: JSON.stringify(body),
 });
 
-/** New design (no base) or an edit of `baseVersion`. */
-export const sendPrompt = (id: string, prompt: string, baseVersion: number | null, onEvent: (e: StageEvent) => void) =>
-  stream(`/projects/${id}/prompt`, jsonPost({ prompt, base_version: baseVersion }), onEvent);
+/** New design (no base) or an edit of `baseVersion`. `planner` picks an LLM provider (backend default if omitted). */
+export const sendPrompt = (
+  id: string, prompt: string, baseVersion: number | null, onEvent: (e: StageEvent) => void, planner?: string,
+) => stream(`/projects/${id}/prompt`, jsonPost({ prompt, base_version: baseVersion, planner }), onEvent);
+
+/** The structured BIM instructions behind a version. */
+export const getSpec = (id: string, n: number) => getJson<{ spec: unknown }>(`/projects/${id}/versions/${n}/spec`);
 
 /** Make an older version the new head (recorded as a new version). */
 export const revert = (id: string, to: number, onEvent: (e: StageEvent) => void) =>
@@ -141,11 +145,21 @@ export async function waitForBackend(timeoutMs = 20000): Promise<void> {
   }
 }
 
-export async function health(): Promise<boolean> {
+export interface HealthInfo {
+  ok: boolean;
+  /** LLM providers the backend can use for prompts, and the one it uses by default. */
+  llm: { provider: string; model: string | null; providers: string[] } | null;
+}
+
+export async function info(): Promise<HealthInfo> {
   try {
     const res = await fetch(`${BACKEND}/health`, { signal: AbortSignal.timeout(1500) });
-    return res.ok;
+    return res.ok ? await res.json() : { ok: false, llm: null };
   } catch {
-    return false;
+    return { ok: false, llm: null };
   }
+}
+
+export async function health(): Promise<boolean> {
+  return (await info()).ok;
 }

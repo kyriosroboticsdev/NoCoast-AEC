@@ -11,6 +11,8 @@ export interface LaunchOptions {
   autoload: string | null;
   prompt: string | null;
   select: string | null;
+  tab: string | null;
+  smoke: boolean;
 }
 
 const DEFAULT_BACKEND = "http://127.0.0.1:8765";
@@ -18,10 +20,10 @@ const IFC_FILTER = [{ name: "IFC", extensions: ["ifc"] }];
 
 export async function launchOptions(): Promise<LaunchOptions> {
   if (isDesktop) {
-    const o = await invoke<{ backend_url: string; autoload: string | null; prompt: string | null; select: string | null }>(
-      "launch_options",
-    );
-    return { backendUrl: o.backend_url, autoload: o.autoload, prompt: o.prompt, select: o.select };
+    const o = await invoke<{
+      backend_url: string; autoload: string | null; prompt: string | null; select: string | null; tab: string | null; smoke: boolean;
+    }>("launch_options");
+    return { backendUrl: o.backend_url, autoload: o.autoload, prompt: o.prompt, select: o.select, tab: o.tab, smoke: o.smoke };
   }
   const q = new URLSearchParams(location.search);
   return {
@@ -29,6 +31,8 @@ export async function launchOptions(): Promise<LaunchOptions> {
     autoload: q.get("autoload"),
     prompt: q.get("prompt"),
     select: q.get("select"),
+    tab: q.get("tab"),
+    smoke: q.has("smoke"),
   };
 }
 
