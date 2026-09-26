@@ -28,6 +28,8 @@ code, pre, kbd { font-family: "Cascadia Code", Consolas, monospace; }
 
 .panel { background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
 .panel.left { border-right: 1px solid var(--line); padding: 14px; gap: 10px; overflow-y: auto; }
+/* Scroll the panel instead of squashing its children once the history grows. */
+.panel.left > * { flex-shrink: 0; }
 .panel.right { border-left: 1px solid var(--line); }
 
 .brand { font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
@@ -109,3 +111,27 @@ textarea:focus { outline: none; border-color: var(--accent-2); }
 .props table { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
 .props th, .props td { text-align: left; padding: 3px 12px; vertical-align: top; font-weight: normal; word-break: break-word; }
 .props th { color: var(--muted); width: 42%; }
+
+/* --- Project bar and version history (turn cards from @nocoast/ifc-viewer) --- */
+.project-bar { display: flex; align-items: center; gap: 6px; }
+.project-bar .grow { flex: 1; }
+.history h3 { margin: 6px 0 8px; font-weight: normal; }
+.history ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.history li { display: flex; flex-direction: column; gap: 6px; }
+.history-head { display: flex; gap: 8px; align-items: baseline; }
+.history-head b { color: var(--accent); flex: none; }
+.history-prompt { color: var(--muted); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.history li.viewing .ncv-card { box-shadow: 0 0 0 2px var(--accent); }
+
+/* Map the viewer package's theme onto this app's dark palette. */
+.ncv-root {
+  --ncv-surface: var(--panel-2);
+  --ncv-stage: var(--bg);
+  --ncv-border: var(--line);
+  --ncv-text: var(--text);
+  --ncv-muted: var(--muted);
+  --ncv-accent: var(--accent);
+  --ncv-danger: var(--bad);
+  --ncv-chip-bg: rgba(15, 17, 21, 0.82);
+  --ncv-font: inherit;
+}

@@ -120,10 +120,19 @@ interface TurnRef {
 }
 ```
 
-### Suggested Tauri 2 wiring (for the app developer to adapt)
+### How the NoCoast app wires it
 
-This is guidance only. This package does not touch the app's Rust code or
-capabilities.
+`frontend/src/turns.ts` is the real integration. Each backend project version
+becomes a turn whose `ifcPath` is the version's `ifc_url`, and `readIfc` fetches
+it over HTTP. `frontend/src/App.tsx` adds a turn per version and renders one
+`IfcTurnCard` per version in the history. The frontend consumes this package
+from source through a Vite alias and TypeScript `paths`, so there is no build
+step. Both of those dedupe three.js and That Open onto the frontend's copies.
+
+### Alternative: reading files through Tauri
+
+If turns ever come from local files instead of the backend, a Tauri adapter
+looks like this:
 
 ```ts
 import { readFile, writeFile } from "@tauri-apps/plugin-fs";

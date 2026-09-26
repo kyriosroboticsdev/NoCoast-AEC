@@ -1,9 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { IfcTurnCard, IfcViewerProvider } from "@nocoast/ifc-viewer";
 import * as api from "./api/client";
 import { InspectorPanel } from "./components/InspectorPanel";
 import { PromptPanel, type Stage } from "./components/PromptPanel";
 import * as platform from "./platform";
+import { runtime, toTurn, turnId } from "./turns";
 import { BimViewer, type PropertyGroup, type TreeNode } from "./viewer/BimViewer";
+
+const PROJECT_KEY = "nocoast.project";
+
+/** Pipeline stage names from the backend, mapped onto the panel's steps. */
+const STAGE_OF: Record<string, Stage> = {
+  program: "planning", edit: "planning", apply: "building", solve: "building", compile: "building",
+};
 
 const HIDDEN_BY_DEFAULT = ["IFCSPACE"]; // room volumes hide the building; toggle under Classes
 
@@ -17,8 +26,13 @@ export default function App() {
   const [stage, setStage] = useState<Stage>("idle");
   const [error, setError] = useState<string | null>(null);
   const [backendUp, setBackendUp] = useState<boolean | null>(null);
-  const [plan, setPlan] = useState<api.PlanResult | null>(null);
-  const [build, setBuild] = useState<api.BuildResult | null>(null);
+  const [detail, setDetail] = useState<string | null>(null);
+
+  // Versioned project: every prompt makes a new version; the newest is the head.
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [versions, setVersions] = useState<api.Version[]>([]);
+  const [viewing, setViewing] = useState<number | null>(null);
+  const head = versions.at(-1) ?? null;
 
   const [modelName, setModelName] = useState<string | null>(null);
   const [modelBytes, setModelBytes] = useState<Uint8Array | null>(null);
@@ -83,25 +97,80 @@ export default function App() {
     platform.report({ status: "error", error: msg });
   };
 
+  const showVersion = useCallback(async (v: api.Version) => {
+    await showModel(await api.fetchBytes(api.backendUrl(v.ifc_url)), `v${v.number}.ifc`);
+    setViewing(v.number);
+  }, [showModel]);
+
+  /** Record a new version: history list, a turn card, and the main viewer. */
+  const adopt = useCallback(async (v: api.Version) => {
+    setVersions((vs) => [...vs.filter((x) => x.number !== v.number), v]);
+    void runtime.addTurn(toTurn(v));
+    setStage("loading");
+    await showVersion(v);
+    setStage("ready");
+  }, [showVersion]);
+
+  const onEvent = useCallback((e: api.StageEvent) => {
+    const s = STAGE_OF[e.stage];
+    if (s) setStage(s);
+    setDetail(e.message);
+  }, []);
+
+  const openProject = useCallback(async (id: string) => {
+    const p = await api.getProject(id);
+    setProjectId(id);
+    setVersions(p.versions);
+    for (const v of p.versions) void runtime.addTurn(toTurn(v));
+    if (p.head) await showVersion(p.head);
+  }, [showVersion]);
+
+  const newProject = useCallback(() => {
+    localStorage.removeItem(PROJECT_KEY);
+    for (const v of versions) runtime.removeTurn(turnId(v));
+    setProjectId(null);
+    setVersions([]);
+    setViewing(null);
+    setStage("idle");
+    setError(null);
+    void viewerRef.current?.clear();
+    setModelName(null);
+    setModelBytes(null);
+    setTree(null);
+    setCategories([]);
+  }, [versions]);
+
+  /** First prompt designs a building; later prompts edit the head version. */
   const generate = useCallback(async (text: string) => {
     setError(null);
-    setPlan(null);
-    setBuild(null);
+    setDetail(null);
     try {
       setStage("planning");
       await api.waitForBackend();
-      const p = await api.plan(text);
-      setPlan(p);
-      setStage("building");
-      const b = await api.build(p.spec);
-      setBuild(b);
-      setStage("loading");
-      await showModel(await api.fetchBytes(b.ifc_url), `${b.id}.ifc`);
-      setStage("ready");
+      let id = projectId;
+      if (!id) {
+        id = (await api.createProject("Untitled")).id;
+        localStorage.setItem(PROJECT_KEY, id);
+        setProjectId(id);
+      }
+      const v = await api.sendPrompt(id, text, head?.number ?? null, onEvent);
+      await adopt(v);
+      setPrompt("");
     } catch (e) {
       fail(e);
     }
-  }, [showModel]);
+  }, [projectId, head, onEvent, adopt]);
+
+  const undo = useCallback(async () => {
+    if (!projectId || !head) return;
+    setError(null);
+    try {
+      setStage("building");
+      await adopt(await api.revert(projectId, head.parent ?? head.number - 1, onEvent));
+    } catch (e) {
+      fail(e);
+    }
+  }, [projectId, head, onEvent, adopt]);
 
   const openFile = async () => {
     try {
@@ -109,8 +178,7 @@ export default function App() {
       if (!file) return;
       setError(null);
       setStage("idle");
-      setPlan(null);
-      setBuild(null);
+      setViewing(null);
       await showModel(file.data, file.name);
     } catch (e) {
       fail(e);
@@ -133,6 +201,17 @@ export default function App() {
       fail(e);
     }
   };
+
+  // Reopen the last project once the viewer and backend are up. Skipped for
+  // smoke-test runs so a scripted prompt always starts a fresh design.
+  const reopened = useRef(false);
+  useEffect(() => {
+    if (reopened.current || !viewerReady || !backendUp || !options || options.autoload || options.prompt) return;
+    reopened.current = true;
+    const stored = localStorage.getItem(PROJECT_KEY);
+    if (!stored) return;
+    openProject(stored).catch(() => localStorage.removeItem(PROJECT_KEY)); // stale id from an older database
+  }, [viewerReady, backendUp, options, openProject]);
 
   // Smoke-test hooks (BIM_AUTOLOAD / BIM_PROMPT / BIM_SMOKE_SELECT) once the viewer is up.
   useEffect(() => {
@@ -160,10 +239,34 @@ export default function App() {
   }, [viewerReady, options]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const v = viewerRef.current;
+  const history = versions.length > 0 && (
+    <section className="history" aria-label="Version history">
+      <h3 className="label">History</h3>
+      <ol>
+        {[...versions].reverse().map((ver, i) => (
+          <li key={ver.number} className={ver.number === viewing ? "viewing" : ""}>
+            <div className="history-head">
+              <b>v{ver.number}</b>
+              <span className="history-prompt">{ver.prompt ?? ver.notes[0] ?? ver.mode}</span>
+            </div>
+            <IfcTurnCard
+              turnId={turnId(ver)}
+              height={170}
+              liveOn={i === 0 ? "visible" : "hover"}
+              onExpand={() => void showVersion(ver).catch(fail)}
+            />
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+
   return (
+    <IfcViewerProvider runtime={runtime}>
     <div className="app">
       <PromptPanel prompt={prompt} setPrompt={setPrompt} onGenerate={() => generate(prompt)} stage={stage}
-        error={error} backendUp={backendUp} plan={plan} build={build} />
+        detail={detail} error={error} backendUp={backendUp} head={head}
+        onUndo={() => void undo()} onNewProject={newProject} history={history} />
 
       <main className="stage">
         <div className="toolbar">
@@ -177,7 +280,7 @@ export default function App() {
           <button onClick={async () => { await v?.showAll(); await refreshCategories(); setTree(tree && { ...tree }); }}
             disabled={!modelName}>Show all</button>
           <span className="grow" />
-          <span className="muted">{modelName ?? "No model"}</span>
+          <span className="muted">{viewing !== null && head && viewing !== head.number ? `viewing v${viewing} (head is v${head.number}) · ` : ""}{modelName ?? "No model"}</span>
         </div>
         <div className="viewport" ref={host}>
           {progress !== null && (
@@ -203,5 +306,6 @@ export default function App() {
         onToggle={(node, visible) => v?.setItemsVisible(node.ids, visible)}
         properties={properties} />
     </div>
+    </IfcViewerProvider>
   );
 }
