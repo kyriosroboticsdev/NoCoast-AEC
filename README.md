@@ -3,8 +3,8 @@
 Text prompt → building model → **IFC**, with the language model kept swappable and the building built
 as a stream of small deltas so the user watches it grow and can iterate on it. Python/FastAPI backend
 (IfcOpenShell + shapely), React frontend rendering with [That Open](https://github.com/ThatOpen)
-(web-ifc + fragments + three.js), wrapped in Tauri for the desktop. Every version is also a 3D card in
-the chat history (`packages/ifc-viewer`).
+(web-ifc + fragments + three.js), wrapped in Tauri for the desktop. Every prompt produces a new project
+version, shown as a 3D turn card in the history (`packages/ifc-viewer`).
 
 ![prototype](docs/screenshot.png)
 
@@ -70,18 +70,16 @@ backend/
   tests/                pytest; runs entirely on the mock LLM; tests/evals/prompts.json = accuracy set
   tools/eval.py         score the configured model on the evaluation set
 frontend/
-  src/App.tsx           the app: project + version state, prompt → SSE stages → new version, undo
-  src/api/client.ts     backend client: /projects API incl. SSE-over-POST parser, plus /plan + /build
-  src/turns.ts          maps backend versions to @nocoast/ifc-viewer turns (history cards + snapshots)
-  src/viewer/BimViewer.ts  That Open main viewer: model tree, properties, hide/isolate, categories
-  src/components/       PromptPanel (prompt, stages, interpretation, history), InspectorPanel, ModelTree
-  src/platform.ts       the only Tauri-aware file: native open/save dialogs, launch options
-  src-tauri/            Tauri 2 shell: starts backend/.venv python (Job Object ties it to the app), IFC file I/O
-  scripts/copy-wasm.mjs copies web-ifc's wasm + the fragments worker into public/ (postinstall)
-  scripts/smoke.ps1     desktop smoke test driven by BIM_AUTOLOAD / BIM_PROMPT / BIM_SMOKE_SELECT
-packages/ifc-viewer/    turn cards (snapshot → live 3D on hover, pooled WebGL), PNG snapshots, inspector;
-                        consumed by the frontend from source; own tests, playground and README
-tools/ws.ps1            one git worktree per branch + commit/push guards (see CONTRIBUTING.md)
+  src/viewer/BimViewer.ts  That Open wrapper: model tree, properties, class visibility, hide/isolate
+  src/api/client.ts        backend client incl. SSE-over-POST parser
+  src/App.tsx, main.tsx    React entry point and top-level layout
+  src/components/         Sidebar, TopBar, Workspace, Composer, LevelTree, DataViews, ViewerOverlays, …
+  src/turns.ts            version history cards, wiring `packages/ifc-viewer`
+  src/platform.ts         the only frontend file that knows about Tauri
+  src-tauri/              Tauri 2 shell; starts `backend/.venv` python on start, kills it on exit
+  scripts/copy-wasm.mjs   copies web-ifc's wasm + fragments worker into public/ (postinstall)
+packages/ifc-viewer/     turn-card viewer: snapshot ⇄ live orbitable view, at most 3 live canvases
+tools/ws.ps1             one git worktree per branch + commit/push guards (see CONTRIBUTING.md)
 ```
 
 ## 3. Running it
@@ -95,7 +93,7 @@ cd backend
 pip install -r requirements.txt
 cp .env.example .env            # optional; defaults to the mock LLM
 python main.py                  # http://127.0.0.1:8765
-python -m pytest                # 68 tests, ~12 s
+python -m pytest                # 104 tests, ~19 s
 python tools/eval.py            # accuracy of the configured model on tests/evals/prompts.json
 
 # frontend (once)
@@ -109,6 +107,9 @@ npx tauri build --no-bundle     # release exe under src-tauri/target/release (dr
 # browser only (no desktop shell); start the backend yourself first
 npm run vite:dev                # http://localhost:5173
 ```
+
+The desktop shell looks for `backend/.venv` and falls back to `python` on the PATH, so create the
+venv there.
 
 Environment (see `backend/.env.example`; `.env` is re-read before every LLM call and on `/health`, so
 switching provider, model or key takes effect without a restart — only paths and the port need one):
@@ -124,7 +125,8 @@ switching provider, model or key takes effect without a restart — only paths a
 | `BIM_VERIFY_ROUNDS` | fix rounds for unmet requirements per prompt (default 1; 0 = report only) |
 | `BIM_OUTPUT_DIR`, `BIM_DB_PATH`, `BIM_PORT` | storage and port |
 | `BIM_BACKEND_URL` (Tauri) or `?backend=` (browser) | backend origin for the UI, default `http://127.0.0.1:8765` |
-| `BIM_NO_BACKEND`, `BIM_BACKEND_DIR`, `BIM_PYTHON` (Tauri) | control how the shell spawns the backend |
+| `BIM_NO_BACKEND`, `BIM_BACKEND_DIR` (Tauri) | don't spawn the backend / where `backend/` is |
+| `BIM_AUTOLOAD`, `BIM_PROMPT`, `BIM_SMOKE_SELECT` (Tauri) | smoke-test hooks: load a file, run a prompt, select an element class |
 
 **Local `.gguf` models.** Fetch a prebuilt `llama-server` once, then point the backend at your model
 folder; the server is started on first use and stopped with the backend:
@@ -470,12 +472,21 @@ version is never modified; every export works on a fresh copy.
 `options`: `{format: "ifc"|"zip", project_name?, author?, organization?, strict = true, thorough = true}`.
 The file name comes back in `X-Export-Filename`, and `X-Validation-Status` is `passed` or `failed`.
 
+
 ### 4.13 Frontend
 
-React + Vite. The app keeps one project id in `localStorage` and reopens it on start. The first prompt
-creates a design (`POST /projects/{id}/prompt`); later prompts send the head as `base_version`, so
-they are edits. Pipeline stages stream into the step list. **Undo** reverts to the head's parent,
-recorded as a new version, and **New** starts a fresh project.
+React + Vite (Kailash's redesign): a sessions sidebar, a chat assistant, and a Model / Elements / Data
+workspace. Each session is one backend project; its first prompt designs a building and later prompts
+edit the head version (`base_version`). Older versions can be viewed or restored from the chat.
+
+While the model works, the assistant shows the stream as a **reasoning trace** in plain words
+(`src/state/trace.ts`, wording from the design-layer UI): "I understood 5 things to build", one layer per
+storey with its doors, windows, stairs and furniture nested under it, skipped steps with the reason, and
+"Checked the result: n of m requirements met". **Previews** (`partial` events) load into the workspace as
+they arrive, newest only, with the camera kept and re-framed only when the model clearly outgrows the
+view. Each answer lists its **requirement checks**. Selecting an element in the viewer puts it in a chip
+above the prompt and sends its spec id as `focus` with the next prompt. **Export IFC** opens the export
+dialog (§4.12) for the version in the workspace; for a file opened from disk it saves the file as is.
 
 Two viewers share the page, both on That Open with the same pinned versions:
 
@@ -491,7 +502,8 @@ Two viewers share the page, both on That Open with the same pinned versions:
 Open fails every conversion. `frontend/package.json` enforces this with an `overrides` entry.
 
 `Open IFC…` and `Sample` view a file in the main viewer without adding it to the project; the
-backend's `/projects/{id}/import` endpoint has no button yet.
+backend's `/projects/{id}/import` endpoint has no button yet. The server-side slicer and live-build
+endpoints (§4.11) exist in the backend but have no UI yet.
 
 The Tauri shell (`src-tauri/`) starts `backend/.venv` python unless something already listens on the
 port (skip with `BIM_NO_BACKEND=1`). A Windows Job Object ties the backend to the app, so it also dies
@@ -500,19 +512,27 @@ on a crash or force-quit. The shell also provides native open/save dialogs and r
 
 ## 4.14 Troubleshooting
 
-- **Backend console** (`python main.py`): every request, LLM call with timing, each step applied or
-  rejected, and full tracebacks. `BIM_LOG_LEVEL=DEBUG` adds the complete prompts and replies.
-- **Browser console** (F12 → Console, filter `[nocoast]`): page/backend URL, health, every API call and
-  SSE event, IFC sizes, web-ifc init and mesh counts, uncaught errors.
+Both sides log verbosely so a failure can be diagnosed from two pastes:
 
-Common ones: *backend not reachable* / CORS *status (null)* → nothing listens on 8765; use `npm run start`.
-*web-ifc init FAILED* → `public/wasm/` is empty; run `npm install`. *language model unavailable* → the
-provider's own message follows. *the model produced no applicable steps* → every step was rejected; the
-step log shows each reason (usually an edit request the model could not map onto existing ids).
+- **Backend console** (`python main.py`): every request, LLM call with timing, each step applied or
+  rejected with the validation errors that went back to the model, and full tracebacks.
+  `BIM_LOG_LEVEL=DEBUG` adds the complete prompts and replies. `llama-server`'s own output is in
+  `backend/.llama/server.log`.
+- **Browser console** (F12 → Console, filter `[nocoast]`): page/backend URL, health, project open, every
+  API call and SSE event, IFC size, web-ifc init and mesh counts, and uncaught errors. The status line
+  under the prompt shows the last event or error too.
+
+Common ones: *backend not reachable* / a browser CORS error with *status (null)* → nothing is listening on
+8765; run `python main.py` in `backend/` in a second terminal (or pass `?backend=` / `BIM_BACKEND_URL`);
+*viewer failed to start* or a 404 for `wasm/` or `fragments-worker.mjs` → `npm install` did not run
+`scripts/copy-wasm.mjs` (run `node scripts/copy-wasm.mjs` in `frontend/`); *language model unavailable* →
+the provider's own message follows (missing key, workspace id, model file, `llama-server` exit code with
+the last log line). *the model produced no applicable steps* → every step was rejected; the step log
+shows each reason (usually an edit request the model could not map onto existing ids).
 
 ## 5. Tests
 
-`cd backend && python -m pytest` — 95 tests on the mock LLM, no network: derivation (walls from shared
+`cd backend && python -m pytest` — 104 tests on the mock LLM, no network: derivation (walls from shared
 and free edges, opening placement, stairs and wells, roofs over partial footprints, id stability when a
 room moves, basements) · polygons (L-shaped rooms and their wall ids, ambiguous sides, curved walls as one
 faceted wall with a window, open edges and carports, courtyards, `near` errors, free elements with a gate
@@ -525,6 +545,7 @@ compiling. `python tools/eval.py` measures accuracy on the real model.
 
 `packages/ifc-viewer`: `npm test` (unit + real IFC conversion), `npm run e2e` (headless Chrome), and
 `npm run validate -- <file.ifc>`, which checks a generated file the same way the viewer will.
+`backend/tests/test_export.py` covers validation, stamping, the zip bundle and strict refusal.
 
 ## 6. Decisions and their reasons
 
@@ -542,7 +563,6 @@ compiling. `python tools/eval.py` measures accuracy on the real model.
 | SSE over POST | the build is visible step by step; no WebSocket infrastructure |
 | whole-model reload in the viewer | correct by construction; incremental mesh patching is deferred |
 | Tauri over Electron | smaller, uses the system WebView2, Rust side is 40 lines |
-| That Open for both viewers | fragments reload fast per version; one pinned stack for the main viewer and the history cards |
 
 ## 7. Not in v0 (designed, not built)
 

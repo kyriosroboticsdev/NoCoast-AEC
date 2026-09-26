@@ -33,7 +33,7 @@ from solver.layout import place_rooms
 EXT_T, INT_T = 0.3, 0.12
 MARGIN = 0.15          # openings keep this far from wall ends
 CLEAR = 0.15           # fixtures and stairs keep this far from wall centre lines
-NEAR_MAX = 1.5         # `near` points further than this from every candidate wall are rejected
+NEAR_MAX = 3.0         # `near` points further than this from every candidate wall are rejected (a bulging arc wall sits ~2 m from a point inside the room)
 COLUMN_EVERY = 4.0     # open edges get a column at least this often
 DOOR_SIZES = {"single": (0.9, 2.1), "double": (1.6, 2.1), "sliding": (1.8, 2.1), "french": (1.6, 2.1), "garage": (2.4, 2.2)}
 WINDOW_SIZES = {"standard": (1.2, 1.2, 0.9), "large": (2.0, 1.6, 0.6), "floor": (2.0, 2.2, 0.1), "small": (0.6, 0.6, 1.5)}
@@ -725,6 +725,8 @@ def _mep(design: Design, levels: list[Level], infos: dict[str, RoomInfo], els: l
     """Electrical and plumbing rough-in — always added, on top of whatever furniture/fixtures the
     design already specified: every enclosed room gets a ceiling light and two outlets, wired back to
     one riser; a kitchen or bathroom also gets a plumbing riser. Not a routed network, see ifc/mep.py."""
+    if not design.rooms:
+        return  # nothing to wire yet
     ground = next((l for l in levels if design.level(l.id).index >= 0), levels[0])
     ground_rooms = design.rooms_on(ground.id)
     if ground_rooms:
