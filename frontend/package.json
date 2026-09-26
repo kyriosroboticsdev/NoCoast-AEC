@@ -1,26 +1,42 @@
 {
-  "name": "nocoast-aec-frontend",
-  "version": "0.2.0",
+  "name": "generative-bim",
+  "version": "0.1.0",
   "private": true,
-  "description": "Prompt box + web-ifc/three.js viewer for the NoCoast generative BIM backend, wrapped in Tauri",
+  "description": "Natural-language prompt to IFC model to interactive 3D viewer",
   "type": "module",
   "scripts": {
     "postinstall": "node scripts/copy-wasm.mjs",
-    "start": "node scripts/dev.mjs",
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
+    "vite:dev": "node scripts/copy-wasm.mjs && vite",
+    "vite:build": "node scripts/copy-wasm.mjs && tsc && vite build",
+    "dev": "tauri dev",
+    "build": "tauri build",
     "tauri": "tauri",
-    "desktop": "tauri dev"
+    "typecheck": "tsc"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@tauri-apps/api": "^2.12.0",
+    "@tauri-apps/plugin-dialog": "^2.7.3",
+    "@thatopen/components": "^3.4.8",
+    "@thatopen/components-front": "^3.4.4",
+    "@thatopen/fragments": "^3.4.7",
+    "camera-controls": "^3.1.2",
+    "lucide-react": "^1.48.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
     "three": "^0.186.1",
-    "web-ifc": "^0.0.78"
+    "web-ifc": "0.0.77"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.12.0",
+    "@tauri-apps/cli": "^2.11.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@types/three": "^0.186.0",
+    "@vitejs/plugin-react": "^6.1.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.1"
+  },
+  "overrides": {
+    "web-ifc": "0.0.77"
   }
 }

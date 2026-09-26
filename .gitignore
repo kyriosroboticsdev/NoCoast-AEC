@@ -8,6 +8,8 @@ __pycache__/
 node_modules/
 dist/
 frontend/public/wasm/
+frontend/public/fragments-worker.mjs
+*.log
 
 # Tauri
 frontend/src-tauri/target/

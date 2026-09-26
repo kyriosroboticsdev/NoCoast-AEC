@@ -1,10 +1,25 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
 
-// Tauri sets TAURI_ENV_* during `tauri dev`/`tauri build`; nothing here depends on it yet.
+const viewerPackage = fileURLToPath(new URL("../packages/ifc-viewer", import.meta.url));
+
 export default defineConfig({
-  base: "./", // built files load from any path (tauri://localhost/ in the desktop app)
-  clearScreen: false,
-  server: { port: 5173, strictPort: true },
-  optimizeDeps: { exclude: ["web-ifc"] }, // keep the wasm loader untouched by the pre-bundler
+  base: "./",
+  plugins: [react()],
+  clearScreen: false, // keep Rust compiler output visible under `tauri dev`
+  resolve: {
+    // The turn-card viewer is consumed from source (no separate build step).
+    alias: { "@nocoast/ifc-viewer": `${viewerPackage}/src/index.ts` },
+    // One copy of each: two copies of three or That Open in one page break rendering.
+    dedupe: ["three", "camera-controls", "web-ifc", "@thatopen/components", "@thatopen/fragments", "react", "react-dom"],
+  },
+  server: {
+    port: 5173,
+    strictPort: true,
+    watch: { ignored: ["**/src-tauri/**"] },
+    fs: { allow: [".", viewerPackage] },
+  },
+  worker: { format: "es" },
   build: { target: "esnext", chunkSizeWarningLimit: 4000 },
 });

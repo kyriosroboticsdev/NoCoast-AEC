@@ -3,60 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NoCoast AEC</title>
-    <link rel="stylesheet" href="/src/style.css" />
+    <title>Generative BIM</title>
+    <link rel="icon" href="data:," />
   </head>
   <body>
-    <canvas id="viewport"></canvas>
-
-    <div id="topbar">
-      <span id="project"></span>
-      <button id="undo" disabled>Undo</button>
-      <a id="download" hidden>Download IFC</a>
-      <label class="btn">Import IFC<input id="import" type="file" accept=".ifc" hidden /></label>
-      <button id="new">New project</button>
-      <span id="picked"></span>
-    </div>
-
-    <div id="showing"></div>
-
-    <!-- Inspector: what the selected element is in design terms, then its IFC attributes and property sets -->
-    <div id="inspector" hidden>
-      <div id="inspector-head"><span id="inspector-title"></span><button id="inspector-close" title="Close">×</button></div>
-      <table id="inspector-design"></table>
-      <details id="inspector-ifc"><summary>IFC properties</summary><div id="inspector-psets"></div></details>
-    </div>
-
-    <aside id="steps">
-      <div id="steps-head">
-        <span>Steps</span>
-        <span class="toggles">
-          <label title="Every event with stage, timing and raw details"><input id="steps-verbose" type="checkbox" /> verbose</label>
-          <label><input id="steps-json" type="checkbox" /> model output</label>
-        </span>
-      </div>
-      <ol id="steps-list"></ol>
-      <pre id="steps-text" hidden></pre>
-    </aside>
-
-    <div id="dock">
-      <div id="layerbar" title="Cross-section: hide everything above a height">
-        <span class="lbl">section</span>
-        <input id="layerSlider" type="range" min="0" max="0" value="0" list="layerSnaps" disabled />
-        <datalist id="layerSnaps"></datalist>
-        <span id="layerLabel"></span>
-        <label title="While a request runs, cut the view just under the ceiling of the storey being worked on"><input id="followBuild" type="checkbox" checked /> follow build</label>
-      </div>
-
-      <div id="prompt">
-        <div id="focus" hidden title="The selected element is sent along with the prompt"><span id="focus-label"></span><button id="focus-clear" title="Clear selection">×</button></div>
-        <textarea id="text" rows="2" placeholder="Describe a building, or a change to the current one…"></textarea>
-        <button id="send">Send</button>
-        <div id="status"></div>
-        <pre id="notes"></pre>
-      </div>
-    </div>
-
-    <script type="module" src="/src/main.ts"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
