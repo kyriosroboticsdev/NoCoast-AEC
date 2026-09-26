@@ -22,3 +22,12 @@ backend/output/
 Thumbs.db
 .vscode/
 .idea/
+
+# Copied from node_modules by frontend/scripts/copy-wasm.mjs
+frontend/public/wasm/
+frontend/public/fragments-worker.mjs
+*.log
+
+# Tauri
+frontend/src-tauri/target/
+frontend/src-tauri/gen/

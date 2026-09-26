@@ -1,5 +1,5 @@
-﻿"""Rule-based planner: reads counts and keywords from the prompt and lays out a
-rectangular house on a two-row room grid. No AI â€” it exists to prove the
+"""Rule-based planner: reads counts and keywords from the prompt and lays out a
+rectangular house on a two-row room grid. No AI — it exists to prove the
 prompt â†’ spec â†’ IFC â†’ viewer pipeline, and as the fallback when an LLM fails.
 """
 
@@ -60,16 +60,16 @@ class TemplatePlanner:
 
         cols = max(math.ceil(len(rooms) / 2) for rooms in floors)
         width, depth = cols * MIN_BAY, 2 * ROW_DEPTH
-        size = re.search(r"(\d+(?:\.\d+)?)\s*(?:x|by|Ã—)\s*(\d+(?:\.\d+)?)\s*(m|meters?|metres?|ft|feet|foot|')?", text)
+        size = re.search(r"(\d+(?:\.\d+)?)\s*(?:x|by|×)\s*(\d+(?:\.\d+)?)\s*(m|meters?|metres?|ft|feet|foot|')?", text)
         if size:
             scale = FT if (size.group(3) or "").startswith(("f", "'")) else 1.0
             width, depth = float(size.group(1)) * scale, float(size.group(2)) * scale
-            notes.append(f"footprint {width:.1f} Ã— {depth:.1f} m from prompt")
+            notes.append(f"footprint {width:.1f} × {depth:.1f} m from prompt")
         else:
-            notes.append(f"footprint {width:.1f} Ã— {depth:.1f} m sized to fit rooms")
+            notes.append(f"footprint {width:.1f} × {depth:.1f} m sized to fit rooms")
 
         if re.search(r"gable|pitched|hip(ped)?\s*roof|sloped", text):
-            notes.append("only flat roofs are supported so far â€” used a flat roof")
+            notes.append("only flat roofs are supported so far — used a flat roof")
 
         spec = self._layout(floors, width, depth, garage, porch, bright)
         if garage:
@@ -109,7 +109,7 @@ class TemplatePlanner:
 
         if not floors[0]:
             floors[0] = ["Living Room", "Kitchen"]
-            notes.append("no ground-floor rooms named â€” added living room and kitchen")
+            notes.append("no ground-floor rooms named — added living room and kitchen")
         for i in range(1, stories):
             if not floors[i]:
                 floors[i] = ["Bedroom 1", "Bedroom 2"] if i == 1 else ["Room"]
