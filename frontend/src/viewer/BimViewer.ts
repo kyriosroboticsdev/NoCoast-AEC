@@ -97,6 +97,7 @@ export class BimViewer {
     await world.camera.controls.setLookAt(25, 18, 25, 0, 2, 0);
     this.components.init();
     this.world = world;
+    world.renderer.showLogo = false; // no That Open attribution mark in the viewport
     // That Open defaults to infinityDolly, which pushes the orbit target forward instead of
     // stopping at minDistance, so the wheel flies through walls forever.
     world.camera.controls.infinityDolly = false;
