@@ -138,7 +138,7 @@
     "prompt": "A round two-storey house with a basement, a swimming pool and an elevator, three bedrooms upstairs.",
     "requirements": [
       {"text": "round house", "kind": "other", "supported": false},
-      {"text": "basement", "kind": "other", "supported": false},
+      {"text": "basement", "kind": "feature", "item": "basement"},
       {"text": "swimming pool", "kind": "other", "supported": false},
       {"text": "elevator", "kind": "other", "supported": false},
       {"text": "two storeys", "kind": "storeys", "value": 2},

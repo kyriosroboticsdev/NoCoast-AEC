@@ -54,6 +54,7 @@ class PromptRequest(BaseModel):
     prompt: str
     planner: str | None = None
     base_version: int | None = None
+    focus: str | None = None  # spec element id selected in the viewer (e.g. "L1-wall-hall-W"); described to the model
 
 
 class OpsRequest(BaseModel):
@@ -130,7 +131,7 @@ def get_project(project_id: str) -> dict:
 def prompt_project(project_id: str, req: PromptRequest):
     _project(project_id)
     llm = get_llm(req.planner) if req.planner in PROVIDERS else get_llm()
-    return sse_response(lambda emit: pipeline.run_prompt(store, llm, project_id, req.prompt, req.base_version, emit))
+    return sse_response(lambda emit: pipeline.run_prompt(store, llm, project_id, req.prompt, req.base_version, emit, req.focus))
 
 
 @router.post("/projects/{project_id}/ops")

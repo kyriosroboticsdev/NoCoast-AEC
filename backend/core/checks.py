@@ -187,6 +187,9 @@ def _check_one(design: Design, d: Derived, req: Requirement) -> CheckResult:
             return CheckResult(req, "met" if have else "unmet", "garage present" if have else "no garage room")
         if "porch" in item or "veranda" in item:
             return CheckResult(req, "met" if design.porch else "unmet", "porch present" if design.porch else "no porch")
+        if "basement" in item or "cellar" in item or "underground" in item:
+            have = design.basements()
+            return CheckResult(req, "met" if have else "unmet", f"{have} basement level(s)" if have else "no level below ground")
         if "balcon" in item or "terrace" in item:
             return CheckResult(req, "met" if design.balconies else "unmet", f"{len(design.balconies)} balcony(ies)")
         if "open" in item:  # open plan: kitchen and living share a wall (best we can do without merged rooms)

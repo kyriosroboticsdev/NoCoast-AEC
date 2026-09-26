@@ -60,6 +60,9 @@ class Requirement(BaseModel):
         if low in words:
             return words[low]
         import re
+        b = re.match(r"^\s*(?:b|basement\s*(?:level\s*)?|cellar\s*)(\d*)\s*$", s, re.IGNORECASE)
+        if b:
+            return f"B{int(b.group(1) or 1)}"
         m = re.match(r"^\s*(?:l|level\s*|floor\s*|storey\s*)?(\d+)\s*$", s, re.IGNORECASE)
         return f"L{int(m.group(1))}" if m else s
 

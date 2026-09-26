@@ -194,6 +194,11 @@ else refers to rooms and sides.
 }
 ```
 
+Levels: `L1` is the ground floor, `L2`… above it, `B1`, `B2`… below ground (`below_ground` is set
+automatically; storeys stack upward from 0, basements downward). Up to 40 levels, 2.2–12 m each.
+`Design.storeys()` counts the levels above ground (what "two-storey house" means); `basements()` the rest.
+Basement rooms get no windows (rejected with a message the model can act on) and no roof; a stair in a
+basement room goes up to the ground floor, and the slab above gets its well.
 Room kinds: living, kitchen, dining, office, bedroom, bathroom, hall, garage, utility, storage, other.
 Door kinds: single, double, sliding, french, garage. Window kinds: standard, large, floor, small.
 Fixture kinds (26): bed, double_bed, bunk_bed, sofa, armchair, coffee_table, tv_stand, dining_table,
@@ -210,7 +215,7 @@ ignored, `"north"`→`"N"`, `2`→`"L2"`, `{"x","y","w","d"}`→rect).
 | step | fields | effect |
 |---|---|---|
 | `building` | name, description | rename |
-| `level` | id (`L1`…, in order), name, height | add or update a storey |
+| `level` | id (`L1`… in order, or `B1`… for basements), name, height, below_ground | add or update a storey or basement |
 | `room` | name, level, kind, rect, area | add, or update by id/name (rect null → auto-placed by `solver/layout.py`) |
 | `layout` | level, rooms:[{name, kind, rect}] | replace **all** rooms of a storey atomically (rooms keep id + items when the name is unchanged) |
 | `door` | room, to (room id or `outside`), side, at, kind, width, height | add / replace by id |
@@ -263,9 +268,9 @@ requirements with a `kind` the checker understands:
 
 `storeys · room (room keyword, count, level) · room_level · area · adjacent · orientation (room has an exterior
 wall on side) · window (count, side) · door (room ↔ room/outside) · stair · furniture (kind, room, count) ·
-roof · feature (garage/porch/balcony) · dimension · material · style · other`
+roof · feature (garage/porch/balcony/basement) · dimension · material · style · other`
 
-plus `supported: false` for what the builder cannot do (curved walls, basements, pools …) — those are
+plus `supported: false` for what the builder cannot do (curved walls, pools, elevators …) — those are
 listed in the version notes instead of being silently dropped. After the build stream, `check()` runs each
 requirement against the design deterministically (`[met]`, `[UNMET] living room facing south — Living
 Room's exterior sides are N, W`, `[unsupported]`, `[not checked]` for style), the result goes to the step
@@ -301,7 +306,8 @@ browser ────────────────────────
 - preview files are served by the `/models` static mount and pruned after 30 minutes.
 
 **Step log (transparency).** Every SSE event carries `seq` and `t`; stages: `requirements` (the checklist,
-unsupported items flagged), `build` (which round and why: rejected steps / unmet requirements listed),
+unsupported items flagged), `focus` (what the viewer selection resolved to, when one was sent), `build`
+(which round and why: rejected steps / unmet requirements listed),
 `llm` (what was sent to which model; then chars, seconds, steps applied/rejected, previews), `stream`,
 `step` (one per step: applied with its effect, or rejected with the reason and the raw step), `partial`
 (diff against the previous preview, rooms per level, counts, compile time, how many elements were
@@ -407,7 +413,7 @@ History is linear; `revert/{n}` appends a copy of *n*; `base_version` gives opti
 | `GET /health` | | `{ok, llm: {provider, model}}` |
 | `POST /projects` | `{name}` | project |
 | `GET /projects/{id}` | | `{project, head, versions}` |
-| `POST /projects/{id}/prompt` | `{prompt, base_version?}` | **SSE** — design or edit |
+| `POST /projects/{id}/prompt` | `{prompt, base_version?, focus?}` | **SSE** — design or edit; `focus` is the spec element id selected in the viewer (`L1-wall-hall-W`, `door-kitchen-hall`, `L1-space-hall`, …), described to the model in words by `core/context.py::describe_focus` ("SELECTED IN THE VIEWER: the west exterior wall of the Hall (L1) …") |
 | `POST /projects/{id}/ops` | `{ops, base_version?}` | **SSE** — raw element ops (stored as overrides) |
 | `POST /projects/{id}/revert/{n}` | | **SSE** |
 | `POST /projects/{id}/import` | multipart `file` (.ifc) | **SSE** |

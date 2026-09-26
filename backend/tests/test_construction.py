@@ -34,10 +34,9 @@ def test_construction_job_writes_one_valid_ifc_file_per_element_and_keeps_guids(
     _, guids = compile_ifc(spec, {})
     job = ConstructionJob(_version(spec, guids), step_seconds=0.0)
 
-    for _ in range(200):  # generous bound; a one-storey cabin has well under a hundred elements
-        if job.done:
-            break
-        time.sleep(0.02)
+    deadline = time.perf_counter() + 60  # one compile per element; a cabin with MEP takes ~6 s
+    while not job.done and time.perf_counter() < deadline:
+        time.sleep(0.05)
     assert job.done and job.error is None
     assert job.total == len(spec.elements)
     assert len(job.urls) == job.total
