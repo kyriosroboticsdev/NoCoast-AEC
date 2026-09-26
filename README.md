@@ -91,7 +91,7 @@ cd backend
 pip install -r requirements.txt
 cp .env.example .env            # optional; defaults to the mock LLM
 python main.py                  # http://127.0.0.1:8765
-python -m pytest                # 103 tests, ~19 s
+python -m pytest                # 104 tests, ~19 s
 python tools/eval.py            # accuracy of the configured model on tests/evals/prompts.json
 
 # frontend (once)
@@ -501,7 +501,7 @@ shows each reason (usually an edit request the model could not map onto existing
 
 ## 5. Tests
 
-`cd backend && python -m pytest` — 103 tests on the mock LLM, no network: derivation (walls from shared
+`cd backend && python -m pytest` — 104 tests on the mock LLM, no network: derivation (walls from shared
 and free edges, opening placement, stairs and wells, roofs over partial footprints, id stability when a
 room moves, basements) · polygons (L-shaped rooms and their wall ids, ambiguous sides, curved walls as one
 faceted wall with a window, open edges and carports, courtyards, `near` errors, free elements with a gate
