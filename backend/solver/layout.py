@@ -52,10 +52,10 @@ def solve(program: Program) -> BuildingSpec:
     for room in program.rooms:
         if room.kind == "garage":
             continue  # the garage is a feature, not a grid room
-        per_level[room.level].append(room)
+        per_level[room.index].append(room)
     for i, rooms in enumerate(per_level):
         if not rooms:
-            rooms.append(Room(name="Room" if i else "Living Room", level=i, kind="living" if not i else "other"))
+            rooms.append(Room(name="Room" if i else "Living Room", level=f"L{i + 1}", kind="living" if not i else "other"))
 
     layouts = [(_rows(rooms)) for rooms in per_level]
     cols_per_level = [max(len(f), len(b), 1) for f, b in layouts]

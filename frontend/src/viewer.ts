@@ -42,8 +42,13 @@ export class Viewer {
 
     // The wasm lives in public/wasm (copied by scripts/copy-wasm.mjs); resolve it against the page,
     // which works in `vite dev`, a static build and inside Tauri.
-    this.ifc.SetWasmPath(new URL("wasm/", document.baseURI).href, true);
-    this.ready = this.ifc.Init();
+    const wasmPath = new URL("wasm/", document.baseURI).href;
+    this.ifc.SetWasmPath(wasmPath, true);
+    console.log("[nocoast:viewer] init web-ifc, wasm path", wasmPath, "| webgl:", this.renderer.capabilities.isWebGL2 ? "2" : "1");
+    this.ready = this.ifc.Init().then(
+      () => console.log("[nocoast:viewer] web-ifc ready", this.ifc.GetVersion?.() ?? ""),
+      (err) => { console.error("[nocoast:viewer] web-ifc init FAILED (is public/wasm populated? run `npm install`):", err); throw err; },
+    );
 
     window.addEventListener("resize", () => this.resize());
     this.resize();
@@ -73,7 +78,9 @@ export class Viewer {
     this.clear();
     const modelID = this.ifc.OpenModel(data, { COORDINATE_TO_ORIGIN: false });
     this.modelID = modelID;
+    let products = 0, geometries = 0;
     this.ifc.StreamAllMeshes(modelID, (mesh: WebIFC.FlatMesh) => {
+      products++;
       const placed = mesh.geometries;
       for (let i = 0; i < placed.size(); i++) {
         const pg = placed.get(i);
@@ -98,8 +105,11 @@ export class Viewer {
         m.userData.expressID = mesh.expressID;
         this.root.add(m);
         geom.delete();
+        geometries++;
       }
     });
+    console.log(`[nocoast:viewer] model ${modelID}: ${products} products, ${geometries} meshes`);
+    if (!geometries) console.warn("[nocoast:viewer] no geometry produced — is the IFC empty or unsupported?");
     this.frame();
   }
 

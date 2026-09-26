@@ -7,51 +7,24 @@ with `output_config.format`, so it always parses.
 
 from __future__ import annotations
 
-import copy
 import json
 
 import anthropic
 
 from llm.base import LLMError, LLMRequest
+from llm.schema import strict_schema
 
 DEFAULT_MODEL = "claude-opus-5"
-
-
-def strict_schema(schema: dict) -> dict:
-    """Rewrite a Pydantic JSON schema into the subset structured outputs accept:
-    closed objects, tuples as fixed-length arrays, no defaults/titles."""
-    s = copy.deepcopy(schema)
-
-    def walk(node):
-        if isinstance(node, list):
-            for n in node:
-                walk(n)
-            return
-        if not isinstance(node, dict):
-            return
-        node.pop("default", None)
-        node.pop("title", None)
-        if "prefixItems" in node:  # tuple[float, float] → array of numbers, length 2
-            items = node.pop("prefixItems")
-            node["items"] = items[0] if all(i == items[0] for i in items) else {"anyOf": items}
-            node.setdefault("minItems", len(items))
-            node.setdefault("maxItems", len(items))
-        if node.get("type") == "object" and "properties" in node:
-            node["additionalProperties"] = False
-            node["required"] = list(node["properties"])  # every field present; optional ones are nullable
-        for v in node.values():
-            walk(v)
-
-    walk(s)
-    return s
 
 
 class ClaudeLLM:
     name = "claude"
 
-    def __init__(self, model: str = DEFAULT_MODEL, timeout: float = 600):
+    def __init__(self, model: str = DEFAULT_MODEL, timeout: float = 600, workspace_id: str = ""):
         self.model = model or DEFAULT_MODEL
-        self.client = anthropic.Anthropic(timeout=timeout)
+        # Keys created at organisation level (not inside a workspace) must name the workspace per request.
+        headers = {"anthropic-workspace-id": workspace_id} if workspace_id else None
+        self.client = anthropic.Anthropic(timeout=timeout, default_headers=headers)
 
     def complete(self, request: LLMRequest) -> dict:
         try:
@@ -66,6 +39,11 @@ class ClaudeLLM:
             raise LLMError("Anthropic authentication failed: set ANTHROPIC_API_KEY or run `ant auth login`") from exc
         except anthropic.RateLimitError as exc:
             raise LLMError(f"Anthropic rate limit: {exc.message}") from exc
+        except anthropic.BadRequestError as exc:
+            hint = ""
+            if "anthropic-workspace-id" in exc.message:
+                hint = " — set ANTHROPIC_WORKSPACE_ID in backend/.env (Console → Settings → Workspaces), or create the key inside a workspace"
+            raise LLMError(f"Anthropic rejected the request: {exc.message}{hint}") from exc
         except anthropic.APIStatusError as exc:
             raise LLMError(f"Anthropic API error {exc.status_code}: {exc.message}") from exc
         except anthropic.APIConnectionError as exc:

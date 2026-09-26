@@ -14,10 +14,14 @@ from __future__ import annotations
 
 from typing import Callable
 
+import json
+import time
+
 import ifcopenshell
 from pydantic import ValidationError
 
 import config
+from logsetup import log
 from core.context import describe_spec
 from core.guids import GuidMap, prune_guids
 from core.ops import OpError, apply_ops
@@ -52,18 +56,34 @@ def _noop(stage: str, message: str, data: dict | None = None) -> None:
     pass
 
 
+def _call(llm: LLM, request: LLMRequest) -> dict:
+    """One LLM call with timing and (at DEBUG) the full prompt and reply logged."""
+    log.info("LLM %s: %s request, system %d chars, user %d chars", llm.name, request.schema_name, len(request.system), len(request.user))
+    log.debug("LLM user message:\n%s", request.user)
+    t = time.perf_counter()
+    try:
+        raw = llm.complete(request)
+    except LLMError as exc:
+        log.error("LLM %s failed after %.1fs: %s", llm.name, time.perf_counter() - t, exc)
+        raise
+    log.info("LLM %s replied in %.1fs (%d chars)", llm.name, time.perf_counter() - t, len(json.dumps(raw)))
+    log.debug("LLM reply:\n%s", json.dumps(raw, indent=1)[:20000])
+    return raw
+
+
 # --- LLM calls with repair -------------------------------------------------
 
 def request_program(llm: LLM, prompt: str, emit: Emit = _noop) -> Program:
     errors: list[str] = []
     for attempt in range(config.MAX_REPAIRS + 1):
         emit("program", "asking the model for a building program" if not attempt else f"repair attempt {attempt}", {"errors": errors})
-        raw = llm.complete(LLMRequest(system=PROGRAM_SYSTEM, user=program_user_message(prompt, errors), schema=PROGRAM_SCHEMA,
-                                      schema_name="program", meta={"prompt": prompt}))
+        raw = _call(llm, LLMRequest(system=PROGRAM_SYSTEM, user=program_user_message(prompt, errors), schema=PROGRAM_SCHEMA,
+                                    schema_name="program", meta={"prompt": prompt}))
         try:
             return Program.model_validate(raw)
         except ValidationError as exc:
             errors = _fmt_validation(exc)
+            log.warning("program rejected (attempt %d): %s", attempt + 1, "; ".join(errors))
     raise PipelineError("the model did not produce a valid program: " + "; ".join(errors))
 
 
@@ -71,12 +91,15 @@ def request_edit(llm: LLM, prompt: str, head: VersionData, emit: Emit = _noop) -
     """Ask for an edit, apply it, compile it. Returns (spec, response, cascade notes, guids, ifc model)."""
     context = describe_spec(head.spec)
     errors: list[str] = []
+    program_json = head.program.model_dump_json(exclude={"notes"}) if head.program else None
     meta = {"prompt": prompt, "spec": head.spec.model_dump(mode="json"), "program": head.program.model_dump(mode="json") if head.program else None}
     for attempt in range(config.MAX_REPAIRS + 1):
         emit("edit", "asking the model for edit operations" if not attempt else f"repair attempt {attempt}", {"errors": errors})
-        raw = llm.complete(LLMRequest(system=EDIT_SYSTEM, user=edit_user_message(prompt, context, errors), schema=EDIT_SCHEMA,
-                                      schema_name="edit", meta=meta))
+        raw = _call(llm, LLMRequest(system=EDIT_SYSTEM, user=edit_user_message(prompt, context, errors, program_json), schema=EDIT_SCHEMA,
+                                    schema_name="edit", meta=meta))
         try:
+            if isinstance(raw, dict) and raw.get("mode") == "ops":
+                raw["program"] = None  # strict schemas make the model fill it anyway; it is meaningless in ops mode
             resp = EditResponse.model_validate(raw)
             if resp.mode == "ops":
                 if not resp.ops:
@@ -86,6 +109,7 @@ def request_edit(llm: LLM, prompt: str, head: VersionData, emit: Emit = _noop) -
             else:
                 if resp.program is None:
                     raise OpError("mode=redesign requires a program")
+                resp.ops = []  # models sometimes fill both; only the program counts in redesign mode
                 emit("solve", "solving the layout")
                 spec, cascade = solve(resp.program), []
             emit("compile", "compiling IFC")
@@ -93,8 +117,10 @@ def request_edit(llm: LLM, prompt: str, head: VersionData, emit: Emit = _noop) -
             return spec, resp, cascade, guids, model
         except ValidationError as exc:
             errors = _fmt_validation(exc)
+            log.warning("edit rejected (attempt %d): %s", attempt + 1, "; ".join(errors))
         except (OpError, GeometryError) as exc:
             errors = [str(exc)]
+            log.warning("edit rejected (attempt %d): %s", attempt + 1, exc)
     raise PipelineError("the model did not produce a valid edit: " + "; ".join(errors))
 
 
@@ -112,6 +138,7 @@ def _persist(store: Store, project_id: str, spec: BuildingSpec, guids: GuidMap, 
     path = store.ifc_path(project_id, number)
     path.parent.mkdir(parents=True, exist_ok=True)
     model.write(str(path))
+    log.info("project %s: wrote %s (%d elements, mode=%s)", project_id, path.name, len(spec.elements), mode)
     version = store.add_version(project_id, spec=spec, guids=guids, mode=mode, summary=summarize(model), ifc_path=path,
                                 prompt=prompt, llm=llm, ops=ops, notes=notes, program=program)
     emit("done", f"version {version.number} ready", version.as_version().model_dump() | {"ifc_url": version.ifc_url})
@@ -123,6 +150,7 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
     if not prompt.strip():
         raise PipelineError("prompt is empty")
     head = store.head(project_id)
+    log.info("project %s: prompt %r (head=%s, base=%s, llm=%s)", project_id, prompt[:120], head.number if head else None, base_version, llm.name)
     if base_version is not None and head is not None and head.number != base_version:
         raise ConflictError(f"project is at version {head.number}, you edited version {base_version}")
     try:

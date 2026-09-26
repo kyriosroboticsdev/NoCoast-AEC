@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from difflib import get_close_matches
+
 from pydantic import TypeAdapter, ValidationError
 
 from schemas.bim import BuildingSpec, Door, Element, Level, Window
@@ -32,8 +34,13 @@ def apply_ops(spec: BuildingSpec, ops: list[Op]) -> tuple[BuildingSpec, list[str
         for i, item in enumerate(items):
             if item["id"] == id_:
                 return i
-        known = ", ".join(i["id"] for i in items[:40])
-        raise OpError(f"{what} '{id_}' does not exist (known: {known}{', …' if len(items) > 40 else ''})")
+        ids = [i["id"] for i in items]
+        close = get_close_matches(id_, ids, n=3, cutoff=0.5)
+        # Models like to prefix ids with the type ("wall-L1-wall-S"); catch that explicitly.
+        close += [i for i in ids if id_.endswith(i) and i not in close]
+        hint = f"; did you mean {', '.join(repr(c) for c in close)}?" if close else ""
+        known = ", ".join(ids[:40])
+        raise OpError(f"{what} '{id_}' does not exist{hint} (ids are exactly as listed after id=; known: {known}{', ...' if len(ids) > 40 else ''})")
 
     def delete_element(id_: str, reason: str | None = None) -> None:
         if id_ in cascaded and reason is None:

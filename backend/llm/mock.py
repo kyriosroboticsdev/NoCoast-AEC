@@ -106,11 +106,11 @@ class MockLLM:
                     room = Room(name=f"Bedroom {k}", level=room.level, kind="bedroom")
                 else:
                     continue
-            level = min(room.level, storeys - 1)
+            index = min(room.index, storeys - 1)
             if room.kind == "bedroom" and storeys > 1 and not re.search(r"ground|first floor|downstairs", text):
-                level = storeys - 1
-            rooms.append(Room(name=room.name, level=level, kind=room.kind, area=room.area))
-            notes.append(f"added {room.name} on level {level + 1}")
+                index = storeys - 1
+            rooms.append(Room(name=room.name, level=f"L{index + 1}", kind=room.kind, area=room.area))
+            notes.append(f"added {room.name} on L{index + 1}")
         merged = base.model_copy(update={
             "storeys": storeys, "rooms": rooms, "notes": notes or ["redesigned from prompt"],
             "garage": base.garage or delta.garage, "porch": base.porch or delta.porch, "bright": base.bright or delta.bright,

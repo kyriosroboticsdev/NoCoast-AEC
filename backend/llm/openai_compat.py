@@ -12,6 +12,7 @@ import re
 import httpx
 
 from llm.base import LLMError, LLMRequest
+from llm.schema import strict_schema
 
 
 class OpenAICompatibleLLM:
@@ -30,7 +31,7 @@ class OpenAICompatibleLLM:
             "messages": [{"role": "system", "content": request.system}, {"role": "user", "content": request.user}],
             "response_format": {
                 "type": "json_schema",
-                "json_schema": {"name": request.schema_name, "schema": request.schema},
+                "json_schema": {"name": request.schema_name, "schema": strict_schema(request.schema)},
             },
         }
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
