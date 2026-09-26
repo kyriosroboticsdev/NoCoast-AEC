@@ -24,10 +24,10 @@ from shapely.geometry import LineString, MultiLineString, Point as ShpPoint, Pol
 from shapely.ops import unary_union
 
 from ifc.fixtures import default_size
-from schemas.bim import (Beam, BuildingSpec, Column, Door, Fixture, Level, LightFixture, Outlet, Panel, Pipe,
-                         Railing, Roof, Slab, Space, Stair, Wall, Window, Wire, is_axis_rectangle)
-from schemas.design import (Design, DoorDef, FixtureDef, FreeDef, LevelDef, Pt, RoomDef, Segment, Side, StairDef,
-                            WindowDef, arc_points)
+from schemas.bim import (Beam, BuildingSpec, Column, CustomFixture, Door, Fixture, Level, LightFixture, Outlet, Panel,
+                         Pipe, Railing, Roof, ShapePart, Slab, Space, Stair, Wall, Window, Wire, is_axis_rectangle)
+from schemas.design import (CustomShapeDef, Design, DoorDef, FixtureDef, FreeDef, LevelDef, Pt, RoomDef, Segment, Side,
+                            StairDef, WindowDef, arc_points)
 from solver.layout import place_rooms
 
 EXT_T, INT_T = 0.3, 0.12
@@ -586,28 +586,24 @@ def _stair(s: StairDef, design: Design, infos: dict[str, RoomInfo], level: Level
     raise DesignError(f"{what}: a {run:.2f} × {s.width} m flight along wall {wall.id} does not fit inside room '{room.id}'")
 
 
-def _fixture(f: FixtureDef, design: Design, infos: dict[str, RoomInfo], level: Level) -> Fixture:
-    what = f"{f.kind} '{f.id}'"
-    room = design.room(f.room)
-    if room is None:
-        raise DesignError(f"{what}: unknown room '{f.room}'")
-    info = infos[room.id]
+def _place_piece(what: str, room: RoomDef, info: RoomInfo, side: str, near: Pt | None, at: float, w: float, d: float) -> tuple[Pt, float]:
+    """Where a w × d footprint goes inside a room — against the wall named by `near`/`side`, or in the
+    middle — and which way it then faces (degrees; its back to the wall). Shared by catalogue fixtures
+    and model-composed custom shapes so both are placed the same way."""
     poly = info.polygon
-    w, d, h = default_size(f.kind)
-    w, d, h = f.width or w, f.depth or d, f.height or h
     x0, y0, x1, y1 = room.box
     rw, rd = x1 - x0, y1 - y0
     too_small = DesignError(f"{what}: room '{room.id}' is too small ({rw:.1f} x {rd:.1f} m) for a {w:.1f} x {d:.1f} m piece")
 
-    if f.near is None and f.side == "center":
+    if near is None and side == "center":
         c = poly.centroid if poly.contains(poly.centroid) else poly.representative_point()
-        if not _fits(poly, _rect_at(c.x, c.y, w, d, 0.0)):
+        inner = poly.buffer(-CLEAR, join_style="mitre")  # keep CLEAR from every wall, as against-the-wall pieces do
+        if inner.is_empty or not _fits(inner, _rect_at(c.x, c.y, w, d, 0.0)):
             raise too_small
-        return Fixture(id=f.id, name=f"{f.kind.replace('_', ' ')} in {room.name}", level=room.level, kind=f.kind,
-                       position=(_r(c.x), _r(c.y)), rotation=f.rotation if f.rotation is not None else 0.0, width=w, depth=d, height=h)
+        return (_r(c.x), _r(c.y)), 0.0
 
-    wall, at = _pick(info.walls, f.near, None if f.side == "center" else f.side, what, room, None, poly)
-    at = f.at if at is None else at
+    wall, picked_at = _pick(info.walls, near, None if side == "center" else side, what, room, None, poly)
+    at = at if picked_at is None else picked_at
     if wall.length < w + 2 * CLEAR:
         raise too_small
     ux, uy = wall.unit()
@@ -628,9 +624,43 @@ def _fixture(f: FixtureDef, design: Design, infos: dict[str, RoomInfo], level: L
     rot = (math.degrees(math.atan2(iy, ix)) - 90) % 360
     if not _fits(poly, _rect_at(cx, cy, w, d, math.radians(rot))):
         raise DesignError(f"{what}: a {w:.1f} x {d:.1f} m piece against wall {wall.id} does not fit inside room '{room.id}'")
+    return (_r(cx), _r(cy)), _r(rot)
+
+
+def _fixture(f: FixtureDef, design: Design, infos: dict[str, RoomInfo], level: Level) -> Fixture:
+    what = f"{f.kind} '{f.id}'"
+    room = design.room(f.room)
+    if room is None:
+        raise DesignError(f"{what}: unknown room '{f.room}'")
+    w, d, h = default_size(f.kind)
+    w, d, h = f.width or w, f.depth or d, f.height or h
+    pos, rot = _place_piece(what, room, infos[room.id], f.side, f.near, f.at, w, d)
     return Fixture(id=f.id, name=f"{f.kind.replace('_', ' ')} in {room.name}", level=room.level, kind=f.kind,
-                   position=(_r(cx), _r(cy)), rotation=f.rotation if f.rotation is not None else _r(rot),
-                   width=w, depth=d, height=h)
+                   position=pos, rotation=f.rotation if f.rotation is not None else rot, width=w, depth=d, height=h)
+
+
+def _custom_shape(cs: CustomShapeDef, design: Design, infos: dict[str, RoomInfo], level: Level) -> CustomFixture:
+    """A shape the model composed itself out of parts (box/round), instead of the fixed
+    FixtureKind catalog — placed the same way a catalog fixture would be."""
+    what = f"custom shape '{cs.id}'"
+    room = design.room(cs.room)
+    if room is None:
+        raise DesignError(f"{what}: unknown room '{cs.room}'")
+    x0 = min(p.x for p in cs.parts)
+    y0 = min(p.y for p in cs.parts)
+    x1 = max(p.x + p.w for p in cs.parts)
+    y1 = max(p.y + (p.w if p.shape == "round" else p.d) for p in cs.parts)
+    w, d = x1 - x0, y1 - y0
+    if w <= 0 or d <= 0:
+        raise DesignError(f"{what}: parts have no footprint")
+    pos, rot = _place_piece(what, room, infos[room.id], cs.side, cs.near, cs.at, w, d)
+    # Parts are given relative to their own min-corner bbox; re-centre them on the origin so
+    # `pos` (the bbox centre) is where the whole assembly's local frame actually sits, matching
+    # how catalog fixtures are centred (ifc/fixtures.py::_parts).
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    parts = [ShapePart(shape=p.shape, x=_r(p.x - cx), y=_r(p.y - cy), z=p.z, w=p.w, d=p.d, h=p.h) for p in cs.parts]
+    return CustomFixture(id=cs.id, name=f"{cs.name} in {room.name}", level=room.level, position=pos,
+                         rotation=cs.rotation if cs.rotation is not None else rot, parts=parts)
 
 
 def _balcony(b, design: Design, infos: dict[str, RoomInfo], level: Level, els: list, sides: dict[str, Side]) -> None:
@@ -945,6 +975,7 @@ def analyze(design: Design, prune: bool = False) -> Derived:
     each("windows", lambda w, level: _window(w, design, infos, free_walls, level_by_id, sides))
     each("stairs", lambda st, level: _stair(st, design, infos, level))
     each("fixtures", lambda f, level: _fixture(f, design, infos, level))
+    each("custom_shapes", lambda cs, level: _custom_shape(cs, design, infos, level))
     each("balconies", lambda b, level: _balcony(b, design, infos, level, els, sides))
     for c in design.columns:
         if c.level not in level_by_id:

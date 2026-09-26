@@ -183,6 +183,32 @@ class Fixture(_Element):
     height: float = Field(gt=0)
 
 
+class ShapePart(BaseModel):
+    """One solid of a CustomFixture, in the fixture's own local frame: `x, y, z` is the part's min
+    corner (matching ifc/geometry.py::box), `w`/`d`/`h` its size. A "round" part ignores `d` and is
+    a `w`-diameter cylinder instead of a box — for a round table top, a column, a cup."""
+
+    shape: Literal["box", "round"] = "box"
+    x: float = 0.0
+    y: float = 0.0
+    z: float = Field(0.0, ge=0)
+    w: float = Field(gt=0, description="width (box) or diameter (round)")
+    d: float = Field(0.1, gt=0, description="depth; ignored for a round part")
+    h: float = Field(gt=0)
+
+
+class CustomFixture(_Element):
+    """A furniture/fixture piece the model designed itself out of `parts`, instead of picking a
+    `Fixture.kind` from the fixed catalog — for shapes the catalog doesn't cover: a round table, an
+    L-shaped bench, a custom plinth. `position` is the assembly's bounding-box centre, like Fixture."""
+
+    type: Literal["custom"] = "custom"
+    level: str
+    position: Point
+    rotation: float = 0.0
+    parts: list[ShapePart] = Field(min_length=1, max_length=12)
+
+
 class Railing(_Element):
     type: Literal["railing"] = "railing"
     level: str
@@ -235,13 +261,14 @@ class Wire(_Element):
 
 
 Element = Annotated[
-    Union[Wall, Slab, Roof, Door, Window, Column, Beam, Space, Stair, Fixture, Railing, Pipe, Outlet, LightFixture, Panel, Wire],
+    Union[Wall, Slab, Roof, Door, Window, Column, Beam, Space, Stair, Fixture, CustomFixture, Railing, Pipe,
+          Outlet, LightFixture, Panel, Wire],
     Field(discriminator="type"),
 ]
 
 ELEMENT_ORDER = {"wall": 0, "slab": 1, "space": 2, "column": 3, "beam": 4, "roof": 5, "pipe": 6, "door": 7,
-                 "window": 8, "stair": 9, "outlet": 10, "panel": 11, "wire": 12, "fixture": 13, "light": 14,
-                 "railing": 15}
+                 "window": 8, "stair": 9, "outlet": 10, "panel": 11, "wire": 12, "fixture": 13, "custom": 13,
+                 "light": 14, "railing": 15}
 
 
 def polygon_area(outline: list[Point]) -> float:
