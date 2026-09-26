@@ -3,28 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NoCoast AEC</title>
-    <link rel="stylesheet" href="/src/style.css" />
+    <title>Generative BIM</title>
   </head>
   <body>
-    <canvas id="viewport"></canvas>
-
-    <div id="topbar">
-      <span id="project"></span>
-      <button id="undo" disabled>Undo</button>
-      <a id="download" hidden>Download IFC</a>
-      <label class="btn">Import IFC<input id="import" type="file" accept=".ifc" hidden /></label>
-      <button id="new">New project</button>
-      <span id="picked"></span>
-    </div>
-
-    <div id="prompt">
-      <textarea id="text" rows="2" placeholder="Describe a building, or a change to the current one…"></textarea>
-      <button id="send">Send</button>
-      <div id="status"></div>
-      <pre id="notes"></pre>
-    </div>
-
-    <script type="module" src="/src/main.ts"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
