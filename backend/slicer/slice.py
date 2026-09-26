@@ -26,8 +26,11 @@ PHASES: list[tuple[str, tuple[str, ...]]] = [
     ("foundation", ("IfcSlab",)),
     ("structure", ("IfcWall", "IfcColumn", "IfcBeam", "IfcStair")),
     ("roof", ("IfcRoof",)),
+    ("plumbing", ("IfcPipeSegment", "IfcCableCarrierSegment")),  # water riser + electrical conduit stack, both rough-in
     ("spaces", ("IfcSpace",)),
-    ("details", ("IfcDoor", "IfcWindow", "IfcRailing", "IfcFurniture", "IfcSanitaryTerminal", "IfcElectricAppliance", "IfcBuildingElementProxy")),
+    ("electrical", ("IfcOutlet", "IfcElectricDistributionBoard", "IfcCableSegment")),
+    ("details", ("IfcDoor", "IfcWindow", "IfcRailing", "IfcFurniture", "IfcSanitaryTerminal", "IfcElectricAppliance",
+                "IfcBuildingElementProxy", "IfcLightFixture")),
 ]
 
 

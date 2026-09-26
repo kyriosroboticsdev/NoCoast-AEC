@@ -18,7 +18,8 @@ from pathlib import Path
 
 import config
 from ifc.builder import compile_ifc
-from schemas.bim import Beam, BuildingSpec, Column, Door, Element, Fixture, Railing, Roof, Slab, Space, Stair, Wall, Window
+from schemas.bim import (Beam, BuildingSpec, Column, Door, Element, Fixture, LightFixture, Outlet, Panel, Pipe,
+                          Railing, Roof, Slab, Space, Stair, Wall, Window, Wire)
 from store.db import VersionData
 
 CONSTRUCTION_DIR = config.OUTPUT_DIR / "construction"  # served by the /models static mount
@@ -30,14 +31,21 @@ PHASES: list[tuple[str, tuple[type, ...]]] = [
     ("foundation", (Slab,)),
     ("structure", (Wall, Column, Beam, Stair)),
     ("roof", (Roof,)),
+    ("plumbing", (Pipe,)),
     ("spaces", (Space,)),
-    ("details", (Door, Window, Railing, Fixture)),
+    ("electrical", (Outlet, Panel, Wire)),
+    ("details", (Door, Window, Railing, Fixture, LightFixture)),
 ]
 
 
 def _elevation(spec: BuildingSpec, el: Element) -> float:
-    """Sort key: an element's own level, or its host wall's for a door/window (they have no level)."""
-    level_id = el.level if hasattr(el, "level") else next(w.level for w in spec.elements if isinstance(w, Wall) and w.id == el.wall)
+    """Sort key: an element's own level, its host wall's for a door/window, or a riser's bottom for a pipe."""
+    if isinstance(el, Pipe):
+        level_id = el.bottom_level
+    elif hasattr(el, "level"):
+        level_id = el.level
+    else:
+        level_id = next(w.level for w in spec.elements if isinstance(w, Wall) and w.id == el.wall)
     return next(l.elevation for l in spec.levels if l.id == level_id)
 
 

@@ -20,8 +20,8 @@ from shapely.geometry import Polygon, box as shp_box
 from shapely.ops import unary_union
 
 from ifc.fixtures import default_size
-from schemas.bim import (Beam, BuildingSpec, Column, Door, Fixture, Level, Railing, Roof, Slab, Space, Stair, Wall,
-                         Window, is_axis_rectangle)
+from schemas.bim import (Beam, BuildingSpec, Column, Door, Fixture, Level, LightFixture, Outlet, Panel, Pipe,
+                         Railing, Roof, Slab, Space, Stair, Wall, Window, Wire, is_axis_rectangle)
 from schemas.design import Design, DoorDef, FixtureDef, LevelDef, RoomDef, Side, StairDef, WindowDef
 from solver.layout import place_rooms
 
@@ -332,6 +332,48 @@ def _balcony(b, design: Design, infos: dict[str, RoomInfo], level: Level, els: l
     els.append(Railing(id=f"{b.id}-railing", name=f"{room.name} balcony railing", level=room.level, path=rail, height=1.05))
 
 
+def _mep(design: Design, levels: list[Level], els: list) -> None:
+    """Electrical and plumbing rough-in — always added, on top of whatever furniture/fixtures the
+    design already specified: every room gets a ceiling light and two outlets, wired back to one
+    riser; a kitchen or bathroom also gets a plumbing riser. Not a routed network, see ifc/mep.py."""
+    ground = levels[0]
+    ground_rooms = design.rooms_on(ground.id)
+    if ground_rooms:
+        gx0, gy0, _, _ = ground_rooms[0].box
+        riser_xy = (_r(gx0 + 0.3), _r(gy0 + 0.3))
+    else:
+        riser_xy = (0.3, 0.3)
+
+    wet_pos: tuple[float, float] | None = None
+    wet_level: str | None = None
+    for level in levels:
+        for room in design.rooms_on(level.id):
+            x0, y0, x1, y1 = room.box
+            cx, cy = _r((x0 + x1) / 2), _r((y0 + y1) / 2)
+            sid = room.id
+            els.append(LightFixture(id=f"{level.id}-light-{sid}", name=f"{room.name} light", level=level.id, position=(cx, cy)))
+            inset = min(0.3, (x1 - x0) / 4, (y1 - y0) / 4)
+            outlets = [(_r(x0 + inset), _r(y0 + inset)), (_r(x1 - inset), _r(y1 - inset))]
+            for i, pos in enumerate(outlets, 1):
+                els.append(Outlet(id=f"{level.id}-outlet-{sid}-{i}", name=f"{room.name} outlet", level=level.id, position=pos))
+            # A run whose device sits exactly at the riser tap (the ground-floor reference room's own
+            # corner can coincide with riser_xy) would be a zero-length path; skip it, nothing to draw.
+            if math.dist(riser_xy, (cx, cy)) > 0.05:
+                els.append(Wire(id=f"{level.id}-wire-{sid}-light", level=level.id, path=[riser_xy, (cx, cy)]))
+            for i, pos in enumerate(outlets, 1):
+                if math.dist(riser_xy, pos) > 0.05:
+                    els.append(Wire(id=f"{level.id}-wire-{sid}-outlet-{i}", level=level.id, path=[riser_xy, pos]))
+            if room.kind in ("kitchen", "bathroom") and wet_pos is None:
+                wet_pos, wet_level = (cx, cy), level.id
+
+    els.append(Panel(id="electrical-panel", name="Electrical panel", level=ground.id, position=riser_xy))
+    els.append(Pipe(id="electrical-riser", name="Electrical riser", kind="electrical", bottom_level=ground.id,
+                    top_level=levels[-1].id, position=riser_xy, diameter=0.08))
+    if wet_pos:
+        els.append(Pipe(id="plumbing-riser", name="Main riser", kind="water", bottom_level=ground.id,
+                        top_level=wet_level or levels[-1].id, position=wet_pos))
+
+
 def _porch(design: Design, polys: list[Polygon], els: list) -> None:
     p = design.porch
     if p is None or not polys:
@@ -446,6 +488,15 @@ def analyze(design: Design, prune: bool = False) -> Derived:
         for w in all_walls[level.id]:
             els.append(_wall_element(w, level, names, design.wall_material))
 
+    # A ring beam along every exterior wall, hanging from the top of its level — the same wall
+    # geometry already computed above, just a structural member instead of a partition. Interior
+    # partitions are assumed non-bearing, matching the "deliberately simple" solver (see README).
+    for level in levels:
+        for w in all_walls[level.id]:
+            if w.external:
+                els.append(Beam(id=f"{w.id}-beam", name=f"Beam over {names[w.rooms[0]]} {_side_name(w.side)} wall",
+                                level=level.id, start=w.start, end=w.end))
+
     # Roofs: whatever a storey covers that the storey above does not.
     for i, level in enumerate(levels):
         above = unary_union(footprints[levels[i + 1].id]) if i + 1 < len(levels) and footprints[levels[i + 1].id] else None
@@ -495,6 +546,7 @@ def analyze(design: Design, prune: bool = False) -> Derived:
             raise DesignError(f"column '{c.id}': unknown level '{c.level}'")
         els.append(Column(id=c.id, level=c.level, position=(_r(c.x), _r(c.y)), width=c.size, depth=c.size))
     _porch(design, footprints[levels[0].id], els)
+    _mep(design, levels, els)
 
     try:
         spec = BuildingSpec(building={"name": design.name, "description": design.description}, levels=levels, elements=els)

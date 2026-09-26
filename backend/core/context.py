@@ -52,6 +52,14 @@ def describe_element(el) -> str:
         return f"{head} kind={el.kind} at {_pt(el.position)} rot={el.rotation:g} {el.width:g}x{el.depth:g}x{el.height:g}"
     if el.type == "railing":
         return f"{head} path={_outline(el.path)} h={el.height:g}"
+    if el.type == "pipe":
+        return f"{head} kind={el.kind} at {_pt(el.position)} {el.bottom_level}->{el.top_level}"
+    if el.type == "outlet":
+        return f"{head} at {_pt(el.position)} h={el.height:g}"
+    if el.type in ("light", "panel"):
+        return f"{head} at {_pt(el.position)}"
+    if el.type == "wire":
+        return f"{head} path={_outline(el.path)} elevation={el.elevation:g}"
     return head
 
 
@@ -63,7 +71,12 @@ def describe_spec(spec: BuildingSpec) -> str:
     by_level: dict[str, list] = {l.id: [] for l in spec.levels}
     walls = {el.id: el for el in spec.elements if el.type == "wall"}
     for el in spec.elements:
-        level = el.level if hasattr(el, "level") else walls[el.wall].level
+        if el.type == "pipe":
+            level = el.bottom_level
+        elif hasattr(el, "level"):
+            level = el.level
+        else:
+            level = walls[el.wall].level
         by_level.setdefault(level, []).append(el)
     shown = 0
     for level_id, els in by_level.items():

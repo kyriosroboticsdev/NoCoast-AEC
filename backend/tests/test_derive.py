@@ -25,7 +25,9 @@ def test_walls_from_shared_and_free_edges():
     assert d.rooms["a"].sides == ["S", "W", "N"] and d.rooms["a"].neighbours == ["b"]
     slab = next(e for e in d.spec.elements if e.type == "slab")
     assert len(slab.outline) == 4
-    assert {e.type for e in d.spec.elements} == {"wall", "slab", "space", "roof"}
+    # beams (ring beam per exterior wall) and MEP rough-in (light/outlet/wire/panel + a plumbing
+    # riser, since "b" is a kitchen) are always derived alongside the structural shell
+    assert {e.type for e in d.spec.elements} == {"wall", "slab", "space", "roof", "beam", "light", "outlet", "wire", "panel", "pipe"}
 
 
 def test_overlap_and_unknown_level_are_rejected():
