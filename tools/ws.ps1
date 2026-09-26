@@ -25,11 +25,11 @@ function Invoke-Git {
     if ($LASTEXITCODE -ne 0) { throw "git $($args -join ' '): $($out -join "`n")" }
     $out
 }
-function Read-Git { & git.exe @args 2>$null }
+function Read-Git { $ErrorActionPreference = "Continue"; & git.exe @args 2>$null }
 
 $top = (Read-Git rev-parse --show-toplevel)
 if (-not $top) { throw "Run this inside the repository." }
-$common = (Resolve-Path (Join-Path $top (Read-Git rev-parse --git-common-dir))).Path
+$common = (Resolve-Path (Read-Git rev-parse --path-format=absolute --git-common-dir)).Path
 # The main clone's folder (worktrees hang off its parent) — works from any worktree.
 $mainRoot = Split-Path $common -Parent
 $worktreeHome = Join-Path (Split-Path $mainRoot -Parent) ((Split-Path $mainRoot -Leaf) + "-worktrees")
