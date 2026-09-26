@@ -158,6 +158,7 @@ function learnStep(step: Record<string, unknown>) {
 // the inspector: design-level facts first, the IFC attributes and property sets underneath.
 
 let design: api.Design | null = null; // the head version's design record (null before the first version, or for imports without one)
+let spaces: { id: string; level: string; outline: [number, number][] }[] = []; // IfcSpace outlines of the head version, for floor clicks
 let focus: { id: string; label: string } | null = null;
 
 const SIDE_NAMES: Record<string, string> = { N: "north", S: "south", E: "east", W: "west" };
@@ -175,32 +176,65 @@ function describeElement(id: string): { title: string; rows: [string, string][];
   const room = m ? design.rooms.find((r) => r.id === m![2]) : design.rooms.find((r) => r.id === id);
   if (room) {
     const rect = room.rect;
-    return { title: `${room.name}`, rows: [["level", levelLabel(room.level)], ["kind", room.kind], ...(rect ? [["size", `${rect[2]} × ${rect[3]} m (${(rect[2] * rect[3]).toFixed(1)} m²)`], ["position", `x ${rect[0]}, y ${rect[1]}`]] as [string, string][] : []),
-      ["doors", design.doors.filter((d) => d.room === room.id || d.to === room.id).map((d) => d.to === "outside" ? "entrance" : d.room === room.id ? roomLabel(d.to) : roomLabel(d.room)).join(", ") || "none"],
+    const shape: [string, string][] = rect
+      ? [["size", `${rect[2]} × ${rect[3]} m (${(rect[2] * rect[3]).toFixed(1)} m²)`], ["position", `x ${rect[0]}, y ${rect[1]}`]]
+      : room.poly ? [["shape", `${room.poly.length} sides${room.poly.some((e) => e.through) ? ", curved" : ""}${room.poly.some((e) => e.open) ? `, ${room.poly.filter((e) => e.open).length} open` : ""} (${polyArea(room.poly).toFixed(1)} m²)`]] : [];
+    const flags: [string, string][] = [...(room.roofed ? [] : [["roof", "none (open air)"]] as [string, string][]), ...(room.enclosed ? [] : [["walls", "none, columns carry the roof"]] as [string, string][])];
+    return { title: `${room.name}`, rows: [["level", levelLabel(room.level)], ["kind", room.kind], ...shape, ...flags,
+      ["doors", design.doors.filter((d) => d.room === room.id || d.to === room.id).map((d) => d.to === "outside" ? "entrance" : d.room === room.id ? roomLabel(d.to) : roomLabel(d.room ?? "")).join(", ") || "none"],
       ["windows", String(design.windows.filter((w) => w.room === room.id).length)],
       ["furniture", design.fixtures.filter((f) => f.room === room.id).map((f) => f.kind.replace(/_/g, " ")).join(", ") || "none"]], roomId: room.id };
   }
   m = id.match(/^(\w+?)-(floor|slab)$/);
   if (m) return { title: `Floor slab of ${levelLabel(m[1])}`, rows: [["level", levelLabel(m[1])]] };
   if (id === "roof" || id.endsWith("-roof")) return { title: id.startsWith("porch") ? "Porch roof" : "Roof", rows: [["kind", design.roof.kind], ...(design.roof.kind !== "flat" ? [["pitch", `${design.roof.pitch}°`]] as [string, string][] : []), ["overhang", `${design.roof.overhang} m`]] };
+  const where = (it: { side?: string | null; near?: [number, number] | null }): [string, string][] =>
+    it.near ? [["wall", `the one near x ${it.near[0]}, y ${it.near[1]}`]] : it.side ? [["side", SIDE_NAMES[it.side] ?? it.side]] : [];
   const door = design.doors.find((d) => d.id === id);
-  if (door) return { title: door.to === "outside" ? `Entrance door of ${roomLabel(door.room)}` : `Door between ${roomLabel(door.room)} and ${roomLabel(door.to)}`, rows: [["kind", door.kind], ...(door.width && door.height ? [["size", `${door.width} × ${door.height} m`]] as [string, string][] : []), ...(door.side ? [["side", SIDE_NAMES[door.side]]] as [string, string][] : []), ["position", `${Math.round(door.at * 100)}% along the wall`]], roomId: door.room };
+  if (door) return { title: door.wall ? `Door in ${door.wall}` : door.to === "outside" ? `Entrance door of ${roomLabel(door.room ?? "")}` : `Door between ${roomLabel(door.room ?? "")} and ${roomLabel(door.to)}`, rows: [["kind", door.kind], ...(door.width && door.height ? [["size", `${door.width} × ${door.height} m`]] as [string, string][] : []), ...where(door), ["position", `${Math.round(door.at * 100)}% along the wall`]], roomId: door.room ?? undefined };
   const win = design.windows.find((w) => w.id === id);
-  if (win) return { title: `Window on the ${SIDE_NAMES[win.side]} wall of ${roomLabel(win.room)}`, rows: [["kind", win.kind], ...(win.width && win.height ? [["size", `${win.width} × ${win.height} m`]] as [string, string][] : []), ...(win.sill !== null ? [["sill", `${win.sill} m`]] as [string, string][] : []), ["position", `${Math.round(win.at * 100)}% along the wall`]], roomId: win.room };
+  if (win) return { title: win.wall ? `Window in ${win.wall}` : win.side ? `Window on the ${SIDE_NAMES[win.side]} wall of ${roomLabel(win.room ?? "")}` : `Window of ${roomLabel(win.room ?? "")}`, rows: [["kind", win.kind], ...(win.width && win.height ? [["size", `${win.width} × ${win.height} m`]] as [string, string][] : []), ...(win.sill !== null ? [["sill", `${win.sill} m`]] as [string, string][] : []), ...where(win), ["position", `${Math.round(win.at * 100)}% along the wall`]], roomId: win.room ?? undefined };
   const stair = design.stairs.find((s) => s.id === id);
-  if (stair) return { title: `Stair in ${roomLabel(stair.room)}`, rows: [["along", `${SIDE_NAMES[stair.side]} wall`], ["width", `${stair.width} m`], ["to", stair.to_level ? levelLabel(stair.to_level) : "the level above"]], roomId: stair.room };
+  if (stair) return { title: `Stair in ${roomLabel(stair.room)}`, rows: [...(stair.side ? [["along", `${SIDE_NAMES[stair.side]} wall`]] as [string, string][] : where(stair)), ["width", `${stair.width} m`], ["to", stair.to_level ? levelLabel(stair.to_level) : "the level above"]], roomId: stair.room };
   const fx = design.fixtures.find((f) => f.id === id);
-  if (fx) return { title: `${fx.kind.replace(/_/g, " ")} in ${roomLabel(fx.room)}`.replace(/^\w/, (c) => c.toUpperCase()), rows: [["kind", fx.kind.replace(/_/g, " ")], ["placement", fx.side === "center" ? "middle of the room" : `against the ${SIDE_NAMES[fx.side]} wall`], ...(fx.width && fx.depth ? [["size", `${fx.width} × ${fx.depth}${fx.height ? " × " + fx.height : ""} m`]] as [string, string][] : [])], roomId: fx.room };
+  if (fx) return { title: `${fx.kind.replace(/_/g, " ")} in ${roomLabel(fx.room)}`.replace(/^\w/, (c) => c.toUpperCase()), rows: [["kind", fx.kind.replace(/_/g, " ")], ["placement", fx.near ? `against the wall near x ${fx.near[0]}, y ${fx.near[1]}` : fx.side === "center" ? "middle of the room" : `against the ${SIDE_NAMES[fx.side]} wall`], ...(fx.width && fx.depth ? [["size", `${fx.width} × ${fx.depth}${fx.height ? " × " + fx.height : ""} m`]] as [string, string][] : [])], roomId: fx.room };
   const bal = design.balconies.find((b) => b.id === id);
-  if (bal) return { title: `Balcony of ${roomLabel(bal.room)}`, rows: [["side", SIDE_NAMES[bal.side]], ["depth", `${bal.depth} m`]], roomId: bal.room };
+  if (bal) return { title: `Balcony of ${roomLabel(bal.room)}`, rows: [...where(bal), ["depth", `${bal.depth} m`]], roomId: bal.room };
   if (id.startsWith("porch")) return { title: "Porch", rows: design.porch ? [["side", SIDE_NAMES[design.porch.side]], ["depth", `${design.porch.depth} m`]] : [] };
   const col = design.columns.find((c) => c.id === id);
   if (col) return { title: "Column", rows: [["level", levelLabel(col.level)], ["position", `x ${col.x}, y ${col.y}`]] };
+  const free = design.elements.find((e) => e.id === id);
+  if (free) return { title: free.name ?? `Free-standing ${free.kind}`, rows: [["type", `free-standing ${free.kind}`], ["level", levelLabel(free.level)], ...(free.height ? [["height", `${free.height} m`]] as [string, string][] : []), ...(free.thickness ? [["thickness", `${free.thickness} m`]] as [string, string][] : [])] };
+  m = id.match(/^(\w+?)-col-([\w-]+)-([NSEW])(?:-\d+)?$/);
+  if (m) return { title: `Column on the ${SIDE_NAMES[m[3]]} side of ${roomLabel(m[2])}`, rows: [["level", levelLabel(m[1])], ["type", "column along an open edge"]], roomId: m[2] };
+  m = id.match(/^(\w+?)-rail-([\w-]+)-([NSEW])(?:-\d+)?$/);
+  if (m) return { title: `Railing on the ${SIDE_NAMES[m[3]]} side of ${roomLabel(m[2])}`, rows: [["level", levelLabel(m[1])], ["type", "railing of an unroofed room"]], roomId: m[2] };
   return null;
 }
 
-/** The room whose rectangle contains plan point (x, y) on `level`. */
+function polyArea(poly: api.Edge[]): number {
+  const pts = poly.map((e) => e.to);
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length];
+    a += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(a) / 2;
+}
+
+function inPolygon(pts: [number, number][], x: number, y: number): boolean {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, yi] = pts[i], [xj, yj] = pts[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** The room whose space outline (from the compiled spec, so curved and L-shaped rooms work) contains plan point (x, y) on `level`. */
 function roomAt(level: string, x: number, y: number) {
+  const hit = spaces.find((s) => s.level === level && inPolygon(s.outline, x, y));
+  if (hit) return design?.rooms.find((r) => `${level}-space-${r.id}` === hit.id) ?? null;
   return design?.rooms.find((r) => r.level === level && r.rect && x >= r.rect[0] && x <= r.rect[0] + r.rect[2] && y >= r.rect[1] && y <= r.rect[1] + r.rect[3]) ?? null;
 }
 
@@ -277,10 +311,13 @@ async function showVersion(v: api.Version | null) {
     notes.textContent = [...v.notes, ...checks, `elements: ${JSON.stringify(v.summary.counts)}`].join("\n");
     log("version", v.number, v.mode, "fetching", v.ifc_url);
     try {
-      design = (await api.fetchSpec(projectId, v.number)).design;
+      const s = await api.fetchSpec(projectId, v.number);
+      design = s.design;
+      spaces = s.spec.elements.filter((e) => e.type === "space").map((e) => ({ id: String(e.id), level: String(e.level), outline: e.outline as [number, number][] }));
     } catch (err) {
       log("design record unavailable:", String(err));
       design = null;
+      spaces = [];
     }
     const bytes = await api.fetchIfc(v.ifc_url);
     log("ifc fetched:", bytes.length, "bytes; loading into web-ifc");
@@ -339,6 +376,9 @@ function levelName(id: unknown): string {
 const SIDES: Record<string, string> = { N: "north", S: "south", E: "east", W: "west", center: "middle" };
 const side = (s: unknown) => SIDES[String(s)] ?? String(s ?? "");
 const kindName = (k: unknown) => String(k ?? "").replace(/_/g, " ");
+const pt = (p: unknown) => (Array.isArray(p) ? `(${p[0]}, ${p[1]})` : "");
+/** "on the north wall" or "on the wall near (x, y)" for a step that names a wall by side or point. */
+const wallOf = (step: Record<string, unknown>) => (step.near ? `on the wall near ${pt(step.near)}` : step.side ? `on the ${side(step.side)} wall` : "on the outer wall");
 
 function friendlyStep(step: Record<string, unknown>, ok: boolean, message: string): string {
   const k = step.step;
@@ -349,8 +389,12 @@ function friendlyStep(step: Record<string, unknown>, ok: boolean, message: strin
     case "building": return name ? `Calling the building “${name}”` : "Describing the building";
     case "level": return `Adding ${levelName(step.id ?? step.level)}${step.height ? `, ${step.height} m high` : ""}`;
     case "room": {
-      const verb = message.includes("updated") ? "Moving" : "Adding";
-      return `${verb} the ${name || roomName(step.id).replace(/^the /, "")} on ${levelName(step.level)}${size}`;
+      const verb = message.includes("updated") ? (step.poly ? "Reshaping" : "Moving") : "Adding";
+      const poly = Array.isArray(step.poly) ? (step.poly as unknown[]) : null;
+      const shape = poly ? ` (${poly.length}-sided${poly.some((e) => typeof e === "object" && e !== null && "through" in (e as object)) ? ", curved" : ""})` : size;
+      const kind = String(step.kind ?? "");
+      const air = kind === "courtyard" || kind === "terrace" || step.roofed === false ? ", open to the sky" : kind === "carport" || kind === "pergola" || step.enclosed === false ? ", on columns" : "";
+      return `${verb} the ${name || roomName(step.id).replace(/^the /, "")} on ${levelName(step.level)}${shape}${air}`;
     }
     case "layout": {
       const names = Array.isArray(step.rooms) ? (step.rooms as { name?: string }[]).map((r) => r.name).filter(Boolean) : [];
@@ -359,13 +403,18 @@ function friendlyStep(step: Record<string, unknown>, ok: boolean, message: strin
     }
     case "door": {
       const to = String(step.to ?? "outside");
-      if (to === "outside" || to === "exterior") return `${step.kind === "garage" ? "Garage door" : "Entrance door"} on the ${side(step.side) || "outer"} side of ${roomName(step.room)}`;
+      if (step.wall && !step.room) return `Door in the ${String(step.wall).replace(/-/g, " ")}`;
+      if (to === "outside" || to === "exterior") return `${step.kind === "garage" ? "Garage door" : "Entrance door"} ${wallOf(step)} of ${roomName(step.room)}`;
       return `Door between ${roomName(step.room)} and ${roomName(to)}${step.kind && step.kind !== "single" ? ` (${kindName(step.kind)})` : ""}`;
     }
-    case "window": return `${step.kind && step.kind !== "standard" ? kindName(step.kind) + " window" : "Window"} on the ${side(step.side)} wall of ${roomName(step.room)}`.replace(/^\w/, (c) => c.toUpperCase());
-    case "stair": return `Stairs in ${roomName(step.room)}, along the ${side(step.side ?? "W")} wall`;
-    case "furniture": return `A ${kindName(step.kind)} in ${roomName(step.room)}${step.side && step.side !== "center" ? `, against the ${side(step.side)} wall` : ""}`;
-    case "balcony": return `Balcony on the ${side(step.side)} side of ${roomName(step.room)}`;
+    case "window": {
+      if (step.wall && !step.room) return `Window in the ${String(step.wall).replace(/-/g, " ")}`;
+      return `${step.kind && step.kind !== "standard" ? kindName(step.kind) + " window" : "Window"} ${wallOf(step)} of ${roomName(step.room)}`.replace(/^\w/, (c) => c.toUpperCase());
+    }
+    case "stair": return `Stairs in ${roomName(step.room)}, along the ${step.near ? "wall near " + pt(step.near) : side(step.side ?? "W") + " wall"}`;
+    case "furniture": return `A ${kindName(step.kind)} in ${roomName(step.room)}${step.near ? `, against the wall near ${pt(step.near)}` : step.side && step.side !== "center" ? `, against the ${side(step.side)} wall` : ""}`;
+    case "balcony": return `Balcony ${wallOf(step)} of ${roomName(step.room)}`;
+    case "element": return `A free-standing ${kindName(step.kind)}${name ? ` “${name}”` : ""} on ${levelName(step.level)}`;
     case "porch": return `Porch along the ${side(step.side ?? "S")} side`;
     case "roof": return `${String(step.kind ?? "flat").replace(/^\w/, (c) => c.toUpperCase())} roof${step.pitch ? ` at ${step.pitch}°` : ""}`;
     case "material": return `${String(step.material ?? step.kind ?? "").replace(/^\w/, (c) => c.toUpperCase())} exterior walls`;

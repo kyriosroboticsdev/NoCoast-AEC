@@ -108,16 +108,19 @@ export const sendPrompt = (id: string, prompt: string, baseVersion: number | nul
 export const fetchSpec = (id: string, number: number) =>
   json<{ design: Design | null; spec: { elements: Record<string, unknown>[]; levels: { id: string; name: string; elevation: number; height: number }[] } }>(`/projects/${id}/versions/${number}/spec`);
 
+export interface Edge { to: [number, number]; through: [number, number] | null; open: boolean }
+
 export interface Design {
   name: string;
   levels: { id: string; name: string | null; height: number; below_ground: boolean }[];
-  rooms: { id: string; name: string; level: string; kind: string; rect: [number, number, number, number] | null; area: number | null }[];
-  doors: { id: string; room: string; to: string; side: string | null; at: number; kind: string; width: number; height: number }[];
-  windows: { id: string; room: string; side: string; at: number; kind: string; width: number; height: number; sill: number | null }[];
-  stairs: { id: string; room: string; side: string; to_level: string | null; width: number }[];
-  fixtures: { id: string; room: string; kind: string; side: string; at: number; rotation: number | null; width: number | null; depth: number | null; height: number | null }[];
-  balconies: { id: string; room: string; side: string; depth: number }[];
+  rooms: { id: string; name: string; level: string; kind: string; rect: [number, number, number, number] | null; poly: Edge[] | null; area: number | null; roofed: boolean; enclosed: boolean }[];
+  doors: { id: string; room: string | null; to: string; side: string | null; near: [number, number] | null; wall: string | null; at: number; kind: string; width: number; height: number }[];
+  windows: { id: string; room: string | null; side: string | null; near: [number, number] | null; wall: string | null; at: number; kind: string; width: number; height: number; sill: number | null }[];
+  stairs: { id: string; room: string; side: string | null; near: [number, number] | null; to_level: string | null; width: number }[];
+  fixtures: { id: string; room: string; kind: string; side: string; near: [number, number] | null; at: number; rotation: number | null; width: number | null; depth: number | null; height: number | null }[];
+  balconies: { id: string; room: string; side: string | null; near: [number, number] | null; depth: number }[];
   columns: { id: string; level: string; x: number; y: number }[];
+  elements: { id: string; kind: string; level: string; name: string | null; height: number | null; thickness: number | null }[];
   porch: { side: string; depth: number } | null;
   roof: { kind: string; pitch: number; overhang: number };
   wall_material: string | null;

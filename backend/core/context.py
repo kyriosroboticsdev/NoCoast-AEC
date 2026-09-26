@@ -93,6 +93,37 @@ def describe_spec(spec: BuildingSpec) -> str:
 SIDE_WORDS = {"N": "north", "S": "south", "E": "east", "W": "west"}
 
 
+def _edges(edges) -> str:
+    """Polygon edges as the model wrote them: (x,y) vertices, arcs as (x,y)~via(x,y), open edges marked."""
+    out = []
+    for e in edges:
+        s = _pt(e.to)
+        if e.through:
+            s += f"~via{_pt(e.through)}"
+        if e.open:
+            s += "open"
+        out.append(s)
+    return "[" + " ".join(out) + "]"
+
+
+def _where(item) -> str:
+    if getattr(item, "near", None) is not None:
+        return f" near={_pt(item.near)}"
+    side = getattr(item, "side", None)
+    return f" side={side}" if side else ""
+
+
+def _free_line(e) -> str:
+    head = f"{e.kind} id={e.id}" + (f' "{e.name}"' if e.name else "") + f" {e.level}"
+    if e.kind == "wall":
+        return head + f" path={_edges(e.path or [])}" + (f" h={e.height:g}" if e.height else "")
+    if e.kind in ("slab", "roof"):
+        return head + f" poly={_edges(e.poly or [])}"
+    if e.kind == "column":
+        return head + f" at {_pt(e.at)}"
+    return head + f" {_pt(e.start)}->{_pt(e.end)}"
+
+
 def describe_focus(design: Design, focus: str) -> str:
     """What the user has selected in the viewer, in words the model can act on. `focus` is a spec
     element id (`L1-wall-hall-W`, `door-kitchen-hall`, `L1-space-hall`, …) or a design id."""
@@ -156,22 +187,32 @@ def describe_design(design: Design, derived: Derived | None = None) -> str:
             continue
         lines.append(f"rooms on {level.id}:")
         for r in rooms:
-            rect = f" rect={[round(v, 2) for v in r.rect]} ({r.area_m2:.0f} m2)" if r.rect else " (auto-placed)"
+            if r.poly:
+                rect = f" poly={_edges(r.poly)} ({r.area_m2:.0f} m2)"
+            elif r.rect:
+                rect = f" rect={[round(v, 2) for v in r.rect]} ({r.area_m2:.0f} m2)"
+            else:
+                rect = " (auto-placed)"
+            flags = ("" if r.roofed else " no-roof") + ("" if r.enclosed else " no-walls")
             extra = ""
             if derived and r.id in derived.rooms:
                 info = derived.rooms[r.id]
                 extra = f" exterior={','.join(info.sides) or '-'} adjacent={','.join(info.neighbours) or '-'}"
-            lines.append(f"  room id={r.id} \"{r.name}\" kind={r.kind}{rect}{extra}")
+                if info.open_sides:
+                    extra += f" open={','.join(info.open_sides)}"
+            lines.append(f"  room id={r.id} \"{r.name}\" kind={r.kind}{rect}{flags}{extra}")
+    if design.elements:
+        lines.append("free elements: " + "; ".join(_free_line(e) for e in design.elements))
     if design.doors:
-        lines.append("doors: " + "; ".join(f"{d.id} {d.room}->{d.to}" + (f" side={d.side}" if d.side else "") + (f" {d.kind}" if d.kind != "single" else "") for d in design.doors))
+        lines.append("doors: " + "; ".join(f"{d.id} " + (f"in wall {d.wall}" if d.wall else f"{d.room}->{d.to}") + _where(d) + (f" {d.kind}" if d.kind != "single" else "") for d in design.doors))
     if design.windows:
-        lines.append("windows: " + "; ".join(f"{w.id} {w.room} side={w.side}" + (f" at={w.at:g}" if w.at != 0.5 else "") + (f" {w.kind}" if w.kind != "standard" else "") for w in design.windows))
+        lines.append("windows: " + "; ".join(f"{w.id} " + (f"in wall {w.wall}" if w.wall else f"{w.room}") + _where(w) + (f" at={w.at:g}" if w.at != 0.5 and w.near is None else "") + (f" {w.kind}" if w.kind != "standard" else "") for w in design.windows))
     if design.stairs:
-        lines.append("stairs: " + "; ".join(f"{s.id} in {s.room} side={s.side} to={s.to_level or 'level above'}" for s in design.stairs))
+        lines.append("stairs: " + "; ".join(f"{s.id} in {s.room}{_where(s)} to={s.to_level or 'level above'}" for s in design.stairs))
     if design.fixtures:
-        lines.append("furniture: " + "; ".join(f"{f.id} {f.kind} in {f.room}" + (f" side={f.side}" if f.side != "center" else "") for f in design.fixtures))
+        lines.append("furniture: " + "; ".join(f"{f.id} {f.kind} in {f.room}" + (_where(f) if f.near is not None or f.side != "center" else "") for f in design.fixtures))
     if design.balconies:
-        lines.append("balconies: " + "; ".join(f"{b.id} {b.room} side={b.side} depth={b.depth:g}" for b in design.balconies))
+        lines.append("balconies: " + "; ".join(f"{b.id} {b.room}{_where(b)} depth={b.depth:g}" for b in design.balconies))
     if design.columns:
         lines.append("columns: " + "; ".join(f"{c.id} {c.level} ({c.x:g},{c.y:g})" for c in design.columns))
     if design.porch:

@@ -143,7 +143,7 @@ def _check_one(design: Design, d: Derived, req: Requirement) -> CheckResult:
         if req.room and not rooms:
             return CheckResult(req, "unmet", f"no room matches '{req.room}'")
         ids = {r.id for r in rooms}
-        wins = [w for w in design.windows if w.room in ids and (req.side is None or w.side == req.side)]
+        wins = [w for w in design.windows if w.room in ids and (req.side is None or (w.side or d.sides.get(w.id)) == req.side)]
         return CheckResult(req, "met" if len(wins) >= n else "unmet", f"{len(wins)} window(s)" + (f" on side {req.side}" if req.side else "") + f", wanted {n}")
 
     if k == "door":
@@ -182,7 +182,7 @@ def _check_one(design: Design, d: Derived, req: Requirement) -> CheckResult:
 
     if k == "feature":
         item = (req.item or "").lower()
-        if "garage" in item or "carport" in item:
+        if "garage" in item and "carport" not in item:
             have = [r for r in design.rooms if r.kind == "garage"]
             return CheckResult(req, "met" if have else "unmet", "garage present" if have else "no garage room")
         if "porch" in item or "veranda" in item:
@@ -190,6 +190,23 @@ def _check_one(design: Design, d: Derived, req: Requirement) -> CheckResult:
         if "basement" in item or "cellar" in item or "underground" in item:
             have = design.basements()
             return CheckResult(req, "met" if have else "unmet", f"{have} basement level(s)" if have else "no level below ground")
+        for kind, words in (("courtyard", ("courtyard", "patio", "atrium")), ("terrace", ("terrace", "roof deck", "deck")),
+                            ("carport", ("carport",)), ("pergola", ("pergola", "loggia", "gazebo"))):
+            if any(w in item for w in words):
+                rooms = [r for r in design.rooms if r.kind == kind]
+                named = [e for e in design.elements if e.name and any(w in e.name.lower() for w in words)]
+                if rooms or named:
+                    return CheckResult(req, "met", f"{kind} present" + (f" ({rooms[0].name})" if rooms else f" ({named[0].name})"))
+                return CheckResult(req, "unmet", f"no {kind} room or element")
+        if "curved" in item or "round" in item or "arc" in item:
+            arcs = [r for r in design.rooms if r.poly and any(e.through for e in r.poly)] + [e for e in design.elements if e.kind == "wall" and e.path and any(x.through for x in e.path)]
+            return CheckResult(req, "met" if arcs else "unmet", f"{len(arcs)} curved wall(s)" if arcs else "no curved walls")
+        if "l-shaped" in item or "l shaped" in item or "polygon" in item:
+            polys = [r for r in design.rooms if r.poly]
+            return CheckResult(req, "met" if polys else "unmet", f"{len(polys)} non-rectangular room(s)" if polys else "all rooms are rectangles")
+        named = [e for e in design.elements if e.name and (item in e.name.lower() or e.name.lower() in item)]
+        if named:
+            return CheckResult(req, "met", f"free element '{named[0].name}'")
         if "balcon" in item or "terrace" in item:
             return CheckResult(req, "met" if design.balconies else "unmet", f"{len(design.balconies)} balcony(ies)")
         if "open" in item:  # open plan: kitchen and living share a wall (best we can do without merged rooms)

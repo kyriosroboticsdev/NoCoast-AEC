@@ -17,11 +17,12 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from schemas.bim import FixtureKind, RoofShape, WallMaterial
-from schemas.design import (MAX_STOREYS, BalconyDef, ColumnDef, Design, DoorDef, DoorKind, FixtureDef, LevelDef, PorchDef, RoofDef,
-                            RoomDef, RoomKind, Side, StairDef, WindowDef, WindowKind, guess_kind, slug)
+from schemas.design import (MAX_STOREYS, UNROOFED_KINDS, UNWALLED_KINDS, BalconyDef, ColumnDef, Design, DoorDef, DoorKind, Edge,
+                            FixtureDef, FreeDef, FreeKind, LevelDef, PorchDef, RoofDef, RoomDef, RoomKind, Side, StairDef,
+                            WindowDef, WindowKind, guess_kind, slug)
 
 StepKind = Literal["building", "level", "room", "layout", "door", "window", "stair", "furniture", "balcony", "porch", "roof",
-                   "column", "material", "remove", "note"]
+                   "column", "material", "element", "remove", "note"]
 
 
 class StepError(ValueError):
@@ -32,12 +33,20 @@ class LayoutRoom(BaseModel):
     model_config = ConfigDict(extra="ignore")
     name: str
     kind: Optional[str] = None
-    rect: list[float] = Field(description="[x, y, width, depth]")
+    rect: Optional[list[float]] = Field(None, description="[x, y, width, depth]")
+    poly: Optional[list[Edge]] = Field(None, description="any outline instead of rect")
+    roofed: Optional[bool] = None
+    enclosed: Optional[bool] = None
 
     @field_validator("rect", mode="before")
     @classmethod
     def _rect(cls, v):
         return Step._rect(v)
+
+    @field_validator("poly", mode="before")
+    @classmethod
+    def _poly(cls, v):
+        return Step._poly(v)
 
 
 class Step(BaseModel):
@@ -50,11 +59,21 @@ class Step(BaseModel):
     level: Optional[str] = Field(None, description="room/column: storey id ('L1' ground, 'L2' above …)")
     kind: Optional[str] = Field(None, description="room kind | door kind | window kind | furniture kind | roof kind")
     rect: Optional[list[float]] = Field(None, description="room: [x, y, width, depth] in metres, (x,y) = south-west corner")
+    poly: Optional[list[Edge]] = Field(None, description="room: outline as vertices [[x,y],…]; an item may be {to:[x,y], through:[x,y]} (arc) or {to:[x,y], open:true} (no wall)")
+    path: Optional[list[Edge]] = Field(None, description="element wall: polyline [[x,y],…] (arcs as for poly)")
+    roofed: Optional[bool] = Field(None, description="room: false = no roof (courtyard, terrace)")
+    enclosed: Optional[bool] = Field(None, description="room: false = no walls, columns instead (carport, pergola)")
     area: Optional[float] = Field(None, description="room: target m² when rect is null")
     room: Optional[str] = Field(None, description="door/window/stair/furniture/balcony: room id")
-    to: Optional[str] = Field(None, description="door: other room id, or 'outside'")
+    to: Optional[str] = Field(None, description="door: other room id, or 'outside'; element beam: end point")
     side: Optional[str] = Field(None, description="N|S|E|W (furniture also 'center'); porch/balcony/window side")
+    near: Optional[list[float]] = Field(None, description="[x, y]: a point on or next to the wall meant (any room shape)")
+    wall: Optional[str] = Field(None, description="door/window: id of a free-standing wall element to sit in")
     at: Optional[float] = Field(None, description="0..1 position along the wall (0 = west/south end)")
+    position: Optional[list[float]] = Field(None, description="element column: [x, y]")
+    start: Optional[list[float]] = Field(None, description="element beam: [x, y]")
+    end: Optional[list[float]] = Field(None, description="element beam: [x, y]")
+    thickness: Optional[float] = Field(None, description="element wall/slab/roof")
     width: Optional[float] = None
     height: Optional[float] = None
     depth: Optional[float] = None
@@ -92,6 +111,39 @@ class Step(BaseModel):
         if isinstance(v, dict):
             v = [v.get("x"), v.get("y"), v.get("width", v.get("w")), v.get("depth", v.get("d", v.get("height")))]
         return v
+
+    @field_validator("poly", "path", mode="before")
+    @classmethod
+    def _poly(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, dict) and "points" in v:
+            v = v["points"]
+        if not isinstance(v, list):
+            raise ValueError("poly/path is a list of points [[x, y], …]")
+        out = []
+        for item in v:
+            if isinstance(item, dict):
+                d = dict(item)
+                if "to" not in d and "x" in d:
+                    d = {"to": [d.pop("x"), d.pop("y")], **d}
+                if "arc" in d and "through" not in d:
+                    d["through"] = d.pop("arc")
+                out.append(d)
+            else:
+                out.append({"to": item})
+        return out
+
+    @field_validator("near", "position", "start", "end", mode="before")
+    @classmethod
+    def _point(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, dict):
+            v = [v.get("x"), v.get("y")]
+        if not isinstance(v, (list, tuple)) or len(v) != 2:
+            raise ValueError("a point is [x, y]")
+        return [float(v[0]), float(v[1])]
 
     @field_validator("level", "to_level", mode="before")
     @classmethod
@@ -137,6 +189,33 @@ def _literal(step: Step, value, allowed: tuple, what: str):
     return value
 
 
+def _pt_or_none(v):
+    return None if v is None else (float(v[0]), float(v[1]))
+
+
+def _fmt(exc: Exception) -> str:
+    text = str(exc)
+    if "Value error, " in text:
+        text = text.split("Value error, ", 1)[1].split(" [type=")[0]
+    return text.strip()
+
+
+def _room_flags(kind: str, roofed, enclosed) -> dict:
+    """Roof/wall flags: explicit values, else the RoomDef default for the kind (None)."""
+    return {"roofed": roofed, "enclosed": enclosed}
+
+
+def _flag_text(room: RoomDef) -> str:
+    bits = []
+    if not room.roofed:
+        bits.append("no roof")
+    if not room.enclosed:
+        bits.append("no walls, columns")
+    elif room.poly and any(e.open for e in room.poly):
+        bits.append(f"{sum(1 for e in room.poly if e.open)} open edge(s)")
+    return f" ({', '.join(bits)})" if bits else ""
+
+
 def _remove(design: Design, id_: str) -> str:
     """Remove any def by id; rooms and levels cascade."""
     lvl = design.level(id_)
@@ -159,6 +238,12 @@ def _remove(design: Design, id_: str) -> str:
         design.balconies = [b for b in design.balconies if b.room != rid]
         n -= len(design.doors) + len(design.windows) + len(design.stairs) + len(design.fixtures) + len(design.balconies)
         return f"removed room {rid}" + (f" and {n} item(s) in it" if n else "")
+    free = design.element(id_)
+    if free is not None:
+        design.elements = [e for e in design.elements if e.id != id_]
+        design.doors = [x for x in design.doors if x.wall != id_]
+        design.windows = [x for x in design.windows if x.wall != id_]
+        return f"removed {free.kind} {id_}"
     for attr in ("doors", "windows", "stairs", "fixtures", "balconies", "columns"):
         items = getattr(design, attr)
         keep = [i for i in items if i.id != id_]
@@ -232,9 +317,14 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
                 raise StepError(f"room '{name}': unknown level '{level}'; add it first with a level step "
                                 f"(existing: {', '.join(l.id for l in d.levels)})")
             kind = _literal(step, step.kind, RoomKind.__args__, "room kind") if step.kind else guess_kind(name)
-            room = RoomDef(id=rid, name=name, level=level, kind=kind, rect=tuple(step.rect) if step.rect else None, area=step.area)
+            try:
+                room = RoomDef(id=rid, name=name, level=level, kind=kind, rect=tuple(step.rect) if step.rect else None,
+                               poly=step.poly, area=step.area, **_room_flags(kind, step.roofed, step.enclosed))
+            except ValueError as exc:
+                raise StepError(f"room '{name}': {_fmt(exc)}") from exc
             d.rooms.append(room)
-            return d, f"room {rid}: {name} on {level}" + (f" at {list(room.rect)}" if room.rect else " (auto-placed)")
+            where = f" at {list(room.rect)}" if room.rect else f" ({len(room.poly)}-sided, {room.area_m2:.0f} m²)" if room.poly else " (auto-placed)"
+            return d, f"room {rid}: {name} on {level}{where}" + _flag_text(room)
         if step.name:
             existing.name = step.name
         if step.level:
@@ -243,11 +333,26 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
             existing.level = step.level
         if step.kind:
             existing.kind = _literal(step, step.kind, RoomKind.__args__, "room kind")
-        if step.rect:
-            existing.rect = tuple(step.rect)
+            existing.roofed = step.roofed if step.roofed is not None else existing.kind not in UNROOFED_KINDS
+            existing.enclosed = step.enclosed if step.enclosed is not None else existing.kind not in UNWALLED_KINDS
+        try:
+            if step.poly:
+                existing.poly = None
+                existing = existing.model_copy(update={"poly": step.poly, "rect": None})
+                RoomDef.model_validate(existing.model_dump())
+                d.rooms = [existing if r.id == existing.id else r for r in d.rooms]
+            elif step.rect:
+                existing.rect = tuple(step.rect)
+                existing.poly = None
+        except ValueError as exc:
+            raise StepError(f"room '{existing.id}': {_fmt(exc)}") from exc
+        if step.roofed is not None:
+            existing.roofed = step.roofed
+        if step.enclosed is not None:
+            existing.enclosed = step.enclosed
         if step.area:
             existing.area = step.area
-        return d, f"room {existing.id}: updated" + (f" -> {list(existing.rect)}" if step.rect else "")
+        return d, f"room {existing.id}: updated" + (f" -> {list(existing.rect)}" if step.rect else " -> new outline" if step.poly else "") + _flag_text(existing)
 
     if k == "layout":
         level = step.level or "L1"
@@ -269,7 +374,13 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
             if other is not None:
                 raise StepError(f"layout: id '{rid}' is already used by something that is not a room")
             kind = _literal(step, lr.kind, RoomKind.__args__, "room kind") if lr.kind else (existing.kind if existing else guess_kind(lr.name))
-            keep.append(RoomDef(id=rid, name=lr.name, level=level, kind=kind, rect=tuple(lr.rect), area=existing.area if existing else None))
+            if not lr.rect and not lr.poly:
+                raise StepError(f"layout: room '{lr.name}' needs a rect or poly")
+            try:
+                keep.append(RoomDef(id=rid, name=lr.name, level=level, kind=kind, rect=tuple(lr.rect) if lr.rect else None, poly=lr.poly,
+                                    area=existing.area if existing else None, **_room_flags(kind, lr.roofed, lr.enclosed)))
+            except ValueError as exc:
+                raise StepError(f"layout: room '{lr.name}': {_fmt(exc)}") from exc
         gone = [r.id for r in d.rooms if r.level == level and r.id not in seen]
         d.rooms = [r for r in d.rooms if r.level != level]
         removed = []
@@ -280,6 +391,15 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
         return d, f"layout {level}: {', '.join(r.id for r in keep)}" + (f"; {'; '.join(removed)}" if removed else "")
 
     if k == "door":
+        if step.wall and not step.room:
+            if d.element(step.wall) is None or d.element(step.wall).kind != "wall":
+                raise StepError(f"door: unknown free wall '{step.wall}' (free walls: {', '.join(e.id for e in d.elements if e.kind == 'wall') or 'none'})")
+            kind = _literal(step, step.kind or "single", DoorKind.__args__, "door kind")
+            did = step.id or d.unique_id(f"door-{step.wall}")
+            d.doors = [x for x in d.doors if x.id != did]
+            d.doors.append(DoorDef(id=did, room=None, to="outside", wall=step.wall, near=_pt_or_none(step.near),
+                                   at=step.at if step.at is not None else 0.5, kind=kind, width=step.width, height=step.height))
+            return d, f"door {did}: in free wall {step.wall}"
         room = d.room(_need(step, "room"))
         if room is None:
             raise StepError(f"door: unknown room '{step.room}' (rooms: {', '.join(r.id for r in d.rooms)})")
@@ -295,31 +415,42 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
         side = _literal(step, step.side, ("N", "S", "E", "W"), "side") if step.side else None
         did = step.id or d.unique_id(f"door-{room.id}-{to if to != 'outside' else (side or 'out').lower()}")
         d.doors = [x for x in d.doors if x.id != did]
-        d.doors.append(DoorDef(id=did, room=room.id, to=to, side=side, at=step.at if step.at is not None else 0.5, kind=kind,
-                               width=step.width, height=step.height))
-        return d, f"door {did}: {room.id} -> {to}" + (f" ({kind})" if kind != "single" else "")
+        d.doors.append(DoorDef(id=did, room=room.id, to=to, side=side, near=_pt_or_none(step.near), at=step.at if step.at is not None else 0.5,
+                               kind=kind, width=step.width, height=step.height))
+        return d, f"door {did}: {room.id} -> {to}" + (f" ({kind})" if kind != "single" else "") + (f" near {step.near}" if step.near else "")
 
     if k == "window":
+        kind = _literal(step, step.kind or "standard", WindowKind.__args__, "window kind")
+        if step.wall and not step.room:
+            if d.element(step.wall) is None or d.element(step.wall).kind != "wall":
+                raise StepError(f"window: unknown free wall '{step.wall}' (free walls: {', '.join(e.id for e in d.elements if e.kind == 'wall') or 'none'})")
+            wid = step.id or d.unique_id(f"win-{step.wall}")
+            d.windows = [x for x in d.windows if x.id != wid]
+            d.windows.append(WindowDef(id=wid, room=None, wall=step.wall, near=_pt_or_none(step.near), at=step.at if step.at is not None else 0.5,
+                                       kind=kind, width=step.width, height=step.height, sill=step.sill))
+            return d, f"window {wid}: in free wall {step.wall}"
         room = d.room(_need(step, "room"))
         if room is None:
             raise StepError(f"window: unknown room '{step.room}' (rooms: {', '.join(r.id for r in d.rooms)})")
-        side = _literal(step, _need(step, "side"), ("N", "S", "E", "W"), "side")
-        kind = _literal(step, step.kind or "standard", WindowKind.__args__, "window kind")
-        wid = step.id or d.unique_id(f"win-{room.id}-{side}")
+        side = _literal(step, step.side, ("N", "S", "E", "W"), "side") if step.side else None
+        if side is None and step.near is None:
+            raise StepError("window needs `side` (N|S|E|W) or `near` [x, y]")
+        wid = step.id or d.unique_id(f"win-{room.id}-{side or 'near'}")
         d.windows = [x for x in d.windows if x.id != wid]
-        d.windows.append(WindowDef(id=wid, room=room.id, side=side, at=step.at if step.at is not None else 0.5, kind=kind,
-                                   width=step.width, height=step.height, sill=step.sill))
-        return d, f"window {wid}: {room.id} side {side}" + (f" ({kind})" if kind != "standard" else "")
+        d.windows.append(WindowDef(id=wid, room=room.id, side=side, near=_pt_or_none(step.near), at=step.at if step.at is not None else 0.5,
+                                   kind=kind, width=step.width, height=step.height, sill=step.sill))
+        where = f"side {side}" if side else f"near {step.near}"
+        return d, f"window {wid}: {room.id} {where}" + (f" ({kind})" if kind != "standard" else "")
 
     if k == "stair":
         room = d.room(_need(step, "room"))
         if room is None:
             raise StepError(f"stair: unknown room '{step.room}' (rooms: {', '.join(r.id for r in d.rooms)})")
-        side = _literal(step, step.side or "W", ("N", "S", "E", "W"), "side")
+        side = _literal(step, step.side, ("N", "S", "E", "W"), "side") if step.side else (None if step.near else "W")
         sid = step.id or d.unique_id(f"stair-{room.id}")
         d.stairs = [x for x in d.stairs if x.id != sid]
-        d.stairs.append(StairDef(id=sid, room=room.id, side=side, to_level=step.to_level, width=step.width or 1.0))
-        return d, f"stair {sid}: in {room.id} along side {side}"
+        d.stairs.append(StairDef(id=sid, room=room.id, side=side, near=_pt_or_none(step.near), to_level=step.to_level, width=step.width or 1.0))
+        return d, f"stair {sid}: in {room.id} along " + (f"side {side}" if side else f"the wall near {step.near}")
 
     if k == "furniture":
         room = d.room(_need(step, "room"))
@@ -329,19 +460,22 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
         side = _literal(step, step.side or "center", ("N", "S", "E", "W", "center"), "side")
         fid = step.id or d.unique_id(f"{kind}-{room.id}")
         d.fixtures = [x for x in d.fixtures if x.id != fid]
-        d.fixtures.append(FixtureDef(id=fid, room=room.id, kind=kind, side=side, at=step.at if step.at is not None else 0.5,
+        d.fixtures.append(FixtureDef(id=fid, room=room.id, kind=kind, side=side, near=_pt_or_none(step.near), at=step.at if step.at is not None else 0.5,
                                      rotation=step.rotation, width=step.width, depth=step.depth, height=step.height))
-        return d, f"{kind} {fid}: in {room.id}" + (f" against side {side}" if side != "center" else " (centre)")
+        where = f" against the wall near {step.near}" if step.near else f" against side {side}" if side != "center" else " (centre)"
+        return d, f"{kind} {fid}: in {room.id}{where}"
 
     if k == "balcony":
         room = d.room(_need(step, "room"))
         if room is None:
             raise StepError(f"balcony: unknown room '{step.room}'")
-        side = _literal(step, _need(step, "side"), ("N", "S", "E", "W"), "side")
-        bid = step.id or d.unique_id(f"balcony-{room.id}-{side}")
+        side = _literal(step, step.side, ("N", "S", "E", "W"), "side") if step.side else None
+        if side is None and step.near is None:
+            raise StepError("balcony needs `side` (N|S|E|W) or `near` [x, y]")
+        bid = step.id or d.unique_id(f"balcony-{room.id}-{side or 'near'}")
         d.balconies = [x for x in d.balconies if x.id != bid]
-        d.balconies.append(BalconyDef(id=bid, room=room.id, side=side, depth=step.depth or 1.5))
-        return d, f"balcony {bid}: {room.id} side {side}"
+        d.balconies.append(BalconyDef(id=bid, room=room.id, side=side, near=_pt_or_none(step.near), depth=step.depth or 1.5))
+        return d, f"balcony {bid}: {room.id} " + (f"side {side}" if side else f"near {step.near}")
 
     if k == "porch":
         side = _literal(step, step.side or "S", ("N", "S", "E", "W"), "side")
@@ -363,6 +497,25 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
         d.columns = [c for c in d.columns if c.id != cid]
         d.columns.append(ColumnDef(id=cid, level=level, x=step.x, y=step.y, size=step.width or 0.3))
         return d, f"column {cid} at ({step.x:g}, {step.y:g}) on {level}"
+
+    if k == "element":
+        kind = _literal(step, (step.kind or "").lower(), FreeKind.__args__, "element kind")
+        level = step.level or "L1"
+        if d.level(level) is None:
+            raise StepError(f"element: unknown level '{level}' (levels: {', '.join(l.id for l in d.levels)})")
+        eid = step.id or d.unique_id(slug(step.name) if step.name else kind)
+        if eid in d.all_ids() and d.element(eid) is None:
+            raise StepError(f"element: id '{eid}' is already used by something else")
+        size = step.width
+        try:
+            e = FreeDef(id=eid, kind=kind, level=level, name=step.name, path=step.path, poly=step.poly,
+                        at=_pt_or_none(step.position or step.near), start=_pt_or_none(step.start), end=_pt_or_none(step.end),
+                        height=step.height, thickness=step.thickness, width=size, depth=step.depth)
+        except ValueError as exc:
+            raise StepError(f"element '{eid}': {_fmt(exc)}") from exc
+        d.elements = [x for x in d.elements if x.id != eid]
+        d.elements.append(e)
+        return d, f"{kind} {eid}" + (f' "{step.name}"' if step.name else "") + f" on {level}"
 
     if k == "material":
         mat = _literal(step, (step.material or step.kind or "").lower(), WallMaterial.__args__, "material")

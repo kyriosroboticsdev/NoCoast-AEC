@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 
+from agents import shapes
 from agents.template_planner import parse_requirements, template_steps
 from core.derive import DesignError, analyze
 from llm.base import LLMRequest, OnNote, OnText
@@ -122,6 +123,34 @@ class MockLLM:
                     side = derived.rooms[room.id].sides[0] if derived.rooms[room.id].sides else "S"
                     return [{"step": "balcony", "room": room.id, "side": side}, {"step": "door", "room": room.id, "to": "outside", "side": side, "kind": "sliding"}]
                 return [{"step": "stair", "room": room.id, "side": "W"}]
+
+        m = re.search(r"\bmake (the )?([\w -]+?) l-shaped", text)
+        if m and design.room(m.group(2).strip()):
+            room = design.room(m.group(2).strip())
+            poly = shapes.l_shape(design, room)
+            if poly:
+                return [{"step": "room", "id": room.id, "poly": poly}]
+        m = re.search(r"\b(curved|rounded|round|bow) (wall|window|side)\b.*?\b(to|on|in|for) (the )?([\w -]+?)(?: on the (north|south|east|west)( side)?)?$", text)
+        if m and design.room(m.group(5).strip()):
+            room = design.room(m.group(5).strip())
+            poly = shapes.curved_side(design, room, (m.group(6) or "")[:1].upper() or None)
+            if poly:
+                return [{"step": "room", "id": room.id, "poly": poly}]
+        m = re.search(r"\badd (a |an )?(carport|courtyard|patio|terrace|pergola|gazebo|garden wall|fence|deck)\b", text)
+        if m:
+            what = m.group(2)
+            top = design.levels[-1].id
+            if what == "carport":
+                return [{"step": "room", "name": "Carport", "kind": "carport", "level": "L1", "rect": shapes.beside(design, "L1", 6, 6)}]
+            if what in ("courtyard", "patio"):
+                return [{"step": "room", "name": "Courtyard", "kind": "courtyard", "level": "L1", "rect": shapes.beside(design, "L1", 4, 4)}]
+            if what == "terrace":
+                return [{"step": "room", "name": "Terrace", "kind": "terrace", "level": top, "rect": shapes.beside(design, top, 4, 4)}]
+            if what in ("pergola", "gazebo"):
+                return shapes.pergola_steps(design)
+            if what in ("garden wall", "fence"):
+                return shapes.garden_wall_steps(design)
+            return shapes.deck_steps(design)
 
         m = re.search(r"\bput (a |an )?([\w ]+?) in (the )?([\w -]+)", text)
         if m and design.room(m.group(4).strip()):
