@@ -59,6 +59,7 @@ frontend/
   src/api.ts            backend client incl. SSE-over-POST parser
   src/main.ts           the rudimentary UI: prompt box, status, notes, undo, import, download
   src-tauri/            Tauri 2 shell; spawns `python backend/main.py` on start, kills it on exit
+  scripts/dev.mjs       `npm run start`: backend (if not already running) + Vite in one terminal
   scripts/copy-wasm.mjs copies web-ifc's wasm into public/wasm (postinstall)
   scripts/check-ifc.mjs parses an IFC with web-ifc in Node and counts meshes (smoke test)
 ```
@@ -79,7 +80,8 @@ python -m pytest                # 31 tests, ~6 s
 # frontend (browser)
 cd frontend
 npm install                     # also copies web-ifc.wasm to public/wasm
-npm run dev                     # http://localhost:5173  (expects the backend on 8765)
+npm run start                   # starts the backend (if none answers on 8765) + Vite → http://localhost:5173
+npm run dev                     # Vite only; run `python main.py` in backend/ yourself
 
 # frontend (desktop, Tauri)
 npm run desktop                 # = tauri dev; starts Vite and the Python backend itself
@@ -356,7 +358,8 @@ Both sides log verbosely so a failure can be diagnosed from two pastes:
   API call and SSE event, IFC size, web-ifc init and mesh counts, and uncaught errors. The status line
   under the prompt shows the last event or error too.
 
-Common ones: *backend not reachable* → start `python main.py` in `backend/` (or set `VITE_BACKEND_URL`);
+Common ones: *backend not reachable* / a browser CORS error with *status (null)* → nothing is listening on
+8765; use `npm run start`, or run `python main.py` in `backend/` in a second terminal (or set `VITE_BACKEND_URL`);
 *web-ifc init FAILED* → `npm install` did not run `scripts/copy-wasm.mjs`, so `public/wasm/` is empty;
 *language model unavailable* → the provider's own message follows (missing key, workspace id, model file,
 `llama-server` exit code with the last log line).
