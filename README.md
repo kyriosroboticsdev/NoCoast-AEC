@@ -2,8 +2,9 @@
 
 Text prompt → building model → **IFC**, with the language model kept swappable and the building built
 as a stream of small deltas so the user watches it grow and can iterate on it. Python/FastAPI backend
-(IfcOpenShell + shapely), vanilla TypeScript frontend rendering with
-[web-ifc](https://github.com/thatopen/engine_web-ifc) + three.js, wrapped in Tauri for the desktop.
+(IfcOpenShell + shapely), React frontend rendering with [That Open](https://github.com/ThatOpen)
+(web-ifc + fragments + three.js), wrapped in Tauri for the desktop. Every prompt produces a new project
+version, shown as a 3D turn card in the history (`packages/ifc-viewer`).
 
 ![prototype](docs/screenshot.png)
 
@@ -68,13 +69,15 @@ backend/
   tests/                pytest; runs entirely on the mock LLM; tests/evals/prompts.json = accuracy set
   tools/eval.py         score the configured model on the evaluation set
 frontend/
-  src/viewer.ts         web-ifc → three.js meshes, orbit controls, click-to-identify
-  src/api.ts            backend client incl. SSE-over-POST parser
-  src/main.ts           the rudimentary UI: prompt box, step log, previews, notes, undo, import, download
-  src-tauri/            Tauri 2 shell; spawns `python backend/main.py` on start, kills it on exit
-  scripts/dev.mjs       `npm run start`: (re)starts the backend + Vite in one terminal
-  scripts/copy-wasm.mjs copies web-ifc's wasm into public/wasm (postinstall)
-  scripts/check-ifc.mjs parses an IFC with web-ifc in Node and counts meshes (smoke test)
+  src/viewer/BimViewer.ts  That Open wrapper: model tree, properties, class visibility, hide/isolate
+  src/api/client.ts        backend client incl. SSE-over-POST parser
+  src/App.tsx, main.tsx    React entry point and top-level layout
+  src/components/         Sidebar, TopBar, Workspace, Composer, LevelTree, DataViews, ViewerOverlays, …
+  src/turns.ts            version history cards, wiring `packages/ifc-viewer`
+  src/platform.ts         the only frontend file that knows about Tauri
+  src-tauri/              Tauri 2 shell; starts `backend/.venv` python on start, kills it on exit
+  scripts/copy-wasm.mjs   copies web-ifc's wasm + fragments worker into public/ (postinstall)
+packages/ifc-viewer/     turn-card viewer: snapshot ⇄ live orbitable view, at most 3 live canvases
 ```
 
 ## 3. Running it
@@ -88,19 +91,23 @@ cd backend
 pip install -r requirements.txt
 cp .env.example .env            # optional; defaults to the mock LLM
 python main.py                  # http://127.0.0.1:8765
-python -m pytest                # 68 tests, ~12 s
+python -m pytest                # 92 tests, ~15 s
 python tools/eval.py            # accuracy of the configured model on tests/evals/prompts.json
 
-# frontend (browser)
+# frontend (once)
 cd frontend
-npm install                     # also copies web-ifc.wasm to public/wasm
-npm run start                   # (re)starts the backend + Vite → http://localhost:5173
-npm run dev                     # Vite only; run `python main.py` in backend/ yourself
+npm install                     # also copies web-ifc.wasm + the fragments worker into public/
 
-# frontend (desktop, Tauri)
-npm run desktop                 # = tauri dev; starts Vite and the Python backend itself
-npm run tauri build             # installer under src-tauri/target/release/bundle
+# desktop: Vite + Tauri with hot reload; the app starts backend/.venv python if nothing is on 8765
+npm run dev
+npx tauri build --no-bundle     # release exe under src-tauri/target/release (drop --no-bundle for an installer)
+
+# browser only (no desktop shell); start the backend yourself first
+npm run vite:dev                # http://localhost:5173
 ```
+
+The desktop shell looks for `backend/.venv` and falls back to `python` on the PATH, so create the
+venv there.
 
 Environment (see `backend/.env.example`; `.env` is re-read before every LLM call and on `/health`, so
 switching provider, model or key takes effect without a restart — only paths and the port need one):
@@ -115,8 +122,9 @@ switching provider, model or key takes effect without a restart — only paths a
 | `BIM_MAX_REPAIRS` | fix rounds for rejected steps per prompt (default 2) |
 | `BIM_VERIFY_ROUNDS` | fix rounds for unmet requirements per prompt (default 1; 0 = report only) |
 | `BIM_OUTPUT_DIR`, `BIM_DB_PATH`, `BIM_PORT` | storage and port |
-| `VITE_BACKEND_URL` (frontend) | backend origin, default `http://127.0.0.1:8765` |
-| `BIM_NO_BACKEND`, `BIM_BACKEND_DIR`, `BIM_PYTHON` (Tauri) | control how the shell spawns the backend |
+| `BIM_BACKEND_URL` (Tauri) or `?backend=` (browser) | backend origin for the UI, default `http://127.0.0.1:8765` |
+| `BIM_NO_BACKEND`, `BIM_BACKEND_DIR` (Tauri) | don't spawn the backend / where `backend/` is |
+| `BIM_AUTOLOAD`, `BIM_PROMPT`, `BIM_SMOKE_SELECT` (Tauri) | smoke-test hooks: load a file, run a prompt, select an element class |
 
 **Local `.gguf` models.** Fetch a prebuilt `llama-server` once, then point the backend at your model
 folder; the server is started on first use and stopped with the backend:
@@ -421,45 +429,56 @@ SSE events: `event: <stage>` + `data: {"seq", "t", "stage", "message", "data"}`,
 
 ### 4.13 Frontend
 
-Vanilla TypeScript + Vite. `viewer.ts` opens the IFC bytes with `web-ifc` (`IfcAPI.OpenModel` →
-`StreamAllMeshes`), builds one three.js mesh per placed geometry with the IFC surface colour/transparency,
-and frames the model. **Selection:** clicking a wall, door, window, stair or piece of furniture selects it
-(tinted blue; clicking a floor selects the room under the click by point-in-rectangle on the version's
-design record). The selection shows as a removable chip above the prompt and is sent with the next prompt
-as `focus`, so "add a window" with the west wall of the Hall selected means that wall. The **inspector**
-under the top bar shows the design-level facts (room size, kind, doors, windows, furniture; door kind and
-position; wall side and thickness) and, folded underneath, the IFC attributes and property sets read
-through `web-ifc`. Read-only: edits go through the prompt. After every preview and
-every accepted version the whole IFC is reloaded (milliseconds for a house). `main.ts` keeps one project
-id in `localStorage` (`?project=<id>` deep-links another, `?prompt=…` sends a prompt on load), renders
-the step log, and offers Undo, Import IFC and Download IFC. A slim section slider above the prompt sweeps a
-clipping plane through the model in 0.1 m steps over its own extent (previews included), with sticky snap
-points at every storey's floor and just under its ceiling, read from the IFC's `IfcBuildingStorey` elevations
-and wall tops in the browser; the cut survives reloads. While a request runs and "follow build" is on, the
-cut follows the storey the current steps work on (just under its ceiling, a dollhouse view: roof and upper
-storeys hidden) and releases to full height when the roof lands or the request finishes; dragging the slider
-takes over for that build. Every reload diffs the new IFC against the old one by GlobalId: new elements
-fade in over 300 ms, removed ones fade out over 200 ms, and the camera stays put. New buildings arrive one
-storey at a time (one `layout` step per storey, then openings and furniture one by one); the preview worker
-waits 0.5 s after a step so a burst of steps renders as one change. The server-side slices and live-build
-endpoints exist in the backend but have no UI. The Tauri shell (`src-tauri/`) spawns
-`python main.py` on startup (skip with `BIM_NO_BACKEND=1`) and kills it on exit.
+React + Vite. The app keeps one project id in `localStorage` and reopens it on start. The first prompt
+creates a design (`POST /projects/{id}/prompt`); later prompts send the head as `base_version`, so
+they are edits. Pipeline stages stream into the step list. **Undo** reverts to the head's parent,
+recorded as a new version, and **New** starts a fresh project.
+
+Two viewers share the page, both on That Open with the same pinned versions:
+
+- **Main viewer** (`src/viewer/BimViewer.ts`): the selected version at full size, with the model tree,
+  properties, class visibility, and hide/isolate. After every accepted version the **whole IFC is
+  reloaded**; incremental patching by GlobalId is deferred.
+- **History cards** (`packages/ifc-viewer`, wired in `src/turns.ts`): one card per version, showing a
+  snapshot that turns into a live orbitable view on hover. At most 3 live WebGL canvases exist at
+  once. **Inspect** on a card loads that version into the main viewer. Each version also gets a
+  1024×768 PNG snapshot, held in memory for now (see §7).
+
+**Keep `web-ifc` at 0.0.77.** In 0.0.78 the browser wasm does not match its own JavaScript, and That
+Open fails every conversion. `frontend/package.json` enforces this with an `overrides` entry.
+
+`Open IFC…` and `Sample` view a file in the main viewer without adding it to the project; the
+backend's `/projects/{id}/import` endpoint has no button yet. The server-side slicer and live-build
+endpoints (§4.11) exist in the backend but have no UI yet.
+
+The Tauri shell (`src-tauri/`) starts `backend/.venv` python unless something already listens on the
+port (skip with `BIM_NO_BACKEND=1`). A Windows Job Object ties the backend to the app, so it also dies
+on a crash or force-quit. The shell also provides native open/save dialogs and raw-bytes
+`read_ifc`/`write_ifc` commands. `src/platform.ts` is the only frontend file that knows about Tauri.
 
 ## 4.14 Troubleshooting
 
-- **Backend console** (`python main.py`): every request, LLM call with timing, each step applied or
-  rejected, and full tracebacks. `BIM_LOG_LEVEL=DEBUG` adds the complete prompts and replies.
-- **Browser console** (F12 → Console, filter `[nocoast]`): page/backend URL, health, every API call and
-  SSE event, IFC sizes, web-ifc init and mesh counts, uncaught errors.
+Both sides log verbosely so a failure can be diagnosed from two pastes:
 
-Common ones: *backend not reachable* / CORS *status (null)* → nothing listens on 8765; use `npm run start`.
-*web-ifc init FAILED* → `public/wasm/` is empty; run `npm install`. *language model unavailable* → the
-provider's own message follows. *the model produced no applicable steps* → every step was rejected; the
-step log shows each reason (usually an edit request the model could not map onto existing ids).
+- **Backend console** (`python main.py`): every request, LLM call with timing, each step applied or
+  rejected with the validation errors that went back to the model, and full tracebacks.
+  `BIM_LOG_LEVEL=DEBUG` adds the complete prompts and replies. `llama-server`'s own output is in
+  `backend/.llama/server.log`.
+- **Browser console** (F12 → Console, filter `[nocoast]`): page/backend URL, health, project open, every
+  API call and SSE event, IFC size, web-ifc init and mesh counts, and uncaught errors. The status line
+  under the prompt shows the last event or error too.
+
+Common ones: *backend not reachable* / a browser CORS error with *status (null)* → nothing is listening on
+8765; run `python main.py` in `backend/` in a second terminal (or pass `?backend=` / `BIM_BACKEND_URL`);
+*viewer failed to start* or a 404 for `wasm/` or `fragments-worker.mjs` → `npm install` did not run
+`scripts/copy-wasm.mjs` (run `node scripts/copy-wasm.mjs` in `frontend/`); *language model unavailable* →
+the provider's own message follows (missing key, workspace id, model file, `llama-server` exit code with
+the last log line). *the model produced no applicable steps* → every step was rejected; the step log
+shows each reason (usually an edit request the model could not map onto existing ids).
 
 ## 5. Tests
 
-`cd backend && python -m pytest` — 68 tests on the mock LLM, no network: derivation (walls from shared
+`cd backend && python -m pytest` — 92 tests on the mock LLM, no network: derivation (walls from shared
 and free edges, opening placement, stairs and wells, roofs over partial footprints, id stability when a
 room moves) · steps (application, rejection messages, cascades, the streaming runner rejecting an
 overlapping room mid-stream) · checks against a template design and the eval fixtures · raw ops
