@@ -62,7 +62,15 @@ export class Viewer {
     const sun = new THREE.DirectionalLight(0xffffff, 1.5);
     sun.position.set(30, 50, 20);
     this.scene.add(sun);
-    this.scene.add(new THREE.GridHelper(60, 60, 0x333844, 0x22252d));
+    const grid = new THREE.GridHelper(60, 60, 0x333844, 0x22252d);
+    (grid.material as THREE.Material).clippingPlanes = [this.clipPlane];
+    this.scene.add(grid);
+    // A faint ground plane at z=0 so basements read as below grade; it obeys the section cut like everything else.
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200),
+      new THREE.MeshBasicMaterial({ color: 0x0b0d12, transparent: true, opacity: 0.75, depthWrite: false, clippingPlanes: [this.clipPlane] }));
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.02;
+    this.scene.add(ground);
     this.scene.add(this.root);
 
     // The wasm lives in public/wasm (copied by scripts/copy-wasm.mjs); resolve it against the page,

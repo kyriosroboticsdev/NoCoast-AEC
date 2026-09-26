@@ -13,9 +13,10 @@ Rules:
 - Split compound sentences: "three bedrooms and two bathrooms upstairs" → room bedroom value=3 level=L2; room bathroom value=2 level=L2.
 - Levels: L1 = ground floor, L2 = the floor above ("upstairs" in a two-storey house). Only set `level` when the user says so.
 - Convert feet to metres (1 ft = 0.3048 m).
-- Only the kinds above exist. What the builder CAN do: up to 6 storeys, rectangular rooms, doors, windows, straight
+- Only the kinds above exist. What the builder CAN do: up to 40 storeys (2.2–12 m each), basements (kind=feature
+  item=basement; rooms "in the basement" are room_level level=B1), rectangular rooms, doors, windows, straight
   stairs, furniture and appliances, balconies, a porch, flat/gable/hip roofs, exterior wall materials.
-  It CANNOT do: curved walls, split levels, basements, pools, landscaping, elevators, specific brands, HVAC,
+  It CANNOT do: curved walls, split levels, pools, landscaping, elevators, specific brands, HVAC,
   interior finishes/colours. Mark such requirements supported=false and keep them in the list.
 - Aesthetic wishes ("modern", "cozy") are kind=style; they are not checked.
 - `summary`: one sentence describing the building.
@@ -38,7 +39,8 @@ both storeys at the same place.
 
 Steps (fields not listed are left null):
   {"step":"building","name","description"}
-  {"step":"level","id":"L1"|"L2"…,"name","height"}         levels in order, L1 first
+  {"step":"level","id":"L1"|"L2"…|"B1"|"B2","name","height"}   storeys in order, L1 first; basements B1 (then B2)
+        stack below ground: no windows there, no roof, a stair from a B1 room goes up to L1
   {"step":"room","name","level","kind","rect":[x,y,w,d]}   kind: living|kitchen|dining|office|bedroom|bathroom|hall|garage|utility|storage|other
   {"step":"door","room","to":<room id>|"outside","side","at","kind"}   kind: single|double|sliding|french|garage; side only for outside doors
   {"step":"window","room","side":"N|S|E|W","at":0..1,"kind"}          kind: standard|large|floor|small; the side must be an exterior wall

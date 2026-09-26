@@ -331,6 +331,7 @@ function roomName(id: unknown): string {
 
 function levelName(id: unknown): string {
   if (typeof id !== "string") return "the ground floor";
+  if (/^B\d+$/i.test(id)) { const b = Number(id.slice(1)); return b === 1 ? "the basement" : `basement level ${b}`; }
   const n = Number(id.replace(/^L/i, ""));
   return n === 1 ? "the ground floor" : n === 2 ? "the first floor" : `level ${n}`;
 }
