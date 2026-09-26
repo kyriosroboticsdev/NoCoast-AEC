@@ -49,12 +49,20 @@ STYLES = {
     "Fixture:appliance": ((0.82, 0.82, 0.84), 0.0),
     "Fixture:car": ((0.70, 0.15, 0.15), 0.0),
     "Fixture:fire": ((0.45, 0.35, 0.32), 0.0),
+    "Pipe:water": ((0.55, 0.56, 0.58), 0.0),
+    "Pipe:electrical": ((0.30, 0.30, 0.32), 0.0),
+    "Outlet": ((0.94, 0.93, 0.88), 0.0),
+    "Light": ((1.00, 0.97, 0.80), 0.0),
+    "Panel": ((0.28, 0.29, 0.31), 0.0),
+    "Wire": ((0.85, 0.65, 0.13), 0.0),
 }
 MATERIALS = {"Wall": "Masonry", "Wall:masonry": "Masonry", "Wall:concrete": "Concrete", "Wall:timber": "Timber",
              "Wall:plaster": "Plaster", "Wall:stone": "Stone", "Wall:glass": "Glass", "Slab": "Concrete",
              "Roof": "Concrete", "Roof:pitched": "Roof tiles", "Door": "Timber", "Window": "Glass", "Column": "Concrete",
              "Beam": "Timber", "Stair": "Timber", "Railing": "Steel", "Fixture:wood": "Timber", "Fixture:soft": "Fabric",
-             "Fixture:sanitary": "Ceramic", "Fixture:appliance": "Steel", "Fixture:car": "Steel", "Fixture:fire": "Stone"}
+             "Fixture:sanitary": "Ceramic", "Fixture:appliance": "Steel", "Fixture:car": "Steel", "Fixture:fire": "Stone",
+             "Pipe:water": "Copper", "Pipe:electrical": "Steel", "Outlet": "Plastic", "Light": "Plastic",
+             "Panel": "Steel", "Wire": "Plastic"}
 
 
 @dataclass

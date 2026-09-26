@@ -160,13 +160,56 @@ class Railing(_Element):
     elevation: float = Field(0.0, description="Offset above the level (e.g. the top of a balcony slab)")
 
 
+class Pipe(_Element):
+    """A vertical riser — water supply/drain, or the electrical conduit stack — running through the
+    building at one plan position. Not a routed network: one stack per system, see core/derive.py."""
+
+    type: Literal["pipe"] = "pipe"
+    kind: Literal["water", "electrical"] = "water"
+    bottom_level: str = Field(description="Level the riser starts at")
+    top_level: str = Field(description="Level the riser rises through to")
+    position: Point
+    diameter: float = Field(0.06, gt=0)
+
+
+class Outlet(_Element):
+    type: Literal["outlet"] = "outlet"
+    level: str
+    position: Point
+    height: float = Field(0.3, gt=0, description="Mounting height above the floor")
+
+
+class LightFixture(_Element):
+    type: Literal["light"] = "light"
+    level: str
+    position: Point
+
+
+class Panel(_Element):
+    """The electrical distribution board the building's circuits run from."""
+
+    type: Literal["panel"] = "panel"
+    level: str
+    position: Point
+
+
+class Wire(_Element):
+    """A branch-circuit run: a polyline at a fixed height above the level (in the ceiling/wall void)."""
+
+    type: Literal["wire"] = "wire"
+    level: str
+    path: list[Point] = Field(min_length=2)
+    elevation: float = Field(2.7, description="Height above the level the run sits at")
+
+
 Element = Annotated[
-    Union[Wall, Slab, Roof, Door, Window, Column, Beam, Space, Stair, Fixture, Railing],
+    Union[Wall, Slab, Roof, Door, Window, Column, Beam, Space, Stair, Fixture, Railing, Pipe, Outlet, LightFixture, Panel, Wire],
     Field(discriminator="type"),
 ]
 
-ELEMENT_ORDER = {"wall": 0, "slab": 1, "space": 2, "column": 3, "beam": 4, "roof": 5, "door": 6, "window": 7,
-                 "stair": 8, "fixture": 9, "railing": 10}
+ELEMENT_ORDER = {"wall": 0, "slab": 1, "space": 2, "column": 3, "beam": 4, "roof": 5, "pipe": 6, "door": 7,
+                 "window": 8, "stair": 9, "outlet": 10, "panel": 11, "wire": 12, "fixture": 13, "light": 14,
+                 "railing": 15}
 
 
 def polygon_area(outline: list[Point]) -> float:
@@ -229,8 +272,12 @@ class BuildingSpec(BaseModel):
                 errors.append(f"{where}: a {el.shape} roof needs a rectangular outline")
             if isinstance(el, Stair) and el.to_level is not None and el.to_level not in levels:
                 errors.append(f"{where}: unknown to_level '{el.to_level}'")
-            if isinstance(el, Railing) and sum(math.dist(a, b) for a, b in zip(el.path, el.path[1:])) < 0.05:
+            if isinstance(el, (Railing, Wire)) and sum(math.dist(a, b) for a, b in zip(el.path, el.path[1:])) < 0.05:
                 errors.append(f"{where}: path has no length")
+            if isinstance(el, Pipe):
+                for attr in ("bottom_level", "top_level"):
+                    if getattr(el, attr) not in levels:
+                        errors.append(f"{where}: unknown level '{getattr(el, attr)}'")
             if isinstance(el, (Door, Window)):
                 wall = walls.get(el.wall)
                 if wall is None:
