@@ -90,14 +90,16 @@ Environment (see `backend/.env.example`):
 
 | var | meaning |
 |---|---|
-| `LLM_PROVIDER` | `mock` (default, no model needed), `ollama`, `openai` |
+| `LLM_PROVIDER` | `mock` (default, no model needed), `claude`, `ollama`, `openai` |
+| `ANTHROPIC_API_KEY` | key for the `claude` provider (or use an `ant auth login` profile) |
 | `LLM_MODEL`, `LLM_BASE_URL`, `LLM_API_KEY` | model id / endpoint / key for the chosen provider |
 | `BIM_MAX_REPAIRS` | validate→repair round trips per LLM call (default 2) |
 | `BIM_OUTPUT_DIR`, `BIM_DB_PATH`, `BIM_PORT` | storage and port |
 | `VITE_BACKEND_URL` (frontend) | backend origin, default `http://127.0.0.1:8765` |
 | `BIM_NO_BACKEND`, `BIM_BACKEND_DIR`, `BIM_PYTHON` (Tauri) | control how the shell spawns the backend |
 
-To use a local model: install [Ollama](https://ollama.com), `ollama pull llama3.1` (or any model that
+To use Claude: put `LLM_PROVIDER=claude` and `ANTHROPIC_API_KEY=sk-ant-…` in `backend/.env`
+(optionally `LLM_MODEL=claude-sonnet-5` for cheaper runs). To use a local model: install [Ollama](https://ollama.com), `ollama pull llama3.1` (or any model that
 supports JSON-schema `format`), set `LLM_PROVIDER=ollama LLM_MODEL=llama3.1`. Any server with an
 OpenAI-compatible `/chat/completions` (vLLM, LM Studio, llama.cpp, a hosted API, a fine-tuned model)
 works with `LLM_PROVIDER=openai LLM_BASE_URL=http://host:port/v1`.
@@ -220,6 +222,7 @@ class LLM(Protocol):
 | provider | how JSON is enforced | notes |
 |---|---|---|
 | `mock` | regexes over the prompt (`llm/mock.py`) | no network; backs the tests; fallback when a model is down |
+| `claude` | Anthropic SDK, `output_config.format` json_schema (`llm/claude.py`) | `claude-opus-5` by default; schema rewritten to the strict subset |
 | `ollama` | `/api/chat` with `format: <json schema>` (grammar-constrained) | local models |
 | `openai` | `/chat/completions` with `response_format: json_schema` | vLLM, LM Studio, llama.cpp, hosted, fine-tuned |
 

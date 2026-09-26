@@ -6,4 +6,5 @@ numpy
 python-dotenv
 python-multipart
 httpx
+anthropic>=1.8
 pytest
