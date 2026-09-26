@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "postinstall": "node scripts/copy-wasm.mjs",
+    "start": "node scripts/dev.mjs",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
