@@ -435,3 +435,53 @@ conflict 409, ops, revert, import, bad import) · the legacy stateless endpoints
 - **Multi-user**: ops are already the right unit; only server-side ordering is missing.
 - **Fine-tuned model**: train on the stored `(context, prompt) → ops/program` pairs; plug in via
   `LLM_PROVIDER=openai` pointing at its server.
+
+## 8. Contributing
+
+Five people work on this repo, so `main` only changes through reviewed pull requests. These are team
+rules. GitHub does not enforce them yet, so everyone, and every coding agent, follows them by hand.
+Agents get the same rules as instructions in [`AGENTS.md`](AGENTS.md).
+
+**Workflow**
+
+1. Branch from an up-to-date `main`. Name it `feat/…`, `fix/…`, `docs/…` or `chore/…`.
+2. Keep a pull request to one change. Say what changed and how you tested it.
+3. Get **one approval** before merging. If the change touches someone else's area (below), that
+   person reviews it.
+4. **Squash merge**, then delete the branch.
+5. **Never push to `main` directly, and never force-push to `main`.** A new commit after approval
+   needs a fresh look from the reviewer.
+6. Resolve every review comment, or reply to it, before merging.
+
+**Checks to run before asking for review**
+
+| Area touched | Command | Where |
+|---|---|---|
+| `backend/` | `python -m pytest` | `backend/` (use its `.venv`) |
+| `frontend/` | `npm run vite:build` (typecheck + production build) | `frontend/` |
+| `packages/ifc-viewer/` | `npm test` and `npm run typecheck` | `packages/ifc-viewer/` |
+| anything the viewer renders | `npm run e2e` (headless Chrome) | `packages/ifc-viewer/` |
+
+The frontend consumes the viewer package from source. A change to `packages/ifc-viewer/` therefore
+also needs the frontend checks.
+
+**Areas and reviewers**
+
+| Area | Reviewer |
+|---|---|
+| `backend/` | kyriosroboticsdev |
+| `frontend/` | Kailash Kannan |
+| `packages/ifc-viewer/` | Drona Thoka |
+| everything else | anyone |
+
+**Things that must not happen**
+
+- **Committing secrets.** The repo is **public**. `.env` is gitignored; keep API keys there and nowhere
+  else. If a key is ever committed, revoke it first, then clean the history.
+- **Upgrading `web-ifc` past 0.0.77.** In 0.0.78 the browser wasm does not match its own JavaScript,
+  and the viewers fail on every file. Node tests do not catch this, so re-test in a browser first.
+- **Mismatched That Open versions.** `three`, `web-ifc`, `@thatopen/fragments` and
+  `@thatopen/components` are pinned together. Upgrade them together, in one pull request, in both
+  `frontend/` and `packages/ifc-viewer/`.
+- **Committing generated files:** `node_modules/`, `dist/`, `backend/output/`, `frontend/public/wasm/`,
+  `frontend/public/fragments-worker.mjs`, or test screenshots.
