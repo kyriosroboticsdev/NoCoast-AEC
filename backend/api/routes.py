@@ -97,6 +97,7 @@ def _with_url(v: Version) -> dict:
 
 @router.get("/health")
 def health() -> dict:
+    config.reload()
     return {"ok": True, "planners": list(PLANNERS), "llm": {"provider": config.LLM_PROVIDER, "model": config.LLM_MODEL or None,
                                                              "providers": list(PROVIDERS)}}
 

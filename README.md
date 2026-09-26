@@ -59,7 +59,7 @@ frontend/
   src/api.ts            backend client incl. SSE-over-POST parser
   src/main.ts           the rudimentary UI: prompt box, status, notes, undo, import, download
   src-tauri/            Tauri 2 shell; spawns `python backend/main.py` on start, kills it on exit
-  scripts/dev.mjs       `npm run start`: backend (if not already running) + Vite in one terminal
+  scripts/dev.mjs       `npm run start`: (re)starts the backend + Vite in one terminal
   scripts/copy-wasm.mjs copies web-ifc's wasm into public/wasm (postinstall)
   scripts/check-ifc.mjs parses an IFC with web-ifc in Node and counts meshes (smoke test)
 ```
@@ -80,7 +80,7 @@ python -m pytest                # 31 tests, ~6 s
 # frontend (browser)
 cd frontend
 npm install                     # also copies web-ifc.wasm to public/wasm
-npm run start                   # starts the backend (if none answers on 8765) + Vite → http://localhost:5173
+npm run start                   # (re)starts the backend + Vite → http://localhost:5173
 npm run dev                     # Vite only; run `python main.py` in backend/ yourself
 
 # frontend (desktop, Tauri)
@@ -88,7 +88,8 @@ npm run desktop                 # = tauri dev; starts Vite and the Python backen
 npm run tauri build             # installer under src-tauri/target/release/bundle
 ```
 
-Environment (see `backend/.env.example`):
+Environment (see `backend/.env.example`; `.env` is re-read before every LLM call and on `/health`, so
+switching provider, model or key takes effect without a restart — only paths and the port need one):
 
 | var | meaning |
 |---|---|
