@@ -51,9 +51,13 @@ export async function openIfc(): Promise<{ name: string; data: Uint8Array } | nu
   });
 }
 
-export async function saveIfc(name: string, data: Uint8Array): Promise<string | null> {
+export const saveIfc = (name: string, data: Uint8Array) => saveFile(name, data, "ifc");
+
+/** Save bytes through the native dialog (desktop) or a download (browser). Returns the path/name, or null if cancelled. */
+export async function saveFile(name: string, data: Uint8Array, kind: "ifc" | "zip"): Promise<string | null> {
   if (isDesktop) {
-    const path = await save({ defaultPath: name, filters: IFC_FILTER });
+    const filters = kind === "zip" ? [{ name: "Export bundle", extensions: ["zip"] }] : IFC_FILTER;
+    const path = await save({ defaultPath: name, filters });
     if (!path) return null;
     await invoke("write_ifc", data, { headers: { path } });
     return path;

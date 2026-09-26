@@ -55,6 +55,7 @@ backend/
   ifc/                  IfcOpenShell compiler (project, walls, slabs, roofs, openings) + lifter (IFC → IR)
   store/db.py           SQLite projects/versions; IFC files under backend/output/projects/<id>/vN.ifc
   api/routes.py         HTTP API; api/sse.py streams pipeline progress as Server-Sent Events
+  export/               final deliverable: validate, stamp provenance, zip bundle (route: api/export.py)
   agents/               stateless planners for /plan and /generate (template regex, llm)
   tests/                pytest; runs entirely on the mock LLM
 frontend/
@@ -83,7 +84,7 @@ python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt   # Windows; .venv/bin/pip elsewhere
 cp .env.example .env            # optional; defaults to the mock LLM
 .venv\Scripts\python main.py    # http://127.0.0.1:8765 (API docs at /docs)
-.venv\Scripts\python -m pytest  # 33 tests
+.venv\Scripts\python -m pytest  # 41 tests
 
 # frontend (once)
 cd frontend
@@ -341,11 +342,31 @@ storage replace this module with the same interface.
 | `GET /projects/{id}/versions/{n}/ifc` | | the IFC file |
 | `GET /projects/{id}/versions/{n}/spec` | | `{version, spec, program, guids}` |
 | `GET /projects/{id}/versions/{n}/context` | | text — exactly what the LLM sees when editing |
+| `GET /projects/{id}/versions/{n}/validate` | `?thorough=true` adds schema rules | validation report |
+| `POST /projects/{id}/versions/{n}/export` | multipart `options` (JSON) + `snapshots` (PNG) | stamped `.ifc` or `.zip` bundle |
 | `POST /plan`, `/build`, `/generate` | | stateless one-shots (scripts, tests) |
 
 SSE events: `event: <stage>` + `data: {"stage", "message", "data"}` where stage ∈
 `program, edit, apply, solve, compile, done, error`. `done.data` is the version record incl. `ifc_url`;
 repair rounds carry `data.errors`.
+
+**Export** (`backend/export/`, route in `api/export.py`) turns a version into a deliverable. The stored
+version is never modified; every export works on a fresh copy.
+
+1. **Validate.** IfcOpenShell schema validation, plus the schema's WHERE rules when `thorough` (a few
+   seconds). Structural checks: one project with units, building storeys, unique GlobalIds, and
+   elements with geometry placed in a storey. Errors block export when `strict` (the default) and the
+   route returns 422 with the report. Warnings never block.
+2. **Stamp.** The STEP header gets author, organization, originating system and file name.
+   `IfcProject` gets the project name and a `NoCoast_Export` property set: export time, source project
+   and version, validation status, and the prompt history that produced this version (walked through
+   the version parents). GlobalIds are unchanged. The stamped file is validated again before it is sent.
+3. **Bundle** (`format: "zip"`): `<name>-vN/` containing the IFC, a `README.md` (counts, checks, issues,
+   prompt history, snapshots), `validation.json`, `snapshots/*.png` rendered by the app, and a
+   `manifest.json` with every file's SHA-256.
+
+`options`: `{format: "ifc"|"zip", project_name?, author?, organization?, strict = true, thorough = true}`.
+The file name comes back in `X-Export-Filename`, and `X-Validation-Status` is `passed` or `failed`.
 
 ### 4.12 Frontend
 
@@ -366,6 +387,10 @@ Two viewers share the page, both on That Open with the same pinned versions:
 
 **Keep `web-ifc` at 0.0.77.** In 0.0.78 the browser wasm does not match its own JavaScript, and That
 Open fails every conversion. `frontend/package.json` enforces this with an `overrides` entry.
+
+**Export…** in the toolbar opens a dialog for the version in the main viewer. It shows a quick
+validation first, remembers author and organization, and offers the zip bundle or a stamped IFC.
+For the bundle it renders iso, top, front and side views with the viewer package's snapshot API.
 
 `Open IFC…` and `Sample` view a file in the main viewer without adding it to the project; the
 backend's `/projects/{id}/import` endpoint has no button yet.
@@ -395,10 +420,11 @@ Common ones: *backend not reachable* / a browser CORS error with *status (null)*
 
 ## 5. Tests
 
-`cd backend && python -m pytest` — 33 tests on the mock LLM, no network:
+`cd backend && python -m pytest` — 41 tests on the mock LLM, no network:
 ops semantics and error messages · solver determinism and id stability · compile→lift round trip ·
 GlobalId survival across modify/delete/redesign/revert · the SSE project API end to end (design, edit,
-conflict 409, ops, revert, import, bad import) · the legacy stateless endpoints.
+conflict 409, ops, revert, import, bad import) · export (validation, stamping, bundle, strict refusal) ·
+the legacy stateless endpoints.
 
 `packages/ifc-viewer`: `npm test` (unit + real IFC conversion), `npm run e2e` (headless Chrome), and
 `npm run validate -- <file.ifc>`, which checks a generated file the same way the viewer will.

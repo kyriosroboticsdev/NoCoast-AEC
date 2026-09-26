@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { IfcTurnCard, IfcViewerProvider } from "@nocoast/ifc-viewer";
 import * as api from "./api/client";
+import { ExportDialog } from "./components/ExportDialog";
 import { InspectorPanel } from "./components/InspectorPanel";
 import { PromptPanel, type Stage } from "./components/PromptPanel";
 import * as platform from "./platform";
@@ -32,6 +33,7 @@ export default function App() {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [versions, setVersions] = useState<api.Version[]>([]);
   const [viewing, setViewing] = useState<number | null>(null);
+  const [exporting, setExporting] = useState(false);
   const head = versions.at(-1) ?? null;
 
   const [modelName, setModelName] = useState<string | null>(null);
@@ -239,6 +241,7 @@ export default function App() {
   }, [viewerReady, options]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const v = viewerRef.current;
+  const viewedVersion = versions.find((x) => x.number === viewing) ?? null;
   const history = versions.length > 0 && (
     <section className="history" aria-label="Version history">
       <h3 className="label">History</h3>
@@ -273,6 +276,8 @@ export default function App() {
           <button onClick={openFile} disabled={!viewerReady}>Open IFC…</button>
           <button onClick={loadSample} disabled={!viewerReady}>Sample</button>
           <button onClick={saveFile} disabled={!modelBytes}>Save IFC…</button>
+          <button onClick={() => setExporting(true)} disabled={!projectId || viewedVersion === null}
+            title="Validated, stamped IFC or a deliverable bundle">Export…</button>
           <span className="sep" />
           <button onClick={() => v?.fit()} disabled={!modelName}>Fit</button>
           <button onClick={() => v?.hideSelection()} disabled={selectedId === null}>Hide</button>
@@ -305,6 +310,9 @@ export default function App() {
         onSelect={(id) => v?.select(id)}
         onToggle={(node, visible) => v?.setItemsVisible(node.ids, visible)}
         properties={properties} />
+      {exporting && projectId && viewedVersion && (
+        <ExportDialog projectId={projectId} version={viewedVersion} onClose={() => setExporting(false)} />
+      )}
     </div>
     </IfcViewerProvider>
   );
