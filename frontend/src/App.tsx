@@ -7,11 +7,12 @@ import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { Workspace } from "./components/Workspace";
 import * as platform from "./platform";
+import type { Attachment } from "./state/attachments";
 import { describeElement, roomAt, type Design, type Facts } from "./state/design";
 import { clearFiles, deleteFile, getFile, keepFilesFor, putFile } from "./state/files";
 import { useLayout } from "./state/layout";
 import {
-  addMessage, patchRun, uid, upsertStep, useSessions, type Session, type TraceStep,
+  addMessage, linkImages, patchRun, uid, upsertStep, useSessions, type Session, type TraceStep,
 } from "./state/sessions";
 import { stageTracer, type Preview } from "./state/trace";
 import { runtime, toTurn, turnId } from "./turns";
@@ -299,6 +300,8 @@ export default function App() {
     sid: string,
     text: string,
     call: (project: NonNullable<Session["project"]>, onEvent: (e: api.StageEvent) => void) => Promise<api.Version>,
+    /** The user message whose attachments this run carries; they get the backend's URLs when it lands. */
+    attachedTo?: string,
   ) => {
     const aid = uid();
     update(sid, addMessage({ id: aid, role: "assistant", text, run: { stage: "planning", steps: [], startedAt: Date.now() } }));
@@ -382,6 +385,7 @@ export default function App() {
         ...patchRun(aid, { version, stage: "loading" })(s),
         project: { id: version.project_id, head: version.number },
       }));
+      if (attachedTo && version.images?.length) update(sid, linkImages(attachedTo, version.images.map((i) => i.url)));
       ensureTurn(version);
 
       const name = versionName(version);
@@ -407,12 +411,19 @@ export default function App() {
     }
   }, [loadVersion, showModel, update]);
 
-  /** First prompt in a session designs a building; later prompts edit its head version — about `target` if one is selected. */
-  const generate = useCallback((sid: string, prompt: string, target: { id: string; label: string } | null = null) => {
-    update(sid, addMessage({ id: uid(), role: "user", text: target ? `${prompt}\n\n↳ ${target.label}` : prompt }));
+  /** First prompt in a session designs a building; later prompts edit its head version — about `target` if one is
+   *  selected. Attached images travel with this prompt only; the version keeps them. */
+  const generate = useCallback((sid: string, prompt: string, target: { id: string; label: string } | null = null,
+                                images: Attachment[] = []) => {
+    const mid = uid();
+    update(sid, addMessage({
+      id: mid, role: "user", text: target ? `${prompt}\n\n↳ ${target.label}` : prompt,
+      images: images.map((i) => ({ name: i.name, mediaType: i.mediaType, size: i.size, dataUrl: i.dataUrl })),
+    }));
     setFocus(null);
     return execute(sid, "", (project, onEvent) =>
-      api.sendPrompt(project.id, prompt, project.head, onEvent, planner ?? undefined, target?.id));
+      api.sendPrompt(project.id, prompt, project.head, onEvent, planner ?? undefined, target?.id,
+        images.map((i) => ({ name: i.name, media_type: i.mediaType, data: i.data }))), mid);
   }, [execute, planner, update]);
 
   /** Make an older version the head again (recorded as a new version). */
@@ -438,9 +449,9 @@ export default function App() {
     remove(id);
   };
 
-  const startSession = (prompt: string) => {
+  const startSession = (prompt: string, images: Attachment[] = []) => {
     const title = prompt.length > 48 ? `${prompt.slice(0, 46).trimEnd()}…` : prompt;
-    return generate(create(title), prompt);
+    return generate(create(title), prompt, null, images);
   };
 
   const openSessionWithModel = async (name: string, bytes: Uint8Array, url?: string) => {
@@ -556,7 +567,7 @@ export default function App() {
             onResetViewTools={() => resetPanel("viewTools")} />
           {active && layout.assistantOpen && (
             <Assistant session={active} busy={busy} planners={planners} planner={planner} setPlanner={setPlanner}
-              onSubmit={(t) => generate(active.id, t, focusFor)} onAttach={openFile}
+              onSubmit={(t, images) => generate(active.id, t, focusFor, images)} onAttach={openFile}
               focus={focusFor} onClearFocus={() => v?.clearSelection()}
               viewing={loaded?.key ?? null} onView={viewVersion} onRestore={(n) => restore(active.id, n)}
               width={size.assistant} onResize={(w) => resize("assistant", w)} onResetWidth={() => resetPanel("assistant")}

@@ -1,3 +1,4 @@
+import type { Attachment } from "../state/attachments";
 import { Composer } from "./Composer";
 
 const SUGGESTIONS: [string, string][] = [
@@ -12,7 +13,7 @@ interface Props {
   planners: string[];
   planner: string | null;
   setPlanner: (p: string) => void;
-  onSubmit: (text: string) => void;
+  onSubmit: (text: string, images: Attachment[]) => void;
   onAttach: () => void;
 }
 
@@ -23,7 +24,7 @@ export function Home(p: Props) {
       <Composer size="hero" {...p} placeholder="Describe a building — storeys, rooms, garage, porch…" />
       <div className="suggestions">
         {SUGGESTIONS.map(([label, prompt]) => (
-          <button key={label} className="suggestion" onClick={() => (prompt ? p.onSubmit(prompt) : p.onAttach())}>
+          <button key={label} className="suggestion" onClick={() => (prompt ? p.onSubmit(prompt, []) : p.onAttach())}>
             {label}
           </button>
         ))}

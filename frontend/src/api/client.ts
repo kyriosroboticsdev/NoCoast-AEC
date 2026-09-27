@@ -20,16 +20,29 @@ export interface BuildResult {
   seconds: number;
 }
 
+/** A rejected request as one sentence. FastAPI echoes the input it refused, which for an
+ *  attachment is its whole base64, so only the messages are kept. */
+async function failure(res: Response): Promise<string> {
+  const body = await res.text();
+  try {
+    const detail = (JSON.parse(body) as { detail?: unknown }).detail;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) {
+      return detail.map((d) => String((d as { msg?: string }).msg ?? d).replace(/^Value error, /, "")).join("; ");
+    }
+  } catch {
+    /* not JSON: the body is the message */
+  }
+  return body.slice(0, 300) || res.statusText;
+}
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BACKEND}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    const detail = await res.json().then((j) => j.detail, () => res.statusText);
-    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
-  }
+  if (!res.ok) throw new Error(await failure(res));
   return res.json();
 }
 
@@ -53,6 +66,22 @@ export interface Version {
   created: number;
   /** Requirement checks from the design layer (met | unmet | unsupported | skipped). */
   checks?: RequirementCheck[];
+  /** Images attached to the prompt that produced this version, as the backend stored them. */
+  images?: VersionImage[];
+}
+
+export interface VersionImage {
+  name: string;
+  media_type: string;
+  bytes: number;
+  url: string;
+}
+
+/** An image going the other way: attached to a prompt (base64, no `data:` prefix). */
+export interface PromptImage {
+  name: string;
+  media_type: string;
+  data: string;
 }
 
 export interface RequirementCheck {
@@ -92,7 +121,7 @@ export const getProject = (id: string) => getJson<ProjectDetail>(`/projects/${id
  */
 async function stream(path: string, init: RequestInit, onEvent: (e: StageEvent) => void): Promise<Version> {
   const res = await fetch(`${BACKEND}${path}`, init);
-  if (!res.ok || !res.body) throw new Error(`POST ${path} → ${res.status} ${await res.text()}`);
+  if (!res.ok || !res.body) throw new Error(await failure(res));
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -129,8 +158,10 @@ const jsonPost = (body: unknown): RequestInit => ({
 /** New design (no base) or an edit of `baseVersion`. `planner` picks an LLM provider (backend default if omitted). */
 export const sendPrompt = (
   id: string, prompt: string, baseVersion: number | null, onEvent: (e: StageEvent) => void, planner?: string,
-  focus?: string | null,
-) => stream(`/projects/${id}/prompt`, jsonPost({ prompt, base_version: baseVersion, planner, focus: focus ?? undefined }), onEvent);
+  focus?: string | null, images?: PromptImage[],
+) => stream(`/projects/${id}/prompt`,
+  jsonPost({ prompt, base_version: baseVersion, planner, focus: focus ?? undefined, images: images?.length ? images : undefined }),
+  onEvent);
 
 /** The structured BIM instructions behind a version, and its design record (null for imports and pre-design-layer versions). */
 export const getSpec = (id: string, n: number) => getJson<{ spec: unknown; design: Design | null }>(`/projects/${id}/versions/${n}/spec`);
