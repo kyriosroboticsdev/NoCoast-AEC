@@ -419,10 +419,13 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
           const g = group(phase);
           const text = typeof d.text === "string" ? d.text : "";
           const heading = typeof d.title === "string" && d.title ? d.title : null;
-          const title = heading ?? e.message;
           // Without a heading the title is the paragraph's first sentence; don't say it twice.
           const flat = text.replace(/\s+/g, " ").trim();
-          const body = !heading && !title.endsWith("…") && flat.startsWith(title) ? flat.slice(title.length).trim() : text;
+          const lead = /^(.{12,320}?[.!?])(?:\s+(.*))?$/.exec(flat);
+          const [title, body] = heading ? [heading, text]
+            : lead ? [lead[1], lead[2] ?? ""]
+            : flat.length <= 320 ? [flat || e.message, ""]
+            : [e.message, text];
           child(g, title, null, "done", { why: body && body !== title ? body : null, tone: null, badge: null });
           return;
         }
