@@ -7,7 +7,7 @@ import pytest
 
 from core.pipeline import PipelineError, run_prompt
 from core.stream import StepStream
-from llm.base import EmptyReply, LLMError, LLMRequest, body
+from llm.base import EmptyReply, LLMError, LLMRequest, body, transient_network
 from llm.mock import MockLLM
 from schemas.design import Design
 from store.db import Store
@@ -135,3 +135,67 @@ def test_a_failing_repair_round_still_produces_a_version(tmp_path):
                          emit=lambda stage, message, data=None: events.append((stage, message)))
     assert version.number == 1 and {r.id for r in version.design.rooms} == {"hall", "kitchen"}
     assert any("did not come back" in m for s, m in events if s == "build")
+
+
+def test_transient_network_is_only_a_blip():
+    assert transient_network(LLMError("chat/completions request failed: ConnectError: All connection attempts failed"))
+    assert transient_network(LLMError("chat/completions returned 529: overloaded"))
+    assert transient_network(LLMError("Anthropic rate limit: slow down"))
+    assert not transient_network(LLMError("the model declined this request"))
+    assert not transient_network(LLMError("the model's answer was cut off (max_tokens)"))
+
+
+def test_a_dropped_connection_is_asked_again(tmp_path, monkeypatch):
+    """The first calls fail the way a reset connection does; the run continues instead of stopping."""
+    monkeypatch.setattr("core.pipeline.time.sleep", lambda _s: None)
+
+    class Flaky(MockLLM):
+        name = "flaky"
+
+        def __init__(self) -> None:
+            self.left = 2
+
+        def complete(self, request: LLMRequest, on_text=None, on_note=None) -> dict:
+            if self.left:
+                self.left -= 1
+                raise LLMError("chat/completions request failed: ConnectError: All connection attempts failed")
+            return super().complete(request, on_text, on_note)
+
+    store = Store(tmp_path / "db.sqlite3", tmp_path / "ifc")
+    pid = store.create_project("flaky").id
+    events: list[tuple[str, str]] = []
+    version = run_prompt(store, Flaky(), pid, "a two storey house with a kitchen and two bedrooms",
+                         emit=lambda stage, message, data=None: events.append((stage, message)))
+    assert version.number == 1 and version.design.rooms
+    assert sum("asking again" in m for _, m in events) == 2
+
+
+def test_a_drop_after_steps_keeps_them_and_does_not_ask_again(tmp_path, monkeypatch):
+    """Steps already applied stay; asking the whole call again would lay them out twice."""
+    monkeypatch.setenv("BIM_LOOK_ROUNDS", "0")
+    monkeypatch.setenv("BIM_CODE_ROUNDS", "0")
+    monkeypatch.setenv("BIM_VERIFY_ROUNDS", "0")
+    reply = json.dumps({"steps": STEPS})
+    calls = {"build": 0}
+
+    class DropsLate(MockLLM):
+        name = "drops-late"
+
+        def complete(self, request: LLMRequest, on_text=None, on_note=None) -> dict:
+            if request.schema_name != "build":
+                return super().complete(request, on_text, on_note)
+            calls["build"] += 1
+            for i in range(1, len(reply) + 1, 11):
+                if on_text:
+                    on_text(reply[:i])
+            raise LLMError("chat/completions request failed: ReadError: peer closed connection")
+
+    store = Store(tmp_path / "db.sqlite3", tmp_path / "ifc")
+    pid = store.create_project("kept").id
+    events: list[tuple[str, str]] = []
+    version = run_prompt(store, DropsLate(), pid, "a hall and a kitchen",
+                         emit=lambda stage, message, data=None: events.append((stage, message)))
+    assert calls["build"] == 1
+    assert version.number == 1 and {r.id for r in version.design.rooms} == {"hall", "kitchen"}
+    assert any("broke off" in m for s, m in events if s == "llm")
+    assert not any("asking again" in m for _, m in events)

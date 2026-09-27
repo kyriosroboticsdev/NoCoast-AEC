@@ -55,5 +55,5 @@ class OllamaLLM:
                     if chunk.get("done"):
                         break
         except httpx.HTTPError as exc:
-            raise LLMError(f"ollama request failed: {exc}") from exc
+            raise LLMError(f"ollama request failed: {type(exc).__name__}: {exc}") from exc
         return parse_reply(text)
