@@ -418,6 +418,9 @@ def template_steps(prompt: str) -> list[dict]:
     if storeys > 1:
         steps.append({"step": "stair", "room": "hall",
                       "why": "the flight runs along the hall's longest wall, clear of the front door and the room openings"})
+    for i in range(2, storeys):
+        steps.append({"step": "stair", "room": f"landing-l{i}",
+                      "why": f"the next flight stacks over the one below, so every storey up to L{i + 1} shares one stair core"})
     if basement:
         steps.append({"step": "stair", "room": "landing-b1",
                       "why": "the basement flight sits under the upper one so the wells align"})
