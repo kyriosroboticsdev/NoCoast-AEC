@@ -89,15 +89,18 @@ export interface PromptImage {
 }
 
 /** What a version can be exported as. `zip` is the whole bundle; the rest are single files. */
-export type ExportFormat = "zip" | "ifc" | "spec" | "design" | "context" | "checks" | "schedule" | "summary";
+export type ExportFormat = "zip" | "ifc" | "spec" | "design" | "context" | "checks" | "schedule" | "summary"
+  | "validation" | "stamped";
 
 export const EXPORTS: { format: ExportFormat; label: string; hint: string }[] = [
   { format: "ifc", label: "IFC model", hint: "the building, IFC4" },
-  { format: "zip", label: "Full bundle (.zip)", hint: "IFC, JSON, schedule, checks, README" },
+  { format: "stamped", label: "IFC with provenance", hint: "prompts, source version and validation status written in" },
+  { format: "zip", label: "Full bundle (.zip)", hint: "IFC, JSON, schedule, checks, validation, README" },
   { format: "summary", label: "Design summary", hint: "brief, approach and checks, Markdown" },
   { format: "schedule", label: "Schedule (.csv)", hint: "rooms, walls, openings, equipment" },
   { format: "spec", label: "BIM spec (.json)", hint: "every element the IFC was compiled from" },
   { format: "design", label: "Design record (.json)", hint: "rooms, doors and windows as authored" },
+  { format: "validation", label: "Validation report (.json)", hint: "schema, units, storeys, GlobalIds, geometry" },
 ];
 
 /** Download URL for one export artefact of a version. */
@@ -107,6 +110,7 @@ export const exportUrl = (id: string, n: number, format: ExportFormat = "zip") =
 const EXPORT_EXTENSION: Record<ExportFormat, string> = {
   zip: "zip", ifc: "ifc", spec: "spec.json", design: "design.json",
   context: "context.txt", checks: "checks.json", schedule: "schedule.csv", summary: "summary.md",
+  validation: "validation.json", stamped: "stamped.ifc",
 };
 
 export const exportName = (id: string, n: number, format: ExportFormat) =>
