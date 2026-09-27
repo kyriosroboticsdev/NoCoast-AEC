@@ -4,6 +4,10 @@ Bricks live as JSON files in `bricks/library/` (grouped however is convenient; t
 all). Adding a brick is adding a JSON object — no code. `search` is a small BM25 over the id, name,
 tags and description, with a few synonyms, so the model can ask in its own words ("somewhere to
 hang coats", "fresh air", "stop the floor sagging").
+
+Two tiers. Files directly in `library/` are the core: every id is listed in the system prompts.
+Files in `library/catalogue/` are found by search only; the prompts carry one line naming the
+catalogue's topics (the file names) with counts, so the library can grow without growing the prompt.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from pathlib import Path
 from bricks.model import Brick
 
 LIBRARY_DIR = Path(__file__).resolve().parent / "library"
+CATALOGUE_DIR = LIBRARY_DIR / "catalogue"
 FIELD_WEIGHTS = {"id": 3.0, "name": 3.0, "tags": 2.0, "description": 1.0}
 SYNONYMS = {
     "toilet": ["wc"], "wc": ["toilet"], "loo": ["wc", "toilet"], "tub": ["bath", "bathtub"], "bathtub": ["bath"],
@@ -48,12 +53,14 @@ def tokens(text: str) -> list[str]:
 
 
 class Library:
-    def __init__(self, bricks: list[Brick]):
-        ids = [b.id for b in bricks]
-        dupes = sorted({i for i in ids if ids.count(i) > 1})
+    def __init__(self, bricks: list[Brick], catalogue: dict[str, str] | None = None):
+        """`catalogue`: brick id -> topic, for the bricks that are found by search and not listed in prompts."""
+        seen = Counter(b.id for b in bricks)
+        dupes = sorted(i for i, n in seen.items() if n > 1)
         if dupes:
             raise ValueError(f"duplicate brick ids: {dupes}")
         self.bricks = {b.id: b for b in bricks}
+        self.catalogue = dict(catalogue or {})
         self._docs: dict[str, Counter] = {}
         for b in bricks:
             doc: Counter = Counter()
@@ -127,8 +134,13 @@ class Library:
         return [b.id for b, _ in self.search(text, limit=limit)]
 
     def index_text(self) -> str:
-        """Every brick id: small enough for a system prompt (~3k chars)."""
-        return ", ".join(sorted(self.bricks))
+        """Every core brick id, and the catalogue as topics with counts: small enough for a system prompt (~3k chars)."""
+        core = ", ".join(sorted(i for i in self.bricks if i not in self.catalogue))
+        if not self.catalogue:
+            return core
+        topics = Counter(self.catalogue.values())
+        listed = ", ".join(f"{topic} ({n})" for topic, n in sorted(topics.items()))
+        return f"{core}\nCATALOGUE ({len(self.catalogue)} more bricks, not listed; find them with search_bricks): {listed}"
 
 
 def _load_file(path: Path) -> list[Brick]:
@@ -150,4 +162,9 @@ def library() -> Library:
     bricks: list[Brick] = []
     for path in sorted(LIBRARY_DIR.glob("*.json")):
         bricks += _load_file(path)
-    return Library(bricks)
+    catalogue: dict[str, str] = {}
+    for path in sorted(CATALOGUE_DIR.glob("*.json")):
+        found = _load_file(path)
+        bricks += found
+        catalogue.update({b.id: path.stem.replace("_", " ") for b in found})
+    return Library(bricks, catalogue)
