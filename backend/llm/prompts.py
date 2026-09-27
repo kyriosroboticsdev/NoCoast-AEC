@@ -81,6 +81,13 @@ ONE layout step per storey holding all of its rooms (L1 first) → roof → door
 notes. A whole storey appearing at once looks natural; rooms trickling in one by one does not, so use single room
 steps only when editing.
 
+START DRAWING BEFORE YOU HAVE SETTLED EVERYTHING. The user is watching an empty screen until your first steps
+land, so do not plan the whole project before you write anything. Work out the parti, the footprint and the
+storeys, then write the approach, the building, the levels and the ground floor's layout straight away. Reason
+about the rest — upper storeys, openings, structure, fit-out — as you come to it, between steps. Getting a
+storey on screen early is worth more than getting it perfect first time: you can revise a room with a later
+step, and the design is reviewed and corrected after this reply anyway.
+
 WRITING THE REASONING (this is read by the user, live, and is as important as the geometry):
 - `approach` comes first, before any step: two or three sentences of strategy in your own professional voice —
   the parti, how the plan is zoned, where circulation lands, what drives the massing, orientation and structure.
@@ -312,6 +319,22 @@ CODE_INTRO = ("CODE REVIEW of the model you built (indicative IBC/IRC 2021 + 201
 FOCUS_INTRO = "SELECTED IN THE VIEWER: "
 FOCUS_RULE = " — the request refers to this element unless it clearly says otherwise."
 
+# The two-pass build (see core/pipeline.massing_round): a first, deliberately shallow pass that puts the
+# volume on screen within seconds, then the real build round that details it.
+MASSING_INTRO = (
+    "MASSING PASS — block the project out, then stop. Emit the building, its levels, and ONE layout step per "
+    "storey holding that storey's rooms. Nothing else: no roof, doors, windows, stairs, fit-out or bricks; a "
+    "second pass adds all of that. Get the footprint, the storey count and the room sizes and positions right, "
+    "because the second pass builds on them, but do not work out anything you are not drawing here. This pass "
+    "is what the user first sees, so write the approach and the layout quickly rather than perfectly."
+)
+MASSING_DONE_INTRO = (
+    "THE MASSING IS ALREADY BUILT and is the CURRENT DESIGN above: the building, its levels and each storey's "
+    "rooms. Carry on from it rather than starting again — roof, doors, windows, stairs, fit-out, bricks — and "
+    "never re-emit a room that is already right. To change a storey's rooms, emit one new layout step for that "
+    "storey; that step replaces every room on it, so list them all."
+)
+
 
 def attached_block(names: Sequence[str], instruction: str) -> str:
     """Name the attachments in the text as well: the model knows what it is looking at, and a model
@@ -354,9 +377,25 @@ def look_user_message(prompt: str, checklist: list[str], context: str | None, lo
     return "\n\n".join(parts)
 
 
+def massing_user_message(prompt: str, checklist: list[str], context: str | None, *, focus: str | None = None,
+                         attached: Sequence[str] = ()) -> str:
+    parts = ["CURRENT DESIGN:\n" + context if context else "CURRENT DESIGN: empty (new building)",
+             "REQUEST:\n" + prompt.strip()]
+    if attached:
+        parts.append(attached_block(attached, "Take the footprint, proportions and room positions from them; if you "
+                                              "cannot see them, block out from the text."))
+    if focus:
+        parts.append(FOCUS_INTRO + focus + FOCUS_RULE)
+    if checklist:
+        parts.append("CHECKLIST:\n- " + "\n- ".join(checklist))
+    parts.append(MASSING_INTRO)
+    return "\n\n".join(parts)
+
+
 def build_user_message(prompt: str, checklist: list[str], context: str | None, *, focus: str | None = None,
                        toolbox: str | None = None, problems: Sequence[str] = (), unmet: Sequence[str] = (), issues: Sequence[str] = (),
-                       seen: Sequence[str] = (), code: Sequence[str] = (), attached: Sequence[str] = ()) -> str:
+                       seen: Sequence[str] = (), code: Sequence[str] = (), attached: Sequence[str] = (),
+                       massing: bool = False) -> str:
     parts = []
     if toolbox:
         parts.append("LIBRARY (bricks and skills from your research):\n" + toolbox)
@@ -372,6 +411,8 @@ def build_user_message(prompt: str, checklist: list[str], context: str | None, *
         parts.append(FOCUS_INTRO + focus + FOCUS_RULE)
     if checklist:
         parts.append("CHECKLIST:\n- " + "\n- ".join(checklist))
+    if massing:
+        parts.append(MASSING_DONE_INTRO)
     if problems:
         parts.append(FIX_INTRO + "\n- " + "\n- ".join(problems))
     if unmet:

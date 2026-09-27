@@ -155,6 +155,9 @@ class MockLLM:
                 reply = {"steps": self._fix(prompt, request.meta)}
             elif request.meta.get("editing"):
                 reply = {"steps": self._edit(prompt, Design.model_validate(request.meta["design"]), request.meta.get("focus"))}
+            elif request.meta.get("round") == "massing":
+                # The first pass blocks the project out: building, levels and one layout per storey.
+                reply = {"steps": [s for s in template_steps(prompt) if s.get("step") in ("building", "level", "layout")]}
             else:
                 reply = {"steps": template_steps(prompt)}
             reply = {"approach": approach_for(prompt, reply["steps"]), **reply}
