@@ -1,6 +1,7 @@
-import { ChevronsUpDown, Ellipsis, House, PanelLeft, PanelRight } from "lucide-react";
+import { ChevronsUpDown, Ellipsis, House, Moon, PanelLeft, PanelRight, Sun } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ExportFormat } from "../api/client";
+import type { Theme } from "../state/theme";
 import { ExportMenu } from "./ExportMenu";
 
 interface Props {
@@ -14,6 +15,8 @@ interface Props {
   onExport: (format: ExportFormat) => Promise<string | null>;
   exportDisabled: string | null;
   onDelete: (() => void) | null;
+  theme: Theme;
+  onToggleTheme: () => void;
 }
 
 export function TopBar(p: Props) {
@@ -63,6 +66,11 @@ export function TopBar(p: Props) {
         )}
       </div>
       <ExportMenu onExport={p.onExport} disabledReason={p.exportDisabled} />
+      <button className="icon-btn theme-toggle" onClick={p.onToggleTheme}
+        title={p.theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+        aria-label={p.theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}>
+        {p.theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+      </button>
     </header>
   );
 }

@@ -23,7 +23,13 @@ export interface PropertySet { name: string; props: [string, string][] }
 
 export type ViewName = "top" | "bottom" | "front" | "back" | "left" | "right" | "isometric";
 
-const HIGHLIGHT = new THREE.Color(0x2f6bff);
+const HIGHLIGHT = new THREE.Color(0xff7a1a); // tekt orange
+
+/** Scene colours per UI theme (styles.css): background, grid centre line / lines, and the ground plane. */
+const SCENE_THEME = {
+  light: { background: 0xe6f0f9, gridCenter: 0xa9c3dc, grid: 0xc9dbec, ground: 0xdbe9f5 },
+  dark: { background: 0x0b1426, gridCenter: 0x2c4470, grid: 0x1a2b4b, ground: 0x081020 },
+} as const;
 const tagOf = (line: Record<string, { value?: string } | undefined>) => line.Tag?.value ?? (line.LongName ? line.Name?.value ?? "" : "");
 
 /** One building storey as read from the IFC: its elevation and the top of its walls (both in metres, three.js Y). */
@@ -44,6 +50,8 @@ export class LegacyViewer {
   private raycaster = new THREE.Raycaster();
   private ready: Promise<void>;
   private clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e6);
+  private grid!: THREE.GridHelper;
+  private ground!: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
   private box = new THREE.Box3();
   private storeyList: Storey[] = [];
   private byGuid = new Map<string, THREE.Mesh[]>();
@@ -58,7 +66,7 @@ export class LegacyViewer {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.localClippingEnabled = true;
-    this.scene.background = new THREE.Color(0x0f1115);
+    this.scene.background = new THREE.Color(SCENE_THEME.dark.background);
     this.camera3 = new THREE.PerspectiveCamera(50, 1, 0.01, 2000);
     this.camera3.position.set(25, 20, 25);
     this.controls = new OrbitControls(this.camera3, canvas);
@@ -69,14 +77,12 @@ export class LegacyViewer {
     const sun = new THREE.DirectionalLight(0xffffff, 1.5);
     sun.position.set(30, 50, 20);
     this.scene.add(sun);
-    const grid = new THREE.GridHelper(60, 60, 0x333844, 0x22252d);
-    (grid.material as THREE.Material).clippingPlanes = [this.clipPlane];
-    this.scene.add(grid);
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200),
-      new THREE.MeshBasicMaterial({ color: 0x0b0d12, transparent: true, opacity: 0.75, depthWrite: false, clippingPlanes: [this.clipPlane] }));
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -0.02;
-    this.scene.add(ground);
+    this.ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200),
+      new THREE.MeshBasicMaterial({ color: SCENE_THEME.dark.ground, transparent: true, opacity: 0.75, depthWrite: false, clippingPlanes: [this.clipPlane] }));
+    this.ground.rotation.x = -Math.PI / 2;
+    this.ground.position.y = -0.02;
+    this.scene.add(this.ground);
+    this.setTheme("dark");
     this.scene.add(this.root);
 
     const wasmPath = new URL("wasm/", document.baseURI).href;
@@ -254,6 +260,21 @@ export class LegacyViewer {
   clearSelection() {
     this.highlight(null);
     this.onSelect(null);
+  }
+
+  /** Match the scene to the UI theme. The grid's colours are baked into its geometry, so it is rebuilt. */
+  setTheme(theme: keyof typeof SCENE_THEME) {
+    const c = SCENE_THEME[theme];
+    (this.scene.background as THREE.Color).setHex(c.background);
+    this.ground.material.color.setHex(c.ground);
+    if (this.grid) {
+      this.scene.remove(this.grid);
+      this.grid.geometry.dispose();
+      (this.grid.material as THREE.Material).dispose();
+    }
+    this.grid = new THREE.GridHelper(60, 60, c.gridCenter, c.grid);
+    (this.grid.material as THREE.Material).clippingPlanes = [this.clipPlane];
+    this.scene.add(this.grid);
   }
 
   hasModel() {
