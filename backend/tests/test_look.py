@@ -50,7 +50,7 @@ def test_the_model_sees_screenshots_and_asks_for_more(tmp_path):
     store, pid, version, seen = _run(llm, tmp_path=tmp_path)
     looks = [r for r in llm.requests if r.schema_name == "look"]
     assert [len(r.images) for r in looks] == [2, 1]
-    assert all(im.png.startswith(PNG) for r in looks for im in r.images)
+    assert all(im.data.startswith(PNG) for r in looks for im in r.images)
     assert looks[0].images[1].caption.startswith("view of everything from azimuth 180° elevation 90° (level L1)")
     assert "fridge-kitchen" in looks[1].images[0].caption and "SCREENSHOTS SO FAR" in looks[1].user
     shots = [d for s, _, d in seen if s == "look" and d.get("image")]

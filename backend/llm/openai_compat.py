@@ -31,7 +31,7 @@ def user_content(request: LLMRequest) -> str | list[dict]:
     parts: list[dict] = [{"type": "text", "text": request.user}]
     for i, image in enumerate(request.images, 1):
         parts.append({"type": "text", "text": f"Image {i}: {image.caption}"})
-        parts.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image.b64()}"}})
+        parts.append({"type": "image_url", "image_url": {"url": f"data:{image.media_type};base64,{image.b64()}"}})
     return parts
 
 

@@ -41,6 +41,8 @@ Rules:
   It CANNOT do: split levels, specific brands, interior finishes/colours. Mark such requirements supported=false and
   keep them in the list.
 - Aesthetic wishes ("modern", "cozy") are kind=style; they are not checked.
+- Images the user attached (a sketched plan, a photo, a reference building) are part of the request: turn what they
+  show into requirements too, and only into requirements for what you can actually see in them.
 - `summary`: one sentence describing the building.
 Return only the JSON object.
 
@@ -148,6 +150,8 @@ Rules:
 - If the user asks for something neither the furniture catalog nor the LIBRARY has, write an asset for it (then
   place it with a brick step) instead of settling for the closest kind. A custom step is enough for simple boxy pieces.
 - Two storeys need a stair, and the hall/landing it stands in must be at least 5 m long along the stair's side.
+- Images the user attached are part of the request: take the layout, proportions and room positions from a sketched
+  plan and the style and materials from a photo. Where a picture and the text disagree, the text wins.
 - Satisfy every requirement in the checklist; if one is impossible, say so in a note step.
 - When EDITING an existing design: emit only the steps that change it. A room step with an existing id replaces
   that room's rect/level/kind; a door/window/furniture step with an existing id replaces it; remove deletes anything
@@ -228,8 +232,19 @@ FOCUS_INTRO = "SELECTED IN THE VIEWER: "
 FOCUS_RULE = " — the request refers to this element unless it clearly says otherwise."
 
 
-def requirements_user_message(prompt: str, errors: list[str] | None = None, focus: str | None = None) -> str:
+def attached_block(names: Sequence[str], instruction: str) -> str:
+    """Name the attachments in the text as well: the model knows what it is looking at, and a model
+    that cannot see them at least knows something was sent (`instruction` says what to do then)."""
+    head = f"ATTACHED IMAGE{'S' if len(names) > 1 else ''} ({len(names)}), sent with this request: "
+    return head + ", ".join(names) + ". " + instruction
+
+
+def requirements_user_message(prompt: str, errors: list[str] | None = None, focus: str | None = None,
+                              attached: Sequence[str] = ()) -> str:
     parts = ["REQUEST:\n" + prompt.strip()]
+    if attached:
+        parts.append(attached_block(attached, "They are part of the request; if you cannot see them, extract "
+                                              "requirements from the text only and say so in the summary."))
     if focus:
         parts.append(FOCUS_INTRO + focus + FOCUS_RULE)
     if errors:
@@ -260,7 +275,7 @@ def look_user_message(prompt: str, checklist: list[str], context: str | None, lo
 
 def build_user_message(prompt: str, checklist: list[str], context: str | None, *, focus: str | None = None,
                        toolbox: str | None = None, problems: Sequence[str] = (), unmet: Sequence[str] = (), issues: Sequence[str] = (),
-                       seen: Sequence[str] = ()) -> str:
+                       seen: Sequence[str] = (), attached: Sequence[str] = ()) -> str:
     parts = []
     if toolbox:
         parts.append("LIBRARY (bricks and skills from your research):\n" + toolbox)
@@ -269,6 +284,9 @@ def build_user_message(prompt: str, checklist: list[str], context: str | None, *
     else:
         parts.append("CURRENT DESIGN: empty (new building)")
     parts.append("REQUEST:\n" + prompt.strip())
+    if attached:
+        parts.append(attached_block(attached, "Build what they show; if you cannot see them, build from the text "
+                                              "and say so in a note step."))
     if focus:
         parts.append(FOCUS_INTRO + focus + FOCUS_RULE)
     if checklist:
