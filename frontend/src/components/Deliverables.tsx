@@ -95,8 +95,8 @@ function Drawings({ data, onExport }: { data: api.Analysis; onExport: Props["onE
             {sheet?.scale && sheet.scale !== "NTS" && <span className="chip tiny">{sheet.scale} @ A3</span>}
           </div>
           <span className="grow" />
-          <button className="btn ghost" onClick={() => setZoom(true)}><Maximize2 size={15} /> Full screen</button>
-          <a className="btn ghost" href={sheet ? api.backendUrl(sheet.url) : undefined} target="_blank" rel="noreferrer"><ExternalLink size={15} /> SVG</a>
+          <button className="btn ghost" title="Full screen" aria-label="Full screen" onClick={() => setZoom(true)}><Maximize2 size={15} /></button>
+          <a className="btn ghost" title="Open this sheet as SVG" href={sheet ? api.backendUrl(sheet.url) : undefined} target="_blank" rel="noreferrer"><ExternalLink size={15} /> SVG</a>
           <button className="btn primary" onClick={() => onExport("drawings")}><Download size={15} /> PDF set</button>
           <button className="btn ghost" title="Every floor plan on NCS layers, in metres — AutoCAD, Rhino, Vectorworks, Revit link"
             onClick={() => onExport("dxf")}><Download size={15} /> DXF</button>
