@@ -28,7 +28,7 @@ export function Sidebar(p: Props) {
   return (
     <aside className="sidebar" style={{ width: p.width }}>
       <div className="sidebar-head">
-        <div className="brand-home" title="tekt"><Logo height={26} /></div>
+        <div className="brand-home" title="tekt"><Logo height={30} /></div>
         <button className="icon-btn" title="Search sessions" onClick={() => setQuery(query === null ? "" : null)}>
           <Search size={17} />
         </button>
