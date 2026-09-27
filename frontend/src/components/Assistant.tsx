@@ -76,7 +76,7 @@ export function Assistant({
         </button>
       )}
       <div className="dock">
-        <Composer size="dock" busy={busy} placeholder={head ? "Describe a change…" : "Describe a building…"} {...composer} />
+        <Composer size="dock" busy={busy} placeholder={head ? "Describe a change…" : "Describe an asset…"} {...composer} />
       </div>
     </aside>
   );
@@ -178,9 +178,9 @@ function AssistantMessage({ m, head, busy, latest, viewing, onView, onRestore, o
 
       {run.stage === "done" && v && (
         <p>
-          Version {v.number}: {v.summary.storeys.length} storeys and {v.summary.elements} elements
+          Version {v.number}: {v.summary.storeys.length} {v.summary.storeys.length === 1 ? "level" : "levels"} and {v.summary.elements} elements
           {v.summary.schema ? <>, as valid {v.summary.schema}</> : null}.
-          {v.summary.spaces.length > 0 && <> Rooms: {v.summary.spaces.join(", ")}.</>}
+          {v.summary.spaces.length > 0 && <> Spaces: {v.summary.spaces.join(", ")}.</>}
         </p>
       )}
       {run.stage === "error" && <div className="error-card"><X size={15} /> {run.error}</div>}

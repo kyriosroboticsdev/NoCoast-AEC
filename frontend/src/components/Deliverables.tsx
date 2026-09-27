@@ -98,9 +98,9 @@ function Drawings({ data, onExport }: { data: api.Analysis; onExport: Props["onE
           <button className="btn ghost" title="Full screen" aria-label="Full screen" onClick={() => setZoom(true)}><Maximize2 size={15} /></button>
           <a className="btn ghost" title="Open this sheet as SVG" href={sheet ? api.backendUrl(sheet.url) : undefined} target="_blank" rel="noreferrer"><ExternalLink size={15} /> SVG</a>
           <button className="btn primary" onClick={() => onExport("drawings")}><Download size={15} /> PDF set</button>
-          <button className="btn ghost" title="Every floor plan on NCS layers, in metres — AutoCAD, Rhino, Vectorworks, Revit link"
+          <button className="btn ghost" title="Every level as a plan on NCS layers, in metres — AutoCAD, Rhino, Vectorworks, Revit link"
             onClick={() => onExport("dxf")}><Download size={15} /> DXF</button>
-          <button className="btn ghost" title="Area, room, door and window schedules with live totals"
+          <button className="btn ghost" title="Area, space, door and window schedules with live totals"
             onClick={() => onExport("xlsx")}><FileSpreadsheet size={15} /> Schedules</button>
           <button className="btn ghost" onClick={() => onExport("zip")}><Download size={15} /> Bundle</button>
         </div>
@@ -162,7 +162,7 @@ function Review({ data, onExport, onShow }: { data: api.Analysis; onExport: Prop
       <div className="kpis">
         <Kpi icon={Building2} label="Occupancy" value={r.occupancy.group} sub={r.occupancy.name.split("—").pop()?.trim()} />
         <Kpi icon={Users} label="Occupant load" value={`${r.occupancy.load}`} sub="IBC Table 1004.5" />
-        <Kpi icon={Ruler} label="Gross floor area" value={`${num(r.totals.gia)} m²`} sub={`${num(r.totals.gia_sf)} sf · ${r.totals.storeys} storeys`} />
+        <Kpi icon={Ruler} label="Gross area" value={`${num(r.totals.gia)} m²`} sub={`${num(r.totals.gia_sf)} sf · ${r.totals.storeys} ${r.totals.storeys === 1 ? "level" : "levels"}`} />
         <Kpi icon={ShieldCheck} label="Construction" value={r.occupancy.construction.split(" (")[0]} sub={r.occupancy.sprinklered ? "sprinklered" : "unsprinklered"} />
       </div>
       <div className="score-bar">
@@ -204,7 +204,7 @@ function Review({ data, onExport, onShow }: { data: api.Analysis; onExport: Prop
       </ul>
       <h3>Area schedule</h3>
       <table className="dl-table">
-        <thead><tr><th>No.</th><th>Room</th><th>Level</th><th className="r">m²</th><th className="r">sf</th><th className="r">Glazing</th><th className="r">Clear h</th><th className="r">Occ.</th></tr></thead>
+        <thead><tr><th>No.</th><th>Space</th><th>Level</th><th className="r">m²</th><th className="r">sf</th><th className="r">Glazing</th><th className="r">Clear h</th><th className="r">Occ.</th></tr></thead>
         <tbody>
           {r.rooms.map((x) => (
             <tr key={x.id}>
@@ -312,8 +312,8 @@ function Cost({ data, onExport }: { data: api.Analysis; onExport: Props["onExpor
           {[
             ["External wall (net)", `${num(q.external_wall_area as number, 1)} m²`],
             ["Internal partitions", `${num(q.internal_wall_area as number, 1)} m²`],
-            ["Ground floor slab", `${num(q.ground_floor_area as number, 1)} m²`],
-            ["Upper floors", `${num(q.upper_floor_area as number, 1)} m²`],
+            ["Ground slab", `${num(q.ground_floor_area as number, 1)} m²`],
+            ["Upper levels", `${num(q.upper_floor_area as number, 1)} m²`],
             ["Roof", `${num(q.roof_area as number, 1)} m²`],
             ["Glazing", `${num(q.window_area as number, 1)} m² · ${q.windows} windows · WWR ${Math.round((q.window_wall_ratio as number) * 100)}%`],
             ["Doors", `${q.doors} (${q.exterior_doors} exterior)`],

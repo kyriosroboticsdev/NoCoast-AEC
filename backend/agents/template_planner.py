@@ -297,9 +297,9 @@ def template_steps(prompt: str) -> list[dict]:
         steps.append({"step": "level", "id": "B1", "height": min(storey_height, 3.0)})
     for i in range(storeys):
         steps.append({"step": "level", "id": f"L{i + 1}", "height": storey_height,
-                      "why": (f"{storey_height:g} m floor-to-floor suits the spans and services this building needs"
+                      "why": (f"{storey_height:g} m level height suits the spans and services"
                               if kind_of_building and not i else
-                              "3 m floor-to-floor keeps the stair to a single straight flight" if i else None)})
+                              "3 m level height keeps the stair to a single straight flight" if i else None)})
     # Every storey gets a hall so there is somewhere for the stair and the doors to meet.
     design = Design(levels=[])
     level_ids = (["B1"] if basement else []) + [f"L{i + 1}" for i in range(storeys)]
@@ -351,9 +351,9 @@ def template_steps(prompt: str) -> list[dict]:
         steps.append({"step": "layout", "level": level, "rooms": [
             {"name": r.name, "kind": r.kind, **({"poly": [e.model_dump(exclude_none=True, exclude_defaults=True) for e in r.poly]} if r.poly else {"rect": list(r.rect)})}
             for r in defs],
-            "why": ("service rooms grouped below ground where they need no daylight" if level.startswith("B")
-                    else "public rooms on the ground floor, hall in the middle so nothing is reached through another room"
-                    if level == "L1" else "sleeping rooms stacked over the ground-floor plate so the load paths line up")})
+            "why": ("service spaces grouped below ground where they need no daylight" if level.startswith("B")
+                    else "public spaces on the ground level, circulation in the middle so nothing is reached through another space"
+                    if level == "L1" else "spaces stacked over the level below so the load paths line up")})
     m = re.search(r"(gable|pitched|hip(ped)?|shed|mono-?pitch|skillion|lean-to)\s*roof", text)
     roof_kind = ({"pitched": "gable", "hipped": "hip", "monopitch": "shed", "mono-pitch": "shed", "skillion": "shed",
                   "lean-to": "shed"}.get(m.group(1), m.group(1)) if m else

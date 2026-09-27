@@ -130,7 +130,7 @@ export function Composer({ size, busy, planners, planner, setPlanner, onSubmit, 
             send();
           }
         }}
-        placeholder={placeholder ?? "Describe a building…"}
+        placeholder={placeholder ?? "Describe an asset…"}
         autoFocus={size === "hero"}
       />
       {problem && <div className="composer-problem">{problem}</div>}

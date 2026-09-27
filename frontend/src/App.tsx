@@ -411,7 +411,7 @@ export default function App() {
       if (forActive()) {
         current = step("Loading the finished model", version.ifc_url);
         const shownNow = await loadVersion(sid, version);
-        current.done(`${name} · ${shownNow.levels} storey${shownNow.levels === 1 ? "" : "s"} · ${version.summary.elements} elements`);
+        current.done(`${name} · ${shownNow.levels} level${shownNow.levels === 1 ? "" : "s"} · ${version.summary.elements} elements`);
         current = null;
       }
       update(sid, (s) => ({ ...patchRun(aid, { stage: "done", drafting: null, endedAt: Date.now() })(s), model: { name, url: version.ifc_url } }));
@@ -511,7 +511,7 @@ export default function App() {
       localFiles.current.set(sid, bytes);
       void putFile(sid, name, bytes); // so the session still has its model after a restart
     }
-    update(sid, addMessage({ id: uid(), role: "assistant", text: `Opened ${name}. Explore it in the viewer, or describe a new building below.` }));
+    update(sid, addMessage({ id: uid(), role: "assistant", text: `Opened ${name}. Explore it in the viewer, or describe a change below.` }));
     const ver = versionOf(url);
     const design = ver ? await fetchDesign(ver.project, ver.number) : null;
     await showModel(bytes, name, `${sid}:${name}`, { label: ver ? `v${ver.number} · final` : name, preview: false, design, version: ver });
@@ -589,7 +589,7 @@ export default function App() {
 
   const running = active?.messages.some((m) => m.run && !["done", "error"].includes(m.run.stage));
   const status = loadError
-    ?? (!shown && running ? "Generating model… the first preview appears after the first room." : null)
+    ?? (!shown && running ? "Generating model… the first preview appears after the first elements." : null)
     // A restored session has a model before the viewer has read it back.
     ?? (!shown && active?.model ? `Loading ${active.model.name}…` : null)
     ?? (!shown && active ? "No model in this session yet." : null);

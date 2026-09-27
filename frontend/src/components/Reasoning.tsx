@@ -77,7 +77,7 @@ export function Reasoning({ run }: { run: Run }) {
           {nowLine && <small className="reasoning-now">{nowLine}</small>}
         </span>
         {totalLayers > 0 && (
-          <span className="layer-stack" title="Storeys laid out so far">
+          <span className="layer-stack" title="Levels laid out so far">
             {Array.from({ length: totalLayers }, (_, i) => {
               const s = layerSteps[i];
               return <i key={i} className={s ? s.status : ""} />;
@@ -117,7 +117,7 @@ function StepRow({ step, kids, depth, layers }: {
       <div className="trace-main">
         <div className="trace-line" onClick={() => children.length && setOpen(!open)} style={{ cursor: children.length ? "pointer" : undefined }}>
           <span className="trace-title">{step.title}</span>
-          {layerIndex >= 0 && <span className="layer-badge">storey {layerIndex + 1}/{layers.length}</span>}
+          {layerIndex >= 0 && <span className="layer-badge">level {layerIndex + 1}/{layers.length}</span>}
           {step.badge && <span className="trace-badge">{step.badge}</span>}
           {step.metric && <span className="trace-metric">{step.metric}</span>}
           <span className="grow" />

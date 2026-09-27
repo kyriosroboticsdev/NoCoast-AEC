@@ -30,13 +30,13 @@ const kindName = (k: unknown) => String(k ?? "").replace(/_/g, " ");
 const cap = (s: string) => s.replace(/^\w/, (c) => c.toUpperCase());
 
 export function levelName(id: unknown): string {
-  if (typeof id !== "string") return "the ground floor";
+  if (typeof id !== "string") return "the ground level";
   if (/^B\d+$/i.test(id)) {
     const b = Number(id.slice(1));
     return b === 1 ? "the basement" : `basement level ${b}`;
   }
   const n = Number(id.replace(/^L/i, ""));
-  return n === 1 ? "the ground floor" : n === 2 ? "the first floor" : `level ${n}`;
+  return n === 1 ? "the ground level" : n === 2 ? "the level above" : `level ${n}`;
 }
 
 /** Design-level facts about a spec element id, or null when the id is not one the design knows. */
