@@ -5,10 +5,12 @@ import type { Attachment } from "../state/attachments";
 import { Composer } from "./Composer";
 
 const SUGGESTIONS: [string, string][] = [
-  ["Architecture studio", "An architecture studio for 40 people: open design studio, two meeting rooms, a model shop, kitchen and WCs, over two floors."],
-  ["Primary school", "A primary school with 6 classrooms, a hall, offices, WCs and a staff room."],
-  ["Three-storey offices", "A three storey office building with open plan offices, meeting rooms, a reception and a cafe on the ground floor."],
-  ["Family house", "A two storey family house with an open kitchen and living room, three bedrooms, two bathrooms, a study and a garage."],
+  ["Highway bridge", "A two-span highway bridge over a river, 80 m in all: two lanes each way, a sidewalk on one side, and approach embankments."],
+  ["Access road", "A 1.2 km two-lane access road with a roundabout at the junction, drainage ditches, and a culvert where a farm track crosses."],
+  ["Data center", "A 10 MW data center: a data hall, electrical and UPS rooms, a generator yard, offices for 40 people, and a loading dock."],
+  ["Rail station", "A two-platform rail station with a footbridge between the platforms, a ticket hall, waiting rooms, and a bus interchange."],
+  ["Treatment plant", "A water treatment plant: an intake, clarifiers, a filter building, chemical storage, and an operations office."],
+  ["Substation", "A 132 kV substation: transformer bays, a control building, a switchyard, and a perimeter access road."],
   ["Open an IFC file", ""],
 ];
 const SHOWN_RUNS = 4;
@@ -36,9 +38,9 @@ export function Home({ onReplay, backendUp, ...p }: Props) {
 
   return (
     <div className="home">
-      <h1>What are we building today?</h1>
-      <p className="home-sub">From a brief to an IFC model, a code review against the IBC, a drawing set with DXF plans and Excel schedules, and a cost and carbon plan.</p>
-      <Composer size="hero" {...p} placeholder="Describe a building — use, storeys, rooms, occupants…" />
+      <h1>What are we designing today?</h1>
+      <p className="home-sub">From a brief to an IFC model, a code review, drawings with DXF plans and Excel schedules, and a cost and carbon plan.</p>
+      <Composer size="hero" {...p} placeholder="Describe an asset — a bridge, a road, a data center, a building…" />
       <div className="suggestions">
         {SUGGESTIONS.map(([label, prompt]) => (
           <button key={label} className="suggestion" onClick={() => (prompt ? p.onSubmit(prompt, []) : p.onAttach())}>

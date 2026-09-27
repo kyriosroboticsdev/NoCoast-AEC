@@ -65,7 +65,7 @@ export function Sidebar(p: Props) {
             </button>
           </div>
         ))}
-        {!list.length && <p className="muted small pad-x">{query ? "No matches." : "Nothing yet — describe a building to start."}</p>}
+        {!list.length && <p className="muted small pad-x">{query ? "No matches." : "Nothing yet — describe an asset to start."}</p>}
       </div>
 
       <div className="status-card">

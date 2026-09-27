@@ -465,8 +465,8 @@ def _checks(m: Model, group: str, load: int) -> list[dict]:
     checks.append(_check(
         "space.ceiling", "Space", "Ceiling height", "IRC R305.1" if residential else "IBC 1208.2",
         "fail" if low else "pass", f"{lowest * MM:,.0f} mm lowest clear", f"≥ {min_h * MM:,.0f} mm",
-        "Floor-to-floor less a 200 mm floor zone above.", [r.id for r in low],
-        "Raise the floor-to-floor height of the storey." if low else ""))
+        "Level height less a 200 mm zone above.", [r.id for r in low],
+        "Raise the level height." if low else ""))
 
     # --- daylight and ventilation ------------------------------------------
     hab = [r for r in m.rooms if r.kind in HABITABLE and r.area > 0]

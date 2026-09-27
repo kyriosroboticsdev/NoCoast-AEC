@@ -32,10 +32,10 @@ PHASES: dict[str, str] = {
 }
 PHASE_TITLES = {
     "brief": "Setting out the brief",
-    "massing": "Massing and storey stacking",
-    "plan": "Planning the floor plates",
+    "massing": "Massing and levels",
+    "plan": "Planning the layout",
     "circulation": "Circulation and access",
-    "envelope": "Envelope, openings and roof",
+    "envelope": "Envelope and openings",
     "structure": "Structure and site works",
     "fitout": "Fit-out and equipment",
 }
@@ -68,10 +68,10 @@ def level_name(design: Design | None, level_id: Any) -> str:
         return "the basement" if n in ("", "1") else f"basement level {n}"
     n = lid[1:]
     if n == "1":
-        return "the ground floor"
+        return "the ground level"
     if n == "2":
-        return "the first floor"
-    return f"level {n}" if n else "the ground floor"
+        return "the level above"
+    return f"level {n}" if n else "the ground level"
 
 
 def _in_sentence(name: str) -> str:
@@ -83,7 +83,7 @@ def _in_sentence(name: str) -> str:
 def room_name(design: Design | None, ref: Any) -> str:
     key = str(ref or "").strip()
     if not key:
-        return "the room"
+        return "the space"
     if key.lower() in ("outside", "exterior", "out", "outdoors", "garden", "street"):
         return "outside"
     room = design.room(key) if design else None
@@ -183,13 +183,13 @@ def _narrate(raw: dict, design: Design) -> str:  # noqa: PLR0911, PLR0912 - one 
         height = level.height if level else raw.get("height")
         where = level_name(design, lid)
         if lid.upper().startswith("B"):
-            return f"Sinking {where}, {_f(height)} m floor-to-floor"
-        return f"Stacking {where}, {_f(height)} m floor-to-floor"
+            return f"Sinking {where}, {_f(height)} m high"
+        return f"Stacking {where}, {_f(height)} m high"
 
     if kind == "room":
         room = design.room(str(raw.get("id") or name or ""))
         size = _size(room)
-        label = room.name if room else (name or "room")
+        label = room.name if room else (name or "space")
         return f"{label} on {level_name(design, room.level if room else raw.get('level'))}" + (f" — {size}" if size else "")
 
     if kind == "layout":
@@ -198,7 +198,7 @@ def _narrate(raw: dict, design: Design) -> str:  # noqa: PLR0911, PLR0912 - one 
         rooms = [r for r in rooms if r is not None]
         area = sum(r.area_m2 for r in rooms)
         names = ", ".join(_in_sentence(r.name) for r in rooms[:8]) + (", …" if len(rooms) > 8 else "")
-        return (f"Floor plate for {level_name(design, lid)}: {len(rooms)} rooms, {_f(area, 0)} m²"
+        return (f"Layout for {level_name(design, lid)}: {len(rooms)} spaces, {_f(area, 0)} m²"
                 + (f" — {names}" if names else ""))
 
     if kind == "door":
@@ -238,7 +238,7 @@ def _narrate(raw: dict, design: Design) -> str:  # noqa: PLR0911, PLR0912 - one 
             return f"{item.capitalize()} {_standing(design, raw)}"
         side = raw.get("side")
         where = (f" against the {side_name(side)} wall" if side and side != "center" else
-                 " in the middle of the room" if side == "center" else
+                 " in the middle" if side == "center" else
                  f" at ({_f(raw['position'][0])}, {_f(raw['position'][1])})" if raw.get("position") else "")
         return f"{item.capitalize()} in {room_name(design, raw.get('room'))}{where}"
 
@@ -288,8 +288,8 @@ def narrate_draft(raw: dict, design: Design) -> str:
     where = f" in {room_name(design, room)}" if room else ""
     verbs = {
         "building": "Naming the project",
-        "level": "Adding a storey",
-        "room": f"Drawing {room_name(design, room) if room else 'a room'}",
+        "level": "Adding a level",
+        "room": f"Drawing {room_name(design, room) if room else 'a space'}",
         "layout": f"Setting out the plan of {level_name(design, raw.get('level'))}",
         "door": f"Placing a door{where}",
         "window": f"Cutting a window{where}",

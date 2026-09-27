@@ -35,7 +35,7 @@ export function ViewControls({ viewer, roomsVisible, onRooms, width, onResize, o
       <div className="view-sep" />
       <div className="view-icons">
         <button title="Reset view" onClick={() => viewer.reset()}><RotateCcw size={17} /></button>
-        <button title={roomsVisible ? "Hide room volumes" : "Show room volumes"} className={roomsVisible ? "on" : ""} onClick={onRooms}>
+        <button title={roomsVisible ? "Hide spaces" : "Show spaces"} className={roomsVisible ? "on" : ""} onClick={onRooms}>
           <BedDouble size={17} />
         </button>
       </div>
@@ -61,7 +61,7 @@ export function SectionBar({ section, onValue, onFollow }: { section: SectionVie
         {section.snaps.map((s) => <option key={`${s.z}-${s.label}`} value={Math.round(s.z * 10)} label={s.label} />)}
       </datalist>
       <span className="section-label">{section.label}</span>
-      <label title="While a request runs, cut the view just under the ceiling of the storey being worked on">
+      <label title="While a request runs, cut the view just under the top of the level being worked on">
         <input type="checkbox" checked={section.follow} onChange={(e) => onFollow(e.target.checked)} /> follow build
       </label>
     </div>
@@ -122,7 +122,7 @@ export function InfoCard({ fileName, schema, picked, facts, properties, onClear,
             <div className="guid">{picked.globalId}</div>
           </>
         ) : (
-          <div className="muted small">Click an element to inspect it and to make the next prompt about it. Clicking a floor picks the room.</div>
+          <div className="muted small">Click an element to inspect it and to make the next prompt about it. Clicking a slab picks the space under it.</div>
         )}
       </div>
     </div>

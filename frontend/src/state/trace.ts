@@ -27,10 +27,10 @@ export const PHASE_TITLES: Record<string, string> = {
   brief: "Reading the brief",
   research: "Looking up parts and precedents",
   concept: "Design thinking",
-  massing: "Massing and storey heights",
-  plan: "Planning the floor plates",
+  massing: "Massing and levels",
+  plan: "Planning the layout",
   circulation: "Circulation and access",
-  envelope: "Envelope, openings and roof",
+  envelope: "Envelope and openings",
   structure: "Structure and site works",
   fitout: "Fit-out and equipment",
   review: "Checking the model against the brief",
@@ -52,13 +52,13 @@ const PHASE_ORDER = Object.keys(PHASE_TITLES);
 const BUILDING = new Set<string>(["massing", "plan", "circulation", "envelope", "structure", "fitout"]);
 
 export function levelName(id: unknown): string {
-  if (typeof id !== "string") return "the ground floor";
+  if (typeof id !== "string") return "the ground level";
   if (/^B\d+$/i.test(id)) {
     const b = Number(id.slice(1));
     return b === 1 ? "the basement" : `basement level ${b}`;
   }
   const n = Number(id.replace(/^L/i, ""));
-  return n === 1 ? "the ground floor" : n === 2 ? "the first floor" : `level ${n}`;
+  return n === 1 ? "the ground level" : n === 2 ? "the level above" : `level ${n}`;
 }
 
 const LEGACY: Record<string, { phase: TracePhase; title: string }> = {
@@ -154,7 +154,7 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
   let gfa = 0;
 
   const roomName = (id: unknown) => {
-    if (typeof id !== "string") return "the room";
+    if (typeof id !== "string") return "the space";
     if (rooms[id]) return `the ${rooms[id]}`;
     if (id === "outside") return "outside";
     return `the ${id.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}`;
@@ -232,7 +232,7 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
     const size = rect ? ` (${rect[2]} × ${rect[3]} m)` : "";
     const name = typeof step.name === "string" ? step.name : "";
     switch (step.step) {
-      case "building": return name ? `Calling the building “${name}”` : "Describing the building";
+      case "building": return name ? `Naming it “${name}”` : "Describing the asset";
       case "level": return `Adding ${levelName(step.id ?? step.level)}${step.height ? `, ${step.height} m high` : ""}`;
       case "room": return `${message.includes("updated") ? "Moving" : "Adding"} the ${name || roomName(step.id).replace(/^the /, "")} on ${levelName(step.level)}${size}`;
       case "layout": {
@@ -535,8 +535,8 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
           const g = group("issue");
           const sheets = (d.sheets as { number: string; title: string }[] | undefined) ?? [];
           for (const s of sheets) child(g, s.title, null, "done", { badge: s.number });
-          child(g, "Plans in model space on NCS layers, one storey per sheet of CAD", null, "done", { badge: "DXF" });
-          child(g, "Area, room, door, window and equipment schedules with live totals", null, "done", { badge: "XLSX" });
+          child(g, "Plans in model space on NCS layers, one level per sheet of CAD", null, "done", { badge: "DXF" });
+          child(g, "Area, space, door, window and equipment schedules with live totals", null, "done", { badge: "XLSX" });
           child(g, "Open issues exported as BCF 2.1, linked to IFC GlobalIds", null, "done", { badge: "BCF" });
           finish(g, { title: `Issued ${plural(sheets.length, "sheet")}, CAD plans, schedules, BCF issues and the cost plan`, detail: null });
           return;
