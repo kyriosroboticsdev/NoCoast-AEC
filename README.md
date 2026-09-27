@@ -654,6 +654,17 @@ only; search is by words and `tags`. The model writes its own with the `asset` s
 {"step": "brick", "brick": "hedge", "ref": "site", "start": [-2, -2], "end": [14, -2]}
 ```
 
+**Two tiers.** Every id of a brick in `bricks/library/*.json` is listed in the system prompts, so that
+list has to stay short. Bricks in `bricks/library/catalogue/*.json` are found with `search_bricks` and
+are not listed: the prompts carry one line naming the catalogue's topics (the file names) with counts.
+Specialised equipment goes in the catalogue, so the library can grow without growing the prompt.
+`python tools/check_bricks.py <file>` checks new bricks one at a time against what the test suite
+demands of every brick (it loads, evaluates over its whole parameter range, places in the test scene,
+compiles to IFC that tessellates, and does not make a plain house prompt place it), and
+`python tools/brick_coverage.py` lists the IFC4 element classes and predefined types that still have no
+brick. `bricks/library/catalogue/README.md` has the authoring rules, and `docs/brick-sources/` the open
+data sources for classes, property sets, classification codes and dimensions, with their licences.
+
 **The building host** (`core/derive_bricks.py::building_frames`) turns the design into frames:
 each room (a void up to the underside of the slab above, with its walls as sides), `site` (the ground around
 the building, whose sides are the building's outer faces), `roof`, every wall, slab, column and beam,

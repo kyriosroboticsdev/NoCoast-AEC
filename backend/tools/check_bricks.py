@@ -225,12 +225,12 @@ def check_search(bricks: list[Brick], results: dict[str, Result]) -> None:
             results[brick.id].warnings.append(f"search: '{brick.name}' finds {top[:3]} first; make the name and tags more specific")
 
 
-def main() -> int:
+def main_with(argv: list[str] | None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("files", nargs="*", type=Path, help="brick files (default: the catalogue)")
     parser.add_argument("--json", type=Path, help="also write the results to this file")
     parser.add_argument("--quiet", action="store_true", help="print failures and the summary only")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     files = args.files or sorted(CATALOGUE_DIR.glob("*.json"))
     if not files:
         print("no brick files to check")
@@ -281,6 +281,10 @@ def main() -> int:
     if args.json:
         args.json.write_text(json.dumps([r.__dict__ for r in results.values()], indent=1), encoding="utf-8")
     return 1 if failed else 0
+
+
+def main() -> int:
+    return main_with(None)
 
 
 if __name__ == "__main__":
