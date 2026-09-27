@@ -281,7 +281,8 @@ def _persist(store: Store, project_id: str, spec: BuildingSpec, guids: GuidMap, 
     version = store.add_version(project_id, spec=spec, guids=guids, mode=mode, summary=summarize(model), ifc_path=path,
                                 prompt=prompt, llm=llm, ops=ops, notes=notes, design=design, checks=checks or [],
                                 images=images or [], approach=approach)
-    emit("done", f"version {version.number} ready", version.as_version().model_dump() | {"ifc_url": version.ifc_url})
+    emit("done", f"version {version.number} ready",
+         version.as_version().model_dump() | {"ifc_url": version.ifc_url, "export_url": version.export_url})
     return version
 
 

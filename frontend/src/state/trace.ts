@@ -1,17 +1,19 @@
-// Turns the backend's pipeline stream into the assistant's reasoning trace, in plain words.
+// Turns the backend's pipeline stream into the assistant's reasoning trace: a design log, grouped
+// the way a project actually runs — brief, massing, floor plates, circulation, envelope, structure,
+// fit-out, review, issue.
 //
-// Stages (backend README §4.5): requirements · focus · build · llm · stream · step · partial ·
-// verify · compile · done · error. Each storey the model lays out becomes a "layer" step; the
-// doors, windows, stairs and furniture that follow nest under the storey they land on. Previews
-// (`partial`) are handed to the caller so the viewer can show the building as it grows.
+// Stages (backend README §4.5): requirements · focus · approach · build · llm · stream · draft ·
+// step · partial · verify · compile · done · error.
 //
-// Wording follows the design-layer UI on the backend branch (friendly mode). The older stage names
-// (program | edit | apply | solve) are still understood for older backends.
+// The backend does the narration now: a `step` event carries `headline` (a sentence about the
+// building), `why` (the model's own reasoning) and `facts` (areas, dimensions, running totals), and
+// says which `phase` it belongs to. `describe()` below is the fallback for older backends that only
+// sent the raw step. Previews (`partial`) are handed to the caller so the viewer can show the
+// building as it grows; `draft` events are handed over as the live "writing…" line.
 import type { StageEvent } from "../api/client";
-import { uid, type TraceStep } from "./sessions";
+import { uid, type TracePhase, type TraceStep } from "./sessions";
 
 type Step = Record<string, unknown>;
-type Phase = TraceStep["phase"];
 
 const SIDES: Record<string, string> = { N: "north", S: "south", E: "east", W: "west", center: "middle" };
 const side = (s: unknown) => SIDES[String(s)] ?? String(s ?? "");
@@ -19,6 +21,21 @@ const kindName = (k: unknown) => String(k ?? "").replace(/_/g, " ");
 const cap = (s: string) => s.replace(/^\w/, (c) => c.toUpperCase());
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** Heading for each phase of the work; the trace shows one group per phase, in this order. */
+export const PHASE_TITLES: Record<string, string> = {
+  brief: "Reading the brief",
+  research: "Looking up parts and precedents",
+  massing: "Massing and storey heights",
+  plan: "Planning the floor plates",
+  circulation: "Circulation and access",
+  envelope: "Envelope, openings and roof",
+  structure: "Structure and site works",
+  fitout: "Fit-out and equipment",
+  review: "Checking the model against the brief",
+  output: "Issuing the model",
+};
+const PHASE_ORDER = Object.keys(PHASE_TITLES);
 
 export function levelName(id: unknown): string {
   if (typeof id !== "string") return "the ground floor";
@@ -30,15 +47,11 @@ export function levelName(id: unknown): string {
   return n === 1 ? "the ground floor" : n === 2 ? "the first floor" : `level ${n}`;
 }
 
-const LEGACY: Record<string, { phase: Phase; title: string }> = {
-  program: { phase: "plan", title: "Designing the building program" },
+const LEGACY: Record<string, { phase: TracePhase; title: string }> = {
+  program: { phase: "brief", title: "Reading the brief" },
   edit: { phase: "plan", title: "Working out the edit" },
-  apply: { phase: "validate", title: "Applying the operations" },
-  solve: { phase: "build", title: "Solving the layout" },
-  research: { phase: "plan", title: "Researching the brick library" },
-  tool: { phase: "plan", title: "Looking up bricks and skills" },
-  coordinate: { phase: "validate", title: "Coordinating clashes, services and structure" },
-  look: { phase: "validate", title: "Looking at the model" },
+  apply: { phase: "review", title: "Applying the operations" },
+  solve: { phase: "plan", title: "Solving the layout" },
 };
 
 export interface Preview {
@@ -51,15 +64,38 @@ interface Open {
   t0: number;
 }
 
-export function stageTracer(push: (step: TraceStep) => void, hooks: { onPreview?: (p: Preview) => void; onStep?: (step: Step, ok: boolean) => void } = {}) {
+interface Hooks {
+  onPreview?: (p: Preview) => void;
+  onStep?: (step: Step, ok: boolean) => void;
+  /** The design strategy, as soon as the model has written it. */
+  onApproach?: (text: string) => void;
+  /** What the model is writing right now; null when it has landed. */
+  onLive?: (text: string | null) => void;
+}
+
+/**
+ * "16 m² · 4 × 4 m" — the numbers worth putting next to a line. Only for the moves whose subject is
+ * a piece of floor area; hanging the room's area off every door and chair would just be noise.
+ */
+function metricOf(kind: string, facts: Record<string, unknown> | undefined): string | null {
+  if (!facts || !["room", "layout"].includes(kind)) return null;
+  const bits: string[] = [];
+  const area = facts.plate_area ?? facts.area;
+  if (typeof area === "number" && area > 0) bits.push(`${Math.round(area)} m²`);
+  if (typeof facts.width === "number" && typeof facts.depth === "number") bits.push(`${facts.width} × ${facts.depth} m`);
+  return bits.join(" · ") || null;
+}
+
+export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) {
   const rooms: Record<string, string> = {}; // room id / slug → display name, learned from the steps
   const roomLevel: Record<string, string> = {};
-  let top: Open | null = null; // the running top-level step
-  let layerOf: Record<string, Open> = {}; // storey id → its layer step
-  let lastLayer: Open | null = null;
+  const groups: Record<string, Open> = {}; // phase → its group step
+  const layerOf: Record<string, Open> = {}; // storey id → its floor-plate step inside the plan group
+  let lastGroup: Open | null = null;
   let applied = 0;
   let skipped = 0;
   let previews = 0;
+  let gfa = 0;
 
   const roomName = (id: unknown) => {
     if (typeof id !== "string") return "the room";
@@ -68,7 +104,7 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: { onPreview?
     return `the ${id.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}`;
   };
 
-  const open = (phase: Phase, title: string, detail: string | null = null, extra: Partial<TraceStep> = {}): Open => {
+  const open = (phase: TracePhase, title: string, detail: string | null = null, extra: Partial<TraceStep> = {}): Open => {
     const step: TraceStep = { id: uid(), parent: null, phase, title, detail, status: "running", ...extra };
     push(step);
     return { step, t0: performance.now() };
@@ -78,24 +114,41 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: { onPreview?
     o.step = { ...o.step, status: "done", ms: Math.round(performance.now() - o.t0), ...patch };
     push(o.step);
   };
-  const child = (parent: Open, title: string, detail: string | null, status: TraceStep["status"] = "done") =>
-    push({ id: uid(), parent: parent.step.id, phase: parent.step.phase, title, detail, status });
+  const child = (parent: Open, title: string, detail: string | null, status: TraceStep["status"] = "done",
+                 extra: Partial<TraceStep> = {}) =>
+    push({ id: uid(), parent: parent.step.id, phase: parent.step.phase, title, detail, status, ...extra });
   const setDetail = (o: Open | null, detail: string) => {
     if (!o) return;
     o.step = { ...o.step, detail };
     push(o.step);
   };
-  const closeLayers = () => {
+
+  /** The group for a phase: opened the first time it is needed, reopened if a later step belongs to it. */
+  const group = (phase: string, title?: string): Open => {
+    const existing = groups[phase];
+    if (existing) {
+      if (existing.step.status !== "running") {
+        existing.step = { ...existing.step, status: "running" };
+        push(existing.step);
+      }
+      if (title && title !== existing.step.title) {
+        existing.step = { ...existing.step, title };
+        push(existing.step);
+      }
+      lastGroup = existing;
+      return existing;
+    }
+    // Finish groups that come earlier in the run, so only the current one spins.
+    const rank = PHASE_ORDER.indexOf(phase);
+    for (const [name, g] of Object.entries(groups)) if (PHASE_ORDER.indexOf(name) < rank) finish(g);
+    const created = open(phase as TracePhase, title ?? PHASE_TITLES[phase] ?? cap(phase));
+    groups[phase] = created;
+    lastGroup = created;
+    return created;
+  };
+  const closeAll = () => {
+    for (const g of Object.values(groups)) finish(g);
     for (const l of Object.values(layerOf)) finish(l);
-  };
-  const closeTop = () => {
-    finish(top);
-    top = null;
-  };
-  const startTop = (phase: Phase, title: string, detail: string | null = null) => {
-    closeTop();
-    top = open(phase, title, detail);
-    return top;
   };
 
   function learn(step: Step) {
@@ -117,6 +170,7 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: { onPreview?
     }
   }
 
+  /** Narration for backends that don't send a headline (kept so an older backend still reads well). */
   function describe(step: Step, message: string): string {
     const rect = Array.isArray(step.rect) ? (step.rect as number[]) : null;
     const size = rect ? ` (${rect[2]} × ${rect[3]} m)` : "";
@@ -153,55 +207,63 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: { onPreview?
     }
   }
 
+  /** Phase of a step, when the backend didn't say. */
+  const phaseOf = (kind: string): string => ({
+    building: "brief", note: "brief", level: "massing", room: "plan", layout: "plan", remove: "plan",
+    door: "circulation", stair: "circulation", window: "envelope", balcony: "envelope", porch: "envelope",
+    roof: "envelope", material: "envelope", column: "structure", element: "structure", furniture: "fitout",
+    custom: "fitout",
+  }[kind] ?? "plan");
+
   const reason = (error: unknown) =>
     String(error ?? "")
       .replace(/^applying this step makes the design unbuildable: /, "")
       .replace(/^(door|window|stair|balcony|furniture|room|layout|level|remove)\b[^:]*: /, "");
 
-  /** Where a step lands: the storey's layer when we know it, else the running top step. */
-  function parentFor(step: Step): Open | null {
-    const level = typeof step.level === "string" ? step.level
-      : typeof step.room === "string" ? roomLevel[step.room] : undefined;
-    return (level && layerOf[level]) || lastLayer || top;
-  }
-
   function onStep(e: StageEvent) {
     const d = e.data ?? {};
     const step = (d.step as Step) ?? {};
     const ok = d.ok !== false;
+    const facts = d.facts as Record<string, unknown> | undefined;
+    const kind = String(step.step ?? "");
     if (ok) learn(step);
     hooks.onStep?.(step, ok);
-    const what = describe(step, e.message);
-    // Steps before the first storey (building, levels) gather under one build step; after that they
-    // nest under their storey's layer, so no extra top-level step is needed.
-    if (!lastLayer && (!top || top.step.phase !== "build")) startTop("build", "Laying out the building");
+    hooks.onLive?.(null);
+    const what = typeof d.headline === "string" && d.headline ? d.headline : describe(step, e.message);
+    const phase = String(d.phase ?? facts?.phase ?? phaseOf(kind));
+    const why = typeof d.why === "string" ? d.why : null;
+    if (typeof facts?.gfa === "number") gfa = facts.gfa;
 
-    if (ok && step.step === "layout" && typeof step.level === "string") {
-      // One layer per storey. Re-laying out a storey updates its layer rather than adding one.
+    // A storey's floor plate is its own block inside the plan group: it is the move people watch for.
+    if (ok && kind === "layout" && typeof step.level === "string") {
+      const plan = group("plan");
       const existing = layerOf[step.level];
+      const patch = { title: what, status: "running" as const, why, metric: metricOf(kind, facts) };
       if (existing) {
-        existing.step = { ...existing.step, title: what, status: "running" };
+        existing.step = { ...existing.step, ...patch };
         push(existing.step);
-        lastLayer = existing;
       } else {
-        closeTop(); // storeys are top-level so the layer stack can count them
-        lastLayer = layerOf[step.level] = open("build", what, null, { layer: true });
+        layerOf[step.level] = open("plan", what, null, { layer: true, parent: plan.step.id, why, metric: metricOf(kind, facts) });
       }
       applied++;
       return;
     }
-    if (ok && step.step === "roof") closeLayers();
+    if (ok && kind !== "room") for (const l of Object.values(layerOf)) finish(l);
 
-    const parent = parentFor(step) ?? startTop("build", "Building the model");
+    // Single rooms belong to their storey's plate when we know which one it is.
+    const level = typeof step.level === "string" ? step.level
+      : typeof step.room === "string" ? roomLevel[step.room] : undefined;
+    const parent = (kind === "room" && level && layerOf[level]) || group(phase);
+
     if (ok) {
       applied++;
-      const pruned = e.message.includes("; removed ")
-        ? e.message.split("; ").slice(1).map((s) => s.replace(/^removed (\w+) ([\w-]+): /, "dropped a $1 because ")).join("\n")
+      const pruned = (d.message as string | undefined)?.includes("; removed ")
+        ? String(d.message).split("; ").slice(1).map((s) => s.replace(/^removed (\w+) ([\w-]+): /, "dropped a $1 because ")).join("\n")
         : null;
-      child(parent, what, pruned);
+      child(parent, what, pruned, "done", { why, metric: metricOf(kind, facts) });
     } else {
       skipped++;
-      child(parent, `Skipped: ${what.replace(/^\w/, (c) => c.toLowerCase())}`, reason(d.error), "error");
+      child(parent, `Could not ${what.replace(/^\w/, (c) => c.toLowerCase())}`, reason(d.error), "error");
     }
   }
 
@@ -210,41 +272,92 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: { onPreview?
       const d = e.data ?? {};
       switch (e.stage) {
         case "requirements": {
-          if (!Array.isArray(d.requirements)) {
-            if (!top || top.step.title !== "Reading your request") startTop("plan", "Reading your request");
-            return;
-          }
+          const brief = group("brief");
+          if (!Array.isArray(d.requirements)) return;
           const reqs = d.requirements as { text: string; supported?: boolean }[];
           const unsupported = reqs.filter((r) => r.supported === false);
-          const title = `I understood ${plural(reqs.length, "thing")} to build${unsupported.length ? `, ${unsupported.length} of which I can't do` : ""}`;
-          const t = top && top.step.title === "Reading your request" ? top : startTop("plan", "Reading your request");
-          for (const r of reqs) child(t, r.supported === false ? `Can't do: ${r.text}` : r.text, null, r.supported === false ? "error" : "done");
-          finish(t, { title, detail: null });
-          top = null;
+          for (const r of reqs) child(brief, r.supported === false ? `Out of scope: ${r.text}` : r.text, null, r.supported === false ? "error" : "done");
+          finish(brief, {
+            title: `Brief: ${plural(reqs.length, "requirement")}${unsupported.length ? `, ${unsupported.length} outside what I can model` : ""}`,
+            detail: null,
+          });
           return;
         }
         case "focus":
-          child(top ?? startTop("plan", "Reading your request"),
-            `Working on ${String(d.text ?? "the selection").replace(/ \((wall|room) id [^)]*\)/, "")}`, null);
+          child(group("brief"), `Working on ${String(d.text ?? "the selection").replace(/ \((wall|room) id [^)]*\)/, "")}`, null);
           return;
+        case "approach":
+          if (typeof d.approach === "string") hooks.onApproach?.(d.approach);
+          return;
+        case "research": {
+          // The model reading the brick library and the skills before it starts drawing.
+          const g = group("research");
+          if (Array.isArray(d.bricks) || Array.isArray(d.skills)) {
+            const bricks = (d.bricks as string[] | undefined) ?? [];
+            const skills = (d.skills as string[] | undefined) ?? [];
+            if (d.chars !== undefined) {
+              finish(g, { title: `Read ${plural(bricks.length, "part")} and ${plural(skills.length, "playbook")}` });
+              return;
+            }
+          }
+          setDetail(g, e.message);
+          return;
+        }
+        case "tool":
+          child(group("research"), cap(e.message), (d.result as string | undefined)?.slice(0, 400) ?? null,
+                String(d.result ?? "").startsWith("error:") ? "error" : "done");
+          return;
+        case "coordinate": {
+          const g = group("review", "Coordinating clashes, services and structure");
+          const issues = (d.issues as { message?: string; level?: string }[] | undefined) ?? [];
+          for (const i of issues) child(g, String(i.message ?? ""), null, i.level === "error" ? "error" : "done");
+          finish(g, { title: cap(e.message) });
+          return;
+        }
+        case "look": {
+          // The model checking its own work from rendered screenshots.
+          const g = group("review", "Looking at the model");
+          if (d.skipped) {
+            finish(g, { title: "Skipped the visual check", detail: e.message });
+            return;
+          }
+          const problems = (d.problems as string[] | undefined) ?? [];
+          if (problems.length) {
+            for (const p of problems) child(g, p, null, "error");
+            setDetail(g, `${plural(problems.length, "problem")} seen`);
+            return;
+          }
+          child(g, cap(e.message), (d.error as string | undefined) ?? null,
+                d.error ? "error" : "done", { image: typeof d.image === "string" ? d.image : undefined });
+          return;
+        }
         case "build": {
           const problems = (d.problems as string[]) ?? [];
           const unmet = (d.unmet as string[]) ?? [];
-          const title = problems.length ? `Fixing ${plural(problems.length, "step")} that didn't work`
-            : unmet.length ? `Going back for ${plural(unmet.length, "thing")} still missing`
-            : e.message.startsWith("editing") ? "Working out what to change" : "Laying out the building";
-          startTop("build", title, unmet.length ? unmet.map((x) => `• ${x}`).join("\n") : null);
+          if (problems.length) {
+            const g = group("review", `Reworking ${plural(problems.length, "move")} that did not build`);
+            setDetail(g, problems.slice(0, 3).map((x) => `• ${x}`).join("\n"));
+          } else if (unmet.length) {
+            const g = group("review", `Closing ${plural(unmet.length, "gap")} against the brief`);
+            setDetail(g, unmet.map((x) => `• ${x}`).join("\n"));
+          }
           return;
         }
         case "llm":
-          if (d.provider && top) setDetail(top, `asking ${d.provider}${d.model ? ` ${d.model}` : ""}…`);
+          if (d.provider && lastGroup) setDetail(lastGroup, `${d.provider}${d.model ? ` ${d.model}` : ""} is drawing…`);
           return;
         case "stream":
-          if (e.message.startsWith("waiting")) setDetail(lastLayer ?? top, e.message);
+          if (d.waiting) hooks.onLive?.(e.message);
+          return;
+        case "draft":
+          hooks.onLive?.(e.message);
           return;
         case "step":
           onStep(e);
-          if (top) setDetail(top, `${plural(applied, "step")} applied${skipped ? ` · ${skipped} skipped` : ""}${previews ? ` · preview ${previews}` : ""}`);
+          if (lastGroup) {
+            setDetail(lastGroup, [plural(applied, "move"), skipped ? `${skipped} skipped` : "",
+              gfa ? `${Math.round(gfa)} m² so far` : "", previews ? `preview ${previews}` : ""].filter(Boolean).join(" · "));
+          }
           return;
         case "partial":
           if (typeof d.ifc_url === "string") {
@@ -253,48 +366,50 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: { onPreview?
           }
           return;
         case "verify": {
-          closeLayers();
+          hooks.onLive?.(null);
+          for (const l of Object.values(layerOf)) finish(l);
           const rs = (d.results as { text: string; status: string; detail: string }[]) ?? [];
           const met = rs.filter((r) => r.status === "met").length;
           const checkable = rs.filter((r) => r.status === "met" || r.status === "unmet").length;
-          const t = startTop("validate", rs.length ? `Checked the result: ${met} of ${checkable} requirements met` : "Checking the result");
+          const g = group("review", rs.length ? `Checked against the brief: ${met} of ${checkable} met` : "Checking against the brief");
           for (const r of rs) {
-            if (r.status === "met" || r.status === "unmet") child(t, `${r.text}`, r.status === "unmet" ? r.detail : null, r.status === "unmet" ? "error" : "done");
+            if (r.status === "met" || r.status === "unmet") child(g, r.text, r.status === "unmet" ? r.detail : null, r.status === "unmet" ? "error" : "done");
           }
-          closeTop();
+          if (rs.length && met === checkable) finish(g);
           return;
         }
         case "compile":
-          closeLayers();
-          startTop("build", "Finishing the model", "compiling IFC");
+          hooks.onLive?.(null);
+          for (const l of Object.values(layerOf)) finish(l);
+          for (const [name, g] of Object.entries(groups)) if (name !== "output") finish(g);
+          group("output", "Issuing the model");
+          setDetail(groups.output, "walls, slabs, openings and roof → IFC");
           return;
         case "done":
-          closeLayers();
-          closeTop();
+          hooks.onLive?.(null);
+          closeAll();
           return;
         case "error":
+          hooks.onLive?.(null);
           return; // the stream throws right after; fail() reports it once
         default: {
           const info = LEGACY[e.stage];
           if (!info) return;
           const errors = (d.errors as string[] | undefined) ?? [];
-          if (top && top.step.title === info.title && errors.length) {
-            child(top, cap(e.message), `fixing: ${errors[0]}${errors.length > 1 ? ` (+${errors.length - 1} more)` : ""}`, "running");
-            return;
-          }
-          startTop(info.phase, info.title, e.message.toLowerCase() === info.title.toLowerCase() ? null : e.message);
+          const g = group(info.phase, info.title);
+          if (errors.length) child(g, cap(e.message), `fixing: ${errors[0]}${errors.length > 1 ? ` (+${errors.length - 1} more)` : ""}`, "running");
         }
       }
     },
     /** Mark whatever was running as failed (the error shows on the innermost step). */
     fail(message: string) {
-      const target = top ?? lastLayer;
+      hooks.onLive?.(null);
+      const target = lastGroup;
       if (target) {
         target.step = { ...target.step, status: "error", error: message, ms: Math.round(performance.now() - target.t0) };
         push(target.step);
       }
-      closeLayers();
-      top = null;
+      closeAll();
     },
   };
 }

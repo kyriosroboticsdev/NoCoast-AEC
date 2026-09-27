@@ -58,9 +58,23 @@ export async function openIfc(): Promise<{ name: string; data: Uint8Array } | nu
   });
 }
 
-export async function saveIfc(name: string, data: Uint8Array): Promise<string | null> {
+const FILTERS: Record<string, { name: string; extensions: string[] }[]> = {
+  ifc: IFC_FILTER,
+  zip: [{ name: "Zip archive", extensions: ["zip"] }],
+  json: [{ name: "JSON", extensions: ["json"] }],
+  csv: [{ name: "CSV", extensions: ["csv"] }],
+  md: [{ name: "Markdown", extensions: ["md"] }],
+  txt: [{ name: "Text", extensions: ["txt"] }],
+};
+
+/**
+ * Write bytes to wherever the user wants them: a native save dialog on the desktop, a download in
+ * the browser. The extension of `name` picks the dialog's file filter.
+ */
+export async function saveFile(name: string, data: Uint8Array): Promise<string | null> {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
   if (isDesktop) {
-    const path = await save({ defaultPath: name, filters: IFC_FILTER });
+    const path = await save({ defaultPath: name, filters: FILTERS[ext] ?? [] });
     if (!path) return null;
     await invoke("write_ifc", data, { headers: { path } });
     return path;
@@ -71,6 +85,8 @@ export async function saveIfc(name: string, data: Uint8Array): Promise<string | 
   URL.revokeObjectURL(url);
   return name;
 }
+
+export const saveIfc = (name: string, data: Uint8Array) => saveFile(name, data);
 
 declare global {
   interface Window {

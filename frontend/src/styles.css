@@ -318,11 +318,29 @@ pre.code { margin: 8px 0 0; max-height: 320px; overflow: auto; font-size: 12px; 
 .trace-row.child .trace-title { font-size: 13.5px; }
 .trace-row.running > .trace-main > .trace-line .trace-title { color: var(--text); }
 .trace-ms { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.trace-detail { font-size: 12.5px; color: var(--muted); line-height: 1.45; margin-top: 1px; word-break: break-word; }
+.trace-detail { font-size: 12.5px; color: var(--muted); line-height: 1.45; margin-top: 1px; word-break: break-word; white-space: pre-line; }
 .trace-detail.err { color: var(--danger); }
 .trace-shot { display: block; margin-top: 6px; max-width: 320px; }
 .trace-shot img { display: block; width: 100%; border-radius: 6px; border: 1px solid var(--line); }
 .layer-badge { font-size: 11px; font-weight: 600; color: var(--accent-text); background: var(--accent-soft); border-radius: 999px; padding: 1px 7px; white-space: nowrap; }
+/* the model's own reasoning for a move, set apart from the mechanical detail line */
+.trace-why { font-size: 12.5px; color: var(--text-2); line-height: 1.5; margin-top: 3px; padding-left: 9px; border-left: 2px solid var(--line); font-style: italic; }
+.trace-metric { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; background: var(--sunken); border-radius: 999px; padding: 1px 7px; }
+
+/* the design strategy the model writes before it starts drawing */
+.approach { display: flex; gap: 10px; background: var(--accent-soft); border-radius: var(--radius); padding: 12px 14px; color: var(--accent-text); }
+.approach svg { flex: none; margin-top: 3px; }
+.approach p { margin: 0; font-size: 14px; line-height: 1.55; }
+
+/* ---------- export menu ---------- */
+.export { position: relative; display: flex; align-items: stretch; }
+.export .btn { border: 1px solid var(--line); background: var(--surface); }
+.export-main { border-radius: 8px 0 0 8px; border-right: none !important; }
+.export-more { border-radius: 0 8px 8px 0; padding: 0 7px; }
+.export-menu { min-width: 260px; }
+.export-menu .menu-item { flex-direction: column; align-items: flex-start; gap: 1px; }
+.export-menu .menu-item small { font-size: 12px; }
+.export-toast { position: absolute; top: calc(100% + 8px); right: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 6px 10px; font-size: 12.5px; color: var(--text-2); white-space: nowrap; z-index: 40; }
 
 /* --- Version turn cards (@nocoast/ifc-viewer) inside assistant results --- */
 .turn-card { position: relative; margin-top: 10px; }

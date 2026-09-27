@@ -46,10 +46,12 @@ def phase_of(kind: str) -> str:
 
 
 def _f(value: Any, digits: int = 1) -> str:
+    """A number the way a drawing would letter it: 3, 3.5, 30 — never 3.0 and never 3 for 30."""
     try:
-        return f"{float(value):.{digits}f}".rstrip("0").rstrip(".")
+        text = f"{float(value):.{digits}f}"
     except (TypeError, ValueError):
         return str(value)
+    return text.rstrip("0").rstrip(".") if "." in text else text
 
 
 def side_name(side: Any) -> str:
@@ -72,6 +74,11 @@ def level_name(design: Design | None, level_id: Any) -> str:
     return f"level {n}" if n else "the ground floor"
 
 
+def _in_sentence(name: str) -> str:
+    """"Living Room" → "living room", but "Landing L2" and "Bedroom 2" keep their designations."""
+    return " ".join(w.lower() if w.isalpha() and not w.isupper() else w for w in name.split())
+
+
 def room_name(design: Design | None, ref: Any) -> str:
     key = str(ref or "").strip()
     if not key:
@@ -80,7 +87,7 @@ def room_name(design: Design | None, ref: Any) -> str:
         return "outside"
     room = design.room(key) if design else None
     if room is not None:
-        return f"the {room.name.lower()}"
+        return f"the {_in_sentence(room.name)}"
     return "the " + key.replace("-", " ")
 
 
@@ -176,7 +183,7 @@ def _narrate(raw: dict, design: Design) -> str:  # noqa: PLR0911, PLR0912 - one 
         rooms = [design.room(str(r.get("name"))) for r in (raw.get("rooms") or []) if isinstance(r, dict)]
         rooms = [r for r in rooms if r is not None]
         area = sum(r.area_m2 for r in rooms)
-        names = ", ".join(r.name.lower() for r in rooms[:8]) + (", …" if len(rooms) > 8 else "")
+        names = ", ".join(_in_sentence(r.name) for r in rooms[:8]) + (", …" if len(rooms) > 8 else "")
         return (f"Floor plate for {level_name(design, lid)}: {len(rooms)} rooms, {_f(area, 0)} m²"
                 + (f" — {names}" if names else ""))
 

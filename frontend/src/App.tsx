@@ -46,6 +46,8 @@ interface Loaded {
 interface Shown {
   label: string;
   preview: boolean;
+  /** Set when the model on screen is a stored version, which is what can be exported in full. */
+  version?: { project: string; number: number } | null;
 }
 
 export default function App() {
@@ -171,7 +173,7 @@ export default function App() {
 
   const showModel = useCallback(async (
     bytes: Uint8Array, name: string, key: string,
-    opts: { keepCamera?: boolean; label: string; preview: boolean; design?: Design | null },
+    opts: { keepCamera?: boolean; label: string; preview: boolean; design?: Design | null; version?: { project: string; number: number } | null },
   ) => {
     const v = viewerRef.current!;
     loadedKey.current = key;
@@ -182,7 +184,7 @@ export default function App() {
     const head = new TextDecoder().decode(bytes.subarray(0, 4000));
     const schema = head.match(/FILE_SCHEMA\s*\(\s*\(\s*'([^']+)'/i)?.[1] ?? "";
     setLoaded({ key, name, schema, bytes });
-    setShown({ label: opts.label, preview: opts.preview });
+    setShown({ label: opts.label, preview: opts.preview, version: opts.version ?? null });
     return { levels: v.storeys().length };
   }, [loadIntoViewer]);
 
@@ -209,7 +211,10 @@ export default function App() {
   const loadVersion = useCallback(async (sid: string, v: api.Version) => {
     const design = await fetchDesign(v.project_id, v.number);
     const bytes = await api.fetchBytes(v.ifc_url);
-    return showModel(bytes, versionName(v), `${sid}:${versionName(v)}`, { keepCamera: inSession(sid), label: versionLabel(v), preview: false, design });
+    return showModel(bytes, versionName(v), `${sid}:${versionName(v)}`, {
+      keepCamera: inSession(sid), label: versionLabel(v), preview: false, design,
+      version: { project: v.project_id, number: v.number },
+    });
   }, [showModel]);
 
   // Switching sessions loads that session's model and registers its version turn cards.
@@ -231,7 +236,8 @@ export default function App() {
         if (model.url) {
           const ver = versionOf(model.url);
           const design = ver ? await fetchDesign(ver.project, ver.number) : null;
-          await showModel(await api.fetchBytes(model.url), model.name, key, { label: ver ? `v${ver.number} · final` : model.name, preview: false, design });
+          await showModel(await api.fetchBytes(model.url), model.name, key,
+            { label: ver ? `v${ver.number} · final` : model.name, preview: false, design, version: ver });
           return;
         }
         // Opened from disk: this run's bytes, or the copy kept for the session since an earlier run.
@@ -354,6 +360,8 @@ export default function App() {
       onPreview: queuePreview,
       // Follow build: the section cut tracks the storey the accepted steps are working on.
       onStep: (st, ok) => { ensureRun(); if (ok && forActive()) sectionRef.current?.learnStep(st); },
+      onApproach: (approach) => update(sid, patchRun(aid, { approach })),
+      onLive: (drafting) => update(sid, patchRun(aid, { drafting })),
     });
 
     let current: ReturnType<typeof step> | null = null;
@@ -395,13 +403,13 @@ export default function App() {
         current.done(`${name} · ${shownNow.levels} storey${shownNow.levels === 1 ? "" : "s"} · ${version.summary.elements} elements`);
         current = null;
       }
-      update(sid, (s) => ({ ...patchRun(aid, { stage: "done", endedAt: Date.now() })(s), model: { name, url: version.ifc_url } }));
+      update(sid, (s) => ({ ...patchRun(aid, { stage: "done", drafting: null, endedAt: Date.now() })(s), model: { name, url: version.ifc_url } }));
       return true;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (current) current.fail(msg);
       else tracer.fail(msg);
-      update(sid, patchRun(aid, { stage: "error", error: msg, endedAt: Date.now() }));
+      update(sid, patchRun(aid, { stage: "error", error: msg, drafting: null, endedAt: Date.now() }));
       platform.report({ status: "error", error: msg });
       return false;
     } finally {
@@ -441,6 +449,22 @@ export default function App() {
     }
   }, [active, loadVersion]);
 
+  /**
+   * Export what the workspace is showing. A backend version can produce every artefact (bundle,
+   * schedule, spec …); a file opened from disk only has its own bytes, so only the IFC is offered.
+   */
+  const exportShown = useCallback(async (format: api.ExportFormat) => {
+    if (!loaded) return null;
+    const ver = shown?.version;
+    if (!ver) return platform.saveFile(loaded.name, loaded.bytes);
+    const name = api.exportName(ver.project, ver.number, format);
+    return platform.saveFile(name, await api.fetchExport(ver.project, ver.number, format));
+  }, [loaded, shown?.version]);
+
+  const exportDisabled = !loaded ? "Nothing to export yet"
+    : shown?.preview ? "Wait for the model to finish, then export the version"
+    : null;
+
   const removeSession = (id: string) => {
     const s = sessionsRef.current.find((x) => x.id === id);
     for (const m of s?.messages ?? []) if (m.run?.version) runtime.removeTurn(turnId(m.run.version));
@@ -463,7 +487,7 @@ export default function App() {
     update(sid, addMessage({ id: uid(), role: "assistant", text: `Opened ${name}. Explore it in the viewer, or describe a new building below.` }));
     const ver = versionOf(url);
     const design = ver ? await fetchDesign(ver.project, ver.number) : null;
-    await showModel(bytes, name, `${sid}:${name}`, { label: ver ? `v${ver.number} · final` : name, preview: false, design });
+    await showModel(bytes, name, `${sid}:${name}`, { label: ver ? `v${ver.number} · final` : name, preview: false, design, version: ver });
     update(sid, (s) => ({ ...s, model: { name, url } }));
   };
 
@@ -547,7 +571,7 @@ export default function App() {
           showAssistantToggle={!!active} onHome={() => setActiveId(null)}
           onToggleSidebar={() => setFlag("sidebarOpen", !layout.sidebarOpen)}
           onToggleAssistant={() => setFlag("assistantOpen", !layout.assistantOpen)}
-          onExport={loaded && !shown?.preview ? () => platform.saveIfc(loaded.name, loaded.bytes) : null}
+          onExport={exportShown} exportDisabled={exportDisabled}
           onDelete={active ? () => removeSession(active.id) : null} />
         <div className="content">
           <Workspace hostRef={hostRef} viewer={viewerReady ? v : null}
