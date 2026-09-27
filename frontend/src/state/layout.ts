@@ -52,16 +52,21 @@ export type PanelSizes = Record<PanelSize, number>;
 
 function forWindow(l: Layout, vw: number, vh: number): PanelSizes {
   const r = PANEL_RANGE;
-  const sidebar = fit(l.sidebar, r.sidebar.min, Math.min(r.sidebar.max, vw - MIN_VIEWPORT));
-  const taken = l.sidebarOpen ? sidebar : 0;
-  const assistant = fit(l.assistant, r.assistant.min, Math.min(r.assistant.max, vw - taken - MIN_VIEWPORT));
-  const free = vw - taken - (l.assistantOpen ? assistant : 0);
+  const room = vw - MIN_VIEWPORT;
+  let sidebar = fit(l.sidebar, r.sidebar.min, Math.min(r.sidebar.max, room));
+  const assistant = fit(l.assistant, r.assistant.min, Math.min(r.assistant.max, room - (l.sidebarOpen ? sidebar : 0)));
+  // Both at their minimum can still be too much for a narrow window; the sidebar gives way first.
+  const over = (l.sidebarOpen ? sidebar : 0) + (l.assistantOpen ? assistant : 0) - room;
+  if (over > 0 && l.sidebarOpen) sidebar = Math.max(r.sidebar.min, sidebar - over);
+  const free = vw - (l.sidebarOpen ? sidebar : 0) - (l.assistantOpen ? assistant : 0);
+  // The panels floating over the model never cover more than about half of it.
+  const floating = free * 0.6;
   return {
     sidebar,
     assistant,
-    inspectorW: fit(l.inspectorW, r.inspectorW.min, Math.min(r.inspectorW.max, free - 72)),
+    inspectorW: fit(l.inspectorW, r.inspectorW.min, Math.min(r.inspectorW.max, floating)),
     inspectorH: fit(l.inspectorH, r.inspectorH.min, Math.min(r.inspectorH.max, vh - 230)),
-    viewTools: fit(l.viewTools, r.viewTools.min, Math.min(r.viewTools.max, free - 72)),
+    viewTools: fit(l.viewTools, r.viewTools.min, Math.min(r.viewTools.max, floating)),
     turnCard: fit(l.turnCard, r.turnCard.min, Math.min(r.turnCard.max, vh - 200)),
   };
 }
