@@ -17,7 +17,7 @@ def add_slab(ctx: BuildContext, slab: Slab) -> None:
         ctx.model, context=ctx.body, depth=slab.thickness, polyline=list(slab.outline)
     )
     # Top of the slab sits at the storey elevation.
-    finish_element(ctx, element, rep, translate(z=level.elevation - slab.thickness), "Slab", slab.level,
+    finish_element(ctx, element, rep, translate(z=level.elevation + slab.elevation - slab.thickness), "Slab", slab.level,
                    pset=("Pset_SlabCommon", {"IsExternal": False}), item=slab)
     ctx.slabs[slab.id] = element
 
@@ -43,4 +43,4 @@ def add_column(ctx: BuildContext, column: Column) -> None:
         thickness=column.depth, offset=-column.depth / 2,
     )
     x, y = column.position
-    finish_element(ctx, element, rep, translate(x - column.width / 2, y, level.elevation), "Column", column.level, item=column)
+    finish_element(ctx, element, rep, translate(x - column.width / 2, y, level.elevation + column.elevation), "Column", column.level, item=column)

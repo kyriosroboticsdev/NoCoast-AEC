@@ -107,6 +107,36 @@ def garden_wall_steps(design: Design, level: str = "L1", offset: float = 3.0, he
             {"step": "door", "wall": "garden-wall", "at": 0.5, "kind": "double"}]
 
 
+def bridge_steps(design: Design, level: str = "L1", span: float = 24.0, width: float = 3.0, clearance: float = 3.0,
+                 pier_spacing: float = 8.0) -> list[dict]:
+    """A footbridge with no rooms at all: piers, two girders under a deck slab, and two parapets, laid out east of
+    whatever the design already holds (from the origin when it is empty). The girders hang below `clearance`,
+    the deck rests on them and the parapets stand on the deck; the piers reach the girders' underside."""
+    b = footprint_bounds(design, level)
+    x0 = round(b[2] + 4.0, 2) if b else 0.0
+    y0 = 0.0
+    x1, y1 = round(x0 + span, 2), round(y0 + width, 2)
+    ym = round(y0 + width / 2, 2)
+    girder, deck = 0.6, 0.3
+    lvl = next((l for l in design.levels if l.id == level), None)
+    level_height = lvl.height if lvl else 3.0
+    steps: list[dict] = []
+    n = max(2, int(round(span / pier_spacing)) + 1)
+    for i in range(n):
+        x = round(x0 + span * i / (n - 1), 2)
+        steps.append({"step": "element", "kind": "column", "name": f"Pier {i + 1}", "level": level, "position": [x, ym],
+                      "width": 0.8, "height": round(clearance - girder, 2)})
+    for tag, y in (("south", y0 + 0.2), ("north", y1 - 0.2)):
+        steps.append({"step": "element", "kind": "beam", "name": f"Girder {tag}", "level": level, "start": [x0, round(y, 2)],
+                      "end": [x1, round(y, 2)], "width": 0.3, "depth": girder, "elevation": round(max(0.0, clearance - level_height), 2)})
+    steps.append({"step": "element", "kind": "slab", "name": "Bridge deck", "level": level, "thickness": deck,
+                  "elevation": round(clearance + deck, 2), "poly": [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]})
+    for tag, y in (("south", y0 + 0.075), ("north", y1 - 0.075)):
+        steps.append({"step": "element", "kind": "wall", "name": f"Parapet {tag}", "level": level, "path": [[x0, round(y, 2)], [x1, round(y, 2)]],
+                      "height": 1.1, "thickness": 0.15, "elevation": round(clearance + deck, 2)})
+    return steps
+
+
 def deck_steps(design: Design, level: str = "L1", depth: float = 3.0) -> list[dict]:
     b = footprint_bounds(design, level)
     minx, miny, maxx, maxy = b if b else (0, 0, 10, 8)

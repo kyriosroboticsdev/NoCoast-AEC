@@ -28,7 +28,7 @@ def wall_matrix(ctx: BuildContext, wall: Wall, at: float | None = None):
         angle = math.atan2(wall.end[1] - wall.start[1], wall.end[0] - wall.start[0])
         if at:
             x, y = x + math.cos(angle) * at, y + math.sin(angle) * at
-    return placement(x, y, ctx.level(wall.level).elevation, angle)
+    return placement(x, y, ctx.level(wall.level).elevation + wall.elevation, angle)
 
 
 def add_wall(ctx: BuildContext, wall: Wall) -> None:
@@ -39,7 +39,7 @@ def add_wall(ctx: BuildContext, wall: Wall) -> None:
         profile = LineString(wall.path).buffer(wall.thickness / 2, cap_style="flat", join_style="mitre")
         pts = [(round(x, 4), round(y, 4)) for x, y in profile.exterior.coords[:-1]]
         rep = body(ctx, [extrude(ctx.model, pts, height)])
-        matrix = placement(0, 0, ctx.level(wall.level).elevation, 0)
+        matrix = placement(0, 0, ctx.level(wall.level).elevation + wall.elevation, 0)
     else:
         rep = ifcopenshell.api.geometry.add_wall_representation(
             ctx.model, context=ctx.body, length=wall.length, height=height,

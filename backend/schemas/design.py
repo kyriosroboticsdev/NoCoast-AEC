@@ -452,6 +452,7 @@ class FreeDef(BaseModel):
     thickness: Optional[float] = Field(None, gt=0, description="wall/slab/roof")
     width: Optional[float] = Field(None, gt=0, description="column size / beam width")
     depth: Optional[float] = Field(None, gt=0, description="beam depth")
+    elevation: float = Field(0.0, ge=0, description="metres above the level (a bridge deck on piers, a raised walkway)")
 
     @field_validator("at", "start", "end", mode="before")
     @classmethod

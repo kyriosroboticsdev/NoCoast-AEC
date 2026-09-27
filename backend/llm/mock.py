@@ -147,6 +147,8 @@ class MockLLM:
             poly = shapes.curved_side(design, room, (m.group(6) or "")[:1].upper() or None)
             if poly:
                 return [{"step": "room", "id": room.id, "poly": poly}]
+        if re.search(r"\badd (a |an )?(foot)?bridge\b", text):
+            return shapes.bridge_steps(design)
         m = re.search(r"\badd (a |an )?(carport|courtyard|patio|terrace|pergola|gazebo|garden wall|fence|deck)\b", text)
         if m:
             what = m.group(2)

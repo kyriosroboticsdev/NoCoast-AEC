@@ -882,5 +882,21 @@
         "kind": "style"
       }
     ]
+  },
+  {
+    "id": "bridge",
+    "prompt": "Build a footbridge: a 24 m deck about 3 m wide on concrete piers, with railings on both sides. No building, just the bridge.",
+    "requirements": [
+      {
+        "text": "a bridge",
+        "kind": "feature",
+        "item": "bridge"
+      },
+      {
+        "text": "railings on both sides",
+        "kind": "feature",
+        "item": "railing"
+      }
+    ]
   }
 ]

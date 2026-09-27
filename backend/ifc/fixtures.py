@@ -144,4 +144,4 @@ def add_beam(ctx: BuildContext, beam: Beam) -> None:
     level = ctx.level(beam.level)
     element = ifcopenshell.api.root.create_entity(m, ifc_class="IfcBeam", predefined_type="BEAM", name=beam.name or beam.id)
     solid = oriented_box(m, beam.start, beam.end, beam.width, level.height - beam.depth, beam.depth)
-    finish_element(ctx, element, body(ctx, [solid]), translate(z=level.elevation), "Beam", beam.level, item=beam)
+    finish_element(ctx, element, body(ctx, [solid]), translate(z=level.elevation + beam.elevation), "Beam", beam.level, item=beam)
