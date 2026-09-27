@@ -47,7 +47,7 @@ from core.review import review
 from core.stream import StepStream, ThoughtStream
 from ifc.builder import GeometryError, compile_ifc, summarize
 from llm import LLM, LLMError, LLMRequest
-from llm.base import EmptyReply, Image, thinking_of
+from llm.base import EmptyReply, Image, thinking_of, transient_network
 from llm.prompts import (build_system, build_user_message, look_system, look_user_message, requirements_system,
                          requirements_user_message, research_system, research_user_message)
 from render import Shot
@@ -121,27 +121,42 @@ def _call(llm: LLM, request: LLMRequest, emit: Emit = _noop, stream: StepStream 
             stream.feed(text)
 
     reasoning = {"on_thinking": thoughts.feed} if "on_thinking" in inspect.signature(llm.complete).parameters else {}
+    attempts = max(1, config.NET_RETRIES + 1)
+    raw: dict = {}
     try:
-        raw = llm.complete(request, on_text, lambda note: emit("llm", note, None), **reasoning)
-    except EmptyReply as exc:
-        # Nothing to do is a valid answer to "fix these problems"; it is not one to "list the brief".
-        if stream is None:
-            raise
-        log.info("LLM %s had no changes to make", llm.name)
-        emit("llm", f"{llm.name} had nothing to change", {"empty": True})
-        raw = {"steps": []}
-    except LLMError as exc:
-        log.error("LLM %s failed after %.1fs: %s", llm.name, time.perf_counter() - t, exc)
-        # A reply that broke off (max_tokens, a dropped connection) after the model had already
-        # built something is worth keeping: the steps that streamed in are applied and valid, and
-        # the checks and repair rounds run on them as usual.
-        if stream is None or not stream.accepted:
-            raise
-        log.warning("keeping %d step(s) applied before the reply broke off", len(stream.accepted))
-        emit("llm", f"the reply broke off ({exc}) after {len(stream.accepted)} move(s); "
-                    f"carrying on with what was built", {"error": str(exc), "recovered": True,
-                                                         "accepted": len(stream.accepted)})
-        raw = {"steps": []}
+        for attempt in range(attempts):
+            try:
+                raw = llm.complete(request, on_text, lambda note: emit("llm", note, None), **reasoning)
+                break
+            except EmptyReply as exc:
+                # Nothing to do is a valid answer to "fix these problems"; it is not one to "list the brief".
+                if stream is None:
+                    raise
+                log.info("LLM %s had no changes to make", llm.name)
+                emit("llm", f"{llm.name} had nothing to change", {"empty": True})
+                raw = {"steps": []}
+                break
+            except LLMError as exc:
+                # A dropped connection or a briefly overloaded provider is asked again. Once steps have
+                # already landed, retrying would rebuild them, so the run carries on with what it has.
+                kept = stream is not None and bool(stream.accepted)
+                if not kept and attempt + 1 < attempts and transient_network(exc):
+                    wait = min(8.0, 0.5 * 2 ** attempt)
+                    log.warning("LLM %s network error (attempt %d/%d), retrying in %.1fs: %s",
+                                llm.name, attempt + 1, attempts, wait, exc)
+                    emit("llm", f"the connection failed ({exc}); asking again",
+                         {"error": str(exc), "retry": attempt + 1})
+                    time.sleep(wait)
+                    continue
+                log.error("LLM %s failed after %.1fs: %s", llm.name, time.perf_counter() - t, exc)
+                if not kept:
+                    raise
+                log.warning("keeping %d step(s) applied before the reply broke off", len(stream.accepted))
+                emit("llm", f"the reply broke off ({exc}) after {len(stream.accepted)} move(s); "
+                            f"carrying on with what was built", {"error": str(exc), "recovered": True,
+                                                                 "accepted": len(stream.accepted)})
+                raw = {"steps": []}
+                break
     finally:
         thoughts.flush()
         if stream:

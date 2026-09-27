@@ -112,7 +112,7 @@ class OpenAICompatibleLLM:
                         if on_text:
                             on_text(text)
         except httpx.HTTPError as exc:
-            raise LLMError(f"chat/completions request failed: {exc}") from exc
+            raise LLMError(f"chat/completions request failed: {type(exc).__name__}: {exc}") from exc
         return parse_reply(text)
 
 

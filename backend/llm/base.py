@@ -27,6 +27,29 @@ class LLMError(RuntimeError):
     """The model could not be reached or returned something that is not JSON."""
 
 
+# Transport failures and the overloaded/rate-limit statuses providers use for a blip.
+# Matched on the message because adapters re-raise as LLMError and the type is gone.
+_TRANSIENT = (
+    "connecterror", "connecttimeout", "readtimeout", "writetimeout", "pooltimeout",
+    "remoteprotocolerror", "readerror", "writeerror", "networkerror",
+    "cannot reach", "timed out", "timeout",
+    "connection reset", "connection aborted", "connection refused", "connection error",
+    "connection dropped", "dropped mid-reply", "server disconnected",
+    "connection attempts failed", "broken pipe",
+    "overloaded", "rate limit", "too many requests",
+    "returned 408", "returned 429", "returned 500", "returned 502", "returned 503",
+    "returned 504", "returned 529",
+    "api error 408", "api error 429", "api error 500", "api error 502", "api error 503",
+    "api error 504", "api error 529",
+)
+
+
+def transient_network(exc: BaseException) -> bool:
+    """A failure worth asking again for: the network, a timeout, or a provider that is briefly overloaded."""
+    msg = str(exc).lower()
+    return any(mark in msg for mark in _TRANSIENT)
+
+
 class EmptyReply(LLMError):
     """The model returned nothing at all. On a build round that means "no changes"; on a
     checklist it is a failure, so the two are distinguished rather than both being errors."""

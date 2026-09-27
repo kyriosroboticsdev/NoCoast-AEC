@@ -158,7 +158,7 @@ class ClaudeLLM:
         except anthropic.APIConnectionError as exc:
             if text or thought:
                 raise _Dropped(str(exc), received=bool(text)) from exc
-            raise LLMError(f"cannot reach the Anthropic API: {exc}") from exc
+            raise LLMError(f"cannot reach the Anthropic API: {type(exc).__name__}: {exc}") from exc
         except httpx.HTTPError as exc:  # the SDK lets a stream cut mid-body through as a raw httpx error
             raise _Dropped(f"{type(exc).__name__}: {exc}", received=bool(text)) from exc
         if response.stop_reason == "refusal":

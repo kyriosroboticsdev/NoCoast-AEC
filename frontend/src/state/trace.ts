@@ -430,6 +430,10 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
           return;
         }
         case "llm":
+          if (typeof d.retry === "number") {
+            hooks.onLive?.(e.message);
+            return;
+          }
           if (d.provider && lastGroup && BUILDING.has(lastGroup.step.phase)) {
             setDetail(lastGroup, `${d.provider}${d.model ? ` ${d.model}` : ""} is drawing…`);
           }

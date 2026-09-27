@@ -25,6 +25,7 @@ DEMO_DIR = Path(os.environ.get("BIM_DEMO_DIR", BACKEND_DIR / "demo"))  # packed 
 LLM_PROVIDER = LLM_MODEL = LLM_BASE_URL = LLM_API_KEY = ""
 LLM_TIMEOUT = 600.0
 MAX_REPAIRS = 2
+NET_RETRIES = 3
 ANTHROPIC_WORKSPACE_ID = LLAMA_SERVER = LLM_MODELS_DIR = ""
 LOG_LEVEL = "INFO"
 LLM_VISION: bool | None = None
@@ -32,7 +33,7 @@ LLM_VISION: bool | None = None
 
 def reload() -> None:
     """Re-read .env (values there override the process environment) and refresh the LLM settings."""
-    global LLM_PROVIDER, LLM_MODEL, LLM_BASE_URL, LLM_API_KEY, LLM_TIMEOUT, MAX_REPAIRS
+    global LLM_PROVIDER, LLM_MODEL, LLM_BASE_URL, LLM_API_KEY, LLM_TIMEOUT, MAX_REPAIRS, NET_RETRIES
     global ANTHROPIC_WORKSPACE_ID, LLAMA_SERVER, LLM_MODELS_DIR, LOG_LEVEL, LLM_VISION
     load_dotenv(ENV_FILE, override=True)
     LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "mock")           # mock | llamacpp | claude | ollama | openai
@@ -41,6 +42,7 @@ def reload() -> None:
     LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
     LLM_TIMEOUT = float(os.environ.get("LLM_TIMEOUT", 600))
     MAX_REPAIRS = int(os.environ.get("BIM_MAX_REPAIRS", 2))
+    NET_RETRIES = int(os.environ.get("BIM_NET_RETRIES", 3))   # extra attempts after a dropped connection or a 429/5xx
     ANTHROPIC_WORKSPACE_ID = os.environ.get("ANTHROPIC_WORKSPACE_ID", "")  # claude provider, org-level keys only
     LLAMA_SERVER = os.environ.get("LLAMA_SERVER", "")        # llamacpp provider: path to llama-server(.exe)
     LLM_MODELS_DIR = os.environ.get("LLM_MODELS_DIR", "")    # llamacpp provider: folder with .gguf files

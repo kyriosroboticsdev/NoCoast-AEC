@@ -39,7 +39,6 @@ export function Home({ onReplay, backendUp, ...p }: Props) {
   return (
     <div className="home">
       <h1>What are we designing today?</h1>
-      <p className="home-sub">From a brief to an IFC model, a code review, drawings with DXF plans and Excel schedules, and a cost and carbon plan.</p>
       <Composer size="hero" {...p} placeholder="Describe an asset — a bridge, a road, a data center, a building…" />
       <div className="suggestions">
         {SUGGESTIONS.map(([label, prompt]) => (
