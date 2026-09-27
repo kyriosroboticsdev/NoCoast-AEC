@@ -1,6 +1,7 @@
 """The prompt → version pipeline.
 
     prompt ─► LLM: requirements checklist
+           ─► LLM: research turns — tool calls into the brick library and skills (≤ BIM_TOOL_ROUNDS)
            ─► LLM: build steps (streamed; each step applied + previewed as it arrives)
            ─► rejected steps? ─► LLM: fix round (≤ BIM_MAX_REPAIRS)
            ─► deterministic check of the design against the checklist, plus coordination
@@ -29,15 +30,18 @@ from core.coordinate import coordinate, errors, fix_lines
 from core.derive import DesignError, analyze, derive
 from core.guids import GuidMap, prune_guids
 from core.issues import Issue
+from core.research import Toolbox, research, tool_rounds
 from core.ops import OpError, apply_ops
 from core.stream import StepStream
 from ifc.builder import GeometryError, compile_ifc, summarize
 from llm import LLM, LLMError, LLMRequest
-from llm.prompts import BUILD_SYSTEM, REQUIREMENTS_SYSTEM, build_user_message, requirements_user_message
+from llm.prompts import (BUILD_SYSTEM, REQUIREMENTS_SYSTEM, RESEARCH_SYSTEM, build_user_message, requirements_user_message,
+                         research_user_message)
 from logsetup import log
 from schemas.bim import BuildingSpec
 from schemas.design import Design
 from schemas.requirements import Requirement, RequirementsResponse
+from schemas.research import ResearchTurn
 from schemas.steps import StepsResponse
 from store.db import Store, VersionData
 
@@ -45,6 +49,7 @@ Emit = Callable[[str, str, dict | None], None]
 
 REQUIREMENTS_SCHEMA = RequirementsResponse.model_json_schema()
 STEPS_SCHEMA = StepsResponse.model_json_schema()
+RESEARCH_SCHEMA = ResearchTurn.model_json_schema()
 
 
 def verify_rounds() -> int:
@@ -124,11 +129,31 @@ def checklist_lines(reqs: list[Requirement]) -> list[str]:
     return [r.text + ("" if r.supported else " (NOT SUPPORTED — say so in a note)") for r in reqs]
 
 
+# --- research -----------------------------------------------------------------
+
+def research_round(llm: LLM, prompt: str, design: Design, checklist: list[str], emit: Emit, focus: str | None = None) -> Toolbox:
+    context = None
+    if design.rooms:
+        try:
+            context = describe_design(design, analyze(design))
+        except DesignError:
+            context = describe_design(design)
+
+    def complete(_prompt: str, log: list[str]) -> dict:
+        user = research_user_message(prompt + (f"\n\n(selected: {focus})" if focus else ""), checklist, context, log)
+        return _call(llm, LLMRequest(system=RESEARCH_SYSTEM, user=user, schema=RESEARCH_SCHEMA, schema_name="research",
+                                     meta={"prompt": prompt, "checklist": checklist, "log": log,
+                                           "design": design.model_dump(mode="json")}), emit)
+
+    return research(complete, prompt + "\n" + "\n".join(checklist), design, emit, tool_rounds())
+
+
 # --- build rounds ---------------------------------------------------------------
 
 def build_round(llm: LLM, prompt: str, design: Design, checklist: list[str], emit: Emit, *, guids: GuidMap,
                 first_index: int, problems: list[str] | None = None, unmet: list[str] | None = None,
-                editing: bool = False, focus: str | None = None, issues: list[Issue] | None = None) -> StepStream:
+                editing: bool = False, focus: str | None = None, issues: list[Issue] | None = None,
+                toolbox: Toolbox | None = None) -> StepStream:
     context = None
     fixes = fix_lines(issues or [])
     if design.rooms or editing or problems or unmet or fixes:
@@ -141,8 +166,10 @@ def build_round(llm: LLM, prompt: str, design: Design, checklist: list[str], emi
     emit("build", f"{what}: asking the model for steps", {"problems": problems or [], "unmet": unmet or [], "issues": fixes})
     stream = StepStream(emit, design, guids, first_index)
     meta = {"prompt": prompt, "design": design.model_dump(mode="json"), "problems": problems or [], "unmet": unmet or [],
-            "editing": editing, "focus": focus, "issues": [i.as_dict() for i in errors(issues or [])]}
-    raw = _call(llm, LLMRequest(system=BUILD_SYSTEM, user=build_user_message(prompt, checklist, context, problems, unmet, focus, fixes),
+            "editing": editing, "focus": focus, "issues": [i.as_dict() for i in errors(issues or [])],
+            "bricks": toolbox.bricks if toolbox else []}
+    user = build_user_message(prompt, checklist, context, problems, unmet, focus, fixes, toolbox.text() if toolbox else None)
+    raw = _call(llm, LLMRequest(system=BUILD_SYSTEM, user=user,
                                 schema=STEPS_SCHEMA, schema_name="build", meta=meta), emit, stream)
     # Anything the streaming parser did not see (non-streaming adapters, or a reply that only parsed whole).
     try:
@@ -204,8 +231,11 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
         checklist = checklist_lines(reqs.requirements)
         notes += [f"not supported: {r.text}" for r in reqs.requirements if not r.supported]
 
+        toolbox = research_round(llm, prompt, design, checklist, emit, focus_text)
+
         steps_total, accepted_total = 0, 0
-        stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=0, editing=editing, focus=focus_text)
+        stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=0, editing=editing, focus=focus_text,
+                             toolbox=toolbox)
         design, guids = stream.design, stream.guids
         steps_total += stream.applied
         accepted_total += len(stream.accepted)
@@ -213,7 +243,7 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
             if not stream.rejected:
                 break
             stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=steps_total,
-                                 problems=_problem_lines(stream), editing=editing, focus=focus_text)
+                                 problems=_problem_lines(stream), editing=editing, focus=focus_text, toolbox=toolbox)
             design, guids = stream.design, stream.guids
             steps_total += stream.applied
             accepted_total += len(stream.accepted)
@@ -226,7 +256,7 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
             if not unmet and not errors(issues):
                 break
             stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=steps_total, unmet=unmet,
-                                 editing=editing, issues=issues)
+                                 editing=editing, issues=issues, toolbox=toolbox)
             design, guids = stream.design, stream.guids
             steps_total += stream.applied
             accepted_total += len(stream.accepted)

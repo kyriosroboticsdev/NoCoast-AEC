@@ -13,10 +13,12 @@ from __future__ import annotations
 from shapely.ops import unary_union
 
 from bricks import BASE_SERVICES, Brick, library
-from core.derive import Derived
+from core.clash import clashes
+from core.derive import DesignError, Derived, analyze
 from core.issues import Issue
 from schemas.bim import Asset
 from schemas.design import Design, RoomDef
+from schemas.steps import Step, StepError, apply_step
 
 PLANT_ROOMS = ("utility", "garage", "storage")
 SERVICE_WORDS = {"water_hot": "hot water", "water_cold": "cold water", "air_supply": "supply air", "air_return": "return air",
@@ -33,30 +35,53 @@ def _home(kind: str) -> str:
     return {"data": "data", "fire_water": "fire", "power": "energy"}.get(kind, "hvac" if kind in ("air_supply", "air_return", "heating", "refrigerant", "flue") else "plumbing")
 
 
-def placement_for(brick: Brick, design: Design, derived: Derived, near_room: str | None = None, slot: int = 0) -> dict | None:
-    """Arguments of a `brick` step that would place `brick` sensibly, or None when there is no room for it."""
+def candidates(brick: Brick, design: Design, derived: Derived, near_room: str | None = None, slot: int = 0) -> list[dict]:
+    """Arguments of `brick` steps that would place it sensibly, best first (empty when nowhere fits its rules)."""
     if brick.host == "roof":
-        return {}
+        return [{}]
     if brick.rules.exterior or (brick.host == "free" and not design.rooms):
         polys = derived.footprints.get("L1") or next((p for p in derived.footprints.values() if p), [])
         if not polys:
-            return None
+            return []
         x0, y0, x1, y1 = unary_union(polys).bounds
-        w = brick.resolve()["w"]
-        return {"position": [round(x1 + 1.0 + w / 2, 2), round(y0 + 1.0 + slot * 2.0, 2)]}
+        v = brick.resolve()
+        gap = 1.0 + max(v["w"], v.get("d", v["w"])) / 2
+        spots = []
+        for k in range(slot, slot + 4):
+            t = 0.25 + 0.5 * (k % 2)
+            spots += [[x1 + gap, y0 + (y1 - y0) * t], [x0 - gap, y0 + (y1 - y0) * t], [x0 + (x1 - x0) * t, y1 + gap],
+                      [x0 + (x1 - x0) * t, y0 - gap - 1.0]]
+        return [{"position": [round(x, 2), round(y, 2)]} for x, y in spots]
     if brick.host == "span":
-        return None
+        return []
     rooms = [r for r in design.rooms if r.enclosed and (not brick.rules.rooms or r.kind in brick.rules.rooms)]
     if brick.rules.ground_only:
         rooms = [r for r in rooms if r.level == "L1"]
-    if not rooms:
-        return None
-    pick = (next((r for r in rooms if r.id == near_room), None) if near_room else None) \
-        or next((r for r in rooms if r.kind in PLANT_ROOMS), None) or rooms[0]
-    args: dict = {"room": pick.id}
-    if brick.host in ("floor", "wall"):
-        args["side"] = ("N", "E", "S", "W")[slot % 4]
-    return args
+    rooms.sort(key=lambda r: (r.id != near_room, r.kind not in PLANT_ROOMS, -r.area_m2))
+    sides = [("N", "E", "S", "W")[(slot + i) % 4] for i in range(4)]
+    out: list[dict] = []
+    for room in rooms:
+        if brick.host == "ceiling":
+            out.append({"room": room.id})
+            continue
+        for at in (0.5, 0.15, 0.85):
+            out += [{"room": room.id, "side": side, "at": at} for side in sides]
+        out.append({"room": room.id, "side": "center"})
+    return out
+
+
+def first_fit(brick: Brick, design: Design, options: list[dict], limit: int = 40) -> tuple[dict, Design] | None:
+    """The first placement that applies, derives and clashes with nothing, with the design it makes."""
+    for args in options[:limit]:
+        step = {"step": "brick", "brick": brick.id, **args}
+        try:
+            candidate, _ = apply_step(design, Step(**step))
+            derived = analyze(candidate)
+        except (StepError, DesignError, ValueError):
+            continue
+        if not [i for i in clashes(derived.spec, {candidate.bricks[-1].id}) if i.severity == "error"]:
+            return args, candidate
+    return None
 
 
 def services(design: Design, derived: Derived) -> list[Issue]:
@@ -76,9 +101,11 @@ def services(design: Design, derived: Derived) -> list[Issue]:
         names = ", ".join(f"{u.brick} '{u.id}'" for u in users[:4]) + (" …" if len(users) > 4 else "")
         steps = []
         for brick in offer:
-            args = placement_for(brick, design, derived, users[0].room, slot)
-            if args is not None:
-                steps.append({"step": "brick", "brick": brick.id, **args})
+            fit = first_fit(brick, design, candidates(brick, design, derived, users[0].room, slot))
+            if fit is not None:
+                steps.append({"step": "brick", "brick": brick.id, **fit[0]})
+                design = fit[1]
+                derived = analyze(design)
                 break
         hint = f"; add one of: {', '.join(b.id for b in offer[:4])}" if offer else ""
         issues.append(Issue("service", "error", f"{names} need{'s' if len(users) == 1 else ''} {SERVICE_WORDS.get(kind, kind)}, "

@@ -10,7 +10,10 @@ import re
 
 from agents import shapes
 from agents.base import PlanResult
-from core.derive import DesignError, analyze
+from agents.brick_words import mentioned_bricks
+from bricks import library
+from core.assembly import candidates, first_fit
+from core.derive import DesignError, Derived, analyze
 from schemas.design import Design, Edge, LevelDef, RoomDef, slug
 from schemas.requirements import Requirement
 from schemas.steps import Step, StepError, apply_step
@@ -78,8 +81,10 @@ def parse_requirements(prompt: str) -> list[Requirement]:
                                (r"\bdeck\b", "deck", "a deck")):
         if re.search(words, text):
             reqs.append(Requirement(text=label, kind="feature", item=item))
-    if re.search(r"\bpool\b|elevator|lift\b", text):
-        reqs.append(Requirement(text="pool/elevator", kind="other", supported=False))
+    for m in mentioned_bricks(prompt):
+        name = library().get(m.brick).name.lower()
+        article = "an" if name[0] in "aeiou" else "a"
+        reqs.append(Requirement(text=f"{m.count} {name}s" if m.count > 1 else f"{article} {name}", kind="asset", item=m.brick, value=m.count))
     return reqs
 
 
@@ -227,7 +232,44 @@ def template_steps(prompt: str) -> list[dict]:
         steps += shapes.garden_wall_steps(design)
     if re.search(r"\bdeck\b", text) and not re.search(r"roof deck", text):
         steps += shapes.deck_steps(design)
+    mentions = mentioned_bricks(prompt)
+    if mentions:
+        steps += brick_steps(mentions, run_steps(steps)[0])
     return steps
+
+
+def brick_steps(mentions, design: Design) -> list[dict]:
+    """A brick step for every brick the prompt names, at the first spot its rules allow that clashes with
+    nothing already there (see core/assembly.py)."""
+    steps: list[dict] = []
+    slot = 0
+    for m in mentions:
+        brick = library().get(m.brick)
+        for _ in range(m.count):
+            derived = analyze(design)
+            if brick.host == "span":
+                options = [a for a in [_across_largest_room(design, derived)] if a]
+            else:
+                options = candidates(brick, design, derived, slot=slot)
+            slot += 1
+            fit = first_fit(brick, design, options)
+            if fit is not None:
+                steps.append({"step": "brick", "brick": brick.id, **fit[0]})
+                design = fit[1]
+    return steps
+
+
+def _across_largest_room(design: Design, derived: Derived) -> dict | None:
+    rooms = [r for r in design.rooms if r.id in derived.rooms and r.enclosed]
+    if not rooms:
+        return None
+    room = max(rooms, key=lambda r: derived.rooms[r.id].polygon.area)
+    x0, y0, x1, y1 = derived.rooms[room.id].polygon.bounds
+    if x1 - x0 >= y1 - y0:
+        mid = round((y0 + y1) / 2, 2)
+        return {"level": room.level, "start": [round(x0 + 0.1, 2), mid], "end": [round(x1 - 0.1, 2), mid]}
+    mid = round((x0 + x1) / 2, 2)
+    return {"level": room.level, "start": [mid, round(y0 + 0.1, 2)], "end": [mid, round(y1 - 0.1, 2)]}
 
 
 def _facing(wall, poly) -> str:

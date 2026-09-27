@@ -11,6 +11,11 @@ Stateful (what the UI uses):
     POST /projects/{id}/versions/{n}/construction                     start a live-build simulation job
     GET  /projects/{id}/versions/{n}/construction/{job_id}            poll it
 
+Library (read-only; the same tools the model calls while researching):
+    GET  /bricks?q=&discipline=&limit=   search the brick library (no q: list, optionally one discipline)
+    GET  /bricks/{id}                    one brick: its full definition and the card the model reads
+    GET  /skills, /skills/{name}         assembly playbooks
+
 Stateless (kept for scripts and tests): POST /plan, /build, /generate.
 """
 
@@ -29,6 +34,7 @@ from pydantic import BaseModel
 
 import config
 from agents import PLANNERS, PlanResult, get_planner
+from bricks import library
 from core import construction, pipeline
 from core.context import describe_design, describe_spec
 from core.derive import DesignError, analyze
@@ -38,6 +44,7 @@ from llm import PROVIDERS, get_llm
 from schemas.bim import BuildingSpec
 from schemas.ops import Op
 from slicer.gcode import to_gcode
+from skills import skillbook
 from slicer.slice import slice_model
 from store.db import Project, Store, Version
 
@@ -107,6 +114,41 @@ def health() -> dict:
     config.reload()
     return {"ok": True, "planners": list(PLANNERS), "llm": {"provider": config.LLM_PROVIDER, "model": config.LLM_MODEL or None,
                                                              "providers": list(PROVIDERS)}}
+
+
+@router.get("/bricks")
+def list_bricks(q: str | None = None, discipline: str | None = None, limit: int = 20) -> dict:
+    lib = library()
+    if q:
+        hits = [(b, score) for b, score in lib.search(q, discipline, limit)]
+    else:
+        hits = [(b, 0.0) for b in sorted(lib.bricks.values(), key=lambda b: (b.discipline, b.id))
+                if not discipline or b.discipline == discipline][:limit]
+    return {"total": len(lib), "disciplines": {d: len(bs) for d, bs in sorted(lib.disciplines().items())},
+            "bricks": [{"id": b.id, "name": b.name, "discipline": b.discipline, "category": b.category, "host": b.host,
+                        "ifc_class": b.ifc_class, "line": b.line(), "score": score} for b, score in hits]}
+
+
+@router.get("/bricks/{brick_id}")
+def get_brick(brick_id: str) -> dict:
+    brick = library().get(brick_id)
+    if brick is None:
+        raise HTTPException(404, f"no brick '{brick_id}'; closest: {', '.join(library().suggest(brick_id.replace('_', ' ')))}")
+    return brick.model_dump() | {"card": brick.card()}
+
+
+@router.get("/skills")
+def list_skills() -> list[dict]:
+    return [{"name": s.name, "title": s.title, "disciplines": s.disciplines, "bricks": s.bricks} for s in skillbook().all()]
+
+
+@router.get("/skills/{name}")
+def get_skill(name: str) -> dict:
+    skill = skillbook().get(name)
+    if skill is None:
+        raise HTTPException(404, f"no skill '{name}'")
+    return {"name": skill.name, "title": skill.title, "disciplines": skill.disciplines, "triggers": skill.triggers,
+            "bricks": skill.bricks, "body": skill.body}
 
 
 @router.post("/projects")

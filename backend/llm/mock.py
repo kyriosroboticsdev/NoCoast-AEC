@@ -13,11 +13,14 @@ import json
 import re
 
 from agents import shapes
-from agents.template_planner import parse_requirements, template_steps
+from agents.brick_words import mentioned_bricks
+from agents.template_planner import brick_steps, parse_requirements, template_steps
 from core.derive import DesignError, analyze
 from llm.base import LLMRequest, OnNote, OnText
 from schemas.bim import FixtureKind
 from schemas.design import Design, RoomDef, slug
+from schemas.research import MAX_CALLS
+from skills import skillbook
 from solver.layout import place_rooms
 
 NUM = r"(\d+(?:\.\d+)?)"
@@ -41,6 +44,8 @@ class MockLLM:
         prompt: str = request.meta.get("prompt", request.user)
         if request.schema_name == "requirements":
             reply = {"summary": prompt[:80], "requirements": [r.model_dump(exclude_none=True) for r in parse_requirements(prompt)]}
+        elif request.schema_name == "research":
+            reply = self._research(prompt, request.meta)
         elif request.schema_name == "build":
             if request.meta.get("problems") or request.meta.get("unmet") or request.meta.get("issues"):
                 reply = {"steps": self._fix(prompt, request.meta)}
@@ -55,6 +60,19 @@ class MockLLM:
             for i in range(1, STREAM_STEPS + 1):
                 on_text(text[: len(text) * i // STREAM_STEPS])
         return reply
+
+    # --- research --------------------------------------------------------------
+
+    def _research(self, prompt: str, meta: dict) -> dict:
+        """Read the matching skills, then the card of every brick the prompt names, then search for each —
+        MAX_CALLS per turn, continuing where the previous turn stopped (one log entry per call)."""
+        mentions = mentioned_bricks(prompt)
+        text = prompt + " " + " ".join(meta.get("checklist") or [])
+        calls = [{"tool": "get_skill", "id": s.name} for s in skillbook().match(text, limit=2)] if mentions else []
+        calls += [{"tool": "get_brick", "id": m.brick} for m in mentions]
+        calls += [{"tool": "search_bricks", "query": m.phrase} for m in mentions]
+        todo = calls[len(meta.get("log") or []):]
+        return {"calls": todo[:MAX_CALLS], "done": len(todo) <= MAX_CALLS}
 
     # --- fix rounds ----------------------------------------------------------
 
@@ -95,6 +113,12 @@ class MockLLM:
                 return [{"step": "door", "room": room, "to": "outside", "side": side or "S"}]
             if item and re.match(r"^(remove|delete|drop)( this| it| that| the selected \w+)?$", text):
                 return [{"step": "remove", "id": item}]
+
+        mentions = mentioned_bricks(prompt)
+        if mentions and re.search(r"\b(add|put|install|place|fit|give)\b", text):
+            found = brick_steps(mentions, design)
+            if found:
+                return found
 
         m = re.search(r"\b(rename|call|name) (the )?(building|house|project) (to )?['\"]?([^'\"]+?)['\"]?$", text)
         if m:

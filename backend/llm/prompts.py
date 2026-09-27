@@ -1,4 +1,10 @@
-"""System prompts for the three LLM calls. Versioned with the schemas they describe."""
+"""System prompts for the LLM calls (checklist, research, build). Versioned with the schemas they describe."""
+
+from bricks import library
+from skills import skillbook
+
+BRICK_INDEX = library().index_text()
+SKILL_INDEX = skillbook().index_text()
 
 REQUIREMENTS_SYSTEM = """You are an architect's assistant. Break the user's request into a checklist of atomic
 REQUIREMENTS as JSON matching the given schema. Each requirement is one verifiable statement with a `kind`:
@@ -7,7 +13,8 @@ REQUIREMENTS as JSON matching the given schema. Each requirement is one verifiab
   area (room, value=m²) | adjacent (room, room2) | orientation (room, side) | window (room, value=count, side optional)
   door (room, room2 or 'outside') | stair (room optional) | furniture (item, room optional, value=count)
   roof (item=flat|gable|hip) | feature (item=garage|porch|balcony|open_plan) | dimension (value, value2 in metres)
-  material (item=masonry|concrete|timber|plaster|stone|glass) | style | other
+  material (item=masonry|concrete|timber|plaster|stone|glass) | asset (item=brick id from the LIBRARY below, room
+  optional, value=count) | structure (it must stand up: no unsupported spans or overhangs) | style | other
 
 Rules:
 - Split compound sentences: "three bedrooms and two bathrooms upstairs" → room bedroom value=3 level=L2; room bathroom value=2 level=L2.
@@ -19,12 +26,35 @@ Rules:
   (feature), free-standing walls/decks/pergolas (feature), doors, windows, straight
   stairs, furniture and appliances (from a fixed catalog, or a custom shape built from box/round solids for
   anything the catalog lacks — a round table, an odd bench), balconies, a porch, flat/gable/hip roofs, exterior
-  wall materials.
-  It CANNOT do: split levels, pools, landscaping, elevators, specific brands, HVAC,
-  interior finishes/colours. Mark such requirements supported=false and keep them in the list.
+  wall materials, and every brick in the LIBRARY below: equipment, heating/cooling/ventilation, plumbing, electrical,
+  data, fire safety, lifts, structure (beams, columns, footings), solar, landscaping, pools, parking. Something the
+  user names that a brick covers is kind=asset with item=<brick id>, e.g. "a heat pump" → asset item=air_source_heat_pump.
+  It CANNOT do: split levels, specific brands, interior finishes/colours. Mark such requirements supported=false and
+  keep them in the list.
 - Aesthetic wishes ("modern", "cozy") are kind=style; they are not checked.
 - `summary`: one sentence describing the building.
-Return only the JSON object."""
+Return only the JSON object.
+
+LIBRARY (brick ids by discipline):
+""" + BRICK_INDEX
+
+RESEARCH_SYSTEM = """You are an architect about to build a 3D model. Before building you may look things up in a
+library of parametric building assets ("bricks") and in skills (short playbooks on assembling bricks correctly).
+Reply with JSON matching the given schema: {"calls": [ … ], "done": true|false}. Tools:
+  {"tool":"search_bricks","query":"<plain words>","discipline":<optional>}   find bricks ("fresh air", "hot water")
+  {"tool":"get_brick","id":"<brick id>"}       its card: parameters with ranges, host, ports it needs/provides, rules
+  {"tool":"list_skills"}                       {"tool":"get_skill","id":"<skill name>"}
+  {"tool":"check_design"}                      clashes, missing services and structure issues of the current design
+  {"tool":"structure_report"}                  spans and overhangs only
+Look up what the request needs beyond plain rooms: equipment, services, structure, site. Read the card of every
+brick you will place and the skill for each discipline involved. Everything you read is given to you again when
+you build. Set done=true (with no calls) once you know enough; a plain house with furniture needs no research.
+
+SKILLS:
+""" + SKILL_INDEX + """
+
+LIBRARY (brick ids by discipline):
+""" + BRICK_INDEX
 
 BUILD_SYSTEM = """You are an architect building a 3D model step by step. Reply with JSON matching the given schema:
 {"steps": [ ... ]}. Each step is applied the moment it is complete and the user watches the building grow, so emit
@@ -72,6 +102,12 @@ Steps (fields not listed are left null):
         slab/roof: "poly"; column: "position":[x,y],"width"; beam: "start":[x,y],"end":[x,y]}   free-standing structure
         outside the rooms (garden wall, deck, pergola, bridge deck on piers). A door/window goes into a free wall with
         "wall":<element id> instead of room. A level may hold only free elements and no rooms.
+  {"step":"brick","brick":<brick id>,"id","room","level","side"|"near"|"position","at","rotation","start","end",
+        "params":[{"name","value"}, …]}   place any asset from the LIBRARY (below): equipment, services, structure,
+        site. How it is placed follows its host (see its card): floor = in `room` against `side`/`near` or at
+        `position`; wall = fixed to that wall at its mount height; ceiling = under the ceiling of `room`; roof = on
+        the top roof at `position` (null = centred); free = at `position` on `level` (site bricks outside every room);
+        span = from `start` to `end` (beams). params: only the ones that differ from the card's defaults, in range.
   {"step":"remove","id"}       {"step":"note","text"}
 Room ids are the lower-case, hyphenated names ("Bedroom 2" → "bedroom-2"); use them in room/to/remove.
 
@@ -90,7 +126,16 @@ Rules:
 - Steps are applied one at a time and rooms may never overlap, not even between two steps. To rearrange several
   rooms on a storey use ONE layout step for that storey instead of moving rooms one by one. Openings and furniture
   that no longer fit after a room moves are dropped automatically; re-add the ones you still want.
-Return only the JSON object."""
+- Bricks: use one whenever the request names something a brick covers (a heat pump, a lift, solar panels, a beam,
+  a tree). Bricks may not overlap other pieces; what a brick needs (hot water, heating, supply air, data, gas …) must
+  be provided by another brick in the design (cold water, drainage and power are always there). Rooms wider than the
+  walls can span (about 7 m, timber 6, concrete 8) need a beam; upper storeys overhanging by more than 1 m need columns.
+  The design is checked for all of this after building and problems come back to you with suggested steps.
+- Emit brick steps after furniture, in the same construction order: structure, services, equipment, site last.
+Return only the JSON object.
+
+LIBRARY (brick ids by discipline; a LIBRARY section in the user message has the cards you looked up):
+""" + BRICK_INDEX
 
 FIX_INTRO = "SOME STEPS WERE REJECTED. The current design is shown above; emit ONLY steps that fix the problems below:"
 UNMET_INTRO = "The design does not yet satisfy every requirement. The current design is shown above; emit ONLY steps that fix these:"
@@ -111,9 +156,23 @@ def requirements_user_message(prompt: str, errors: list[str] | None = None, focu
     return "\n\n".join(parts)
 
 
+def research_user_message(prompt: str, checklist: list[str], context: str | None, log: list[str]) -> str:
+    parts = ["CURRENT DESIGN:\n" + context if context else "CURRENT DESIGN: empty (new building)", "REQUEST:\n" + prompt.strip()]
+    if checklist:
+        parts.append("CHECKLIST:\n- " + "\n- ".join(checklist))
+    if log:
+        parts.append("TOOL RESULTS SO FAR:\n" + "\n\n".join(log))
+    else:
+        parts.append("No tools called yet.")
+    return "\n\n".join(parts)
+
+
 def build_user_message(prompt: str, checklist: list[str], context: str | None, problems: list[str] | None = None,
-                       unmet: list[str] | None = None, focus: str | None = None, issues: list[str] | None = None) -> str:
+                       unmet: list[str] | None = None, focus: str | None = None, issues: list[str] | None = None,
+                       toolbox: str | None = None) -> str:
     parts = []
+    if toolbox:
+        parts.append("LIBRARY (bricks and skills from your research):\n" + toolbox)
     if context:
         parts.append("CURRENT DESIGN:\n" + context)
     else:
