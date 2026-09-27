@@ -4,7 +4,8 @@ from fastapi.testclient import TestClient
 
 from agents.brick_words import mentioned_bricks
 from agents.template_planner import parse_requirements
-from core.pipeline import _verify, build_round
+from core.issues import Issue
+from core.pipeline import Feedback, _verify, build_round
 from core.research import TOOLBOX_CAP, Toolbox, research, run_tool
 from llm.mock import MockLLM
 from main import app
@@ -51,14 +52,14 @@ def test_research_turns_stop_when_done_and_matched_skills_are_always_included():
     turns = iter([{"calls": [{"tool": "search_bricks", "query": "heat pump"}], "done": False}, {"calls": [], "done": True},
                   {"calls": [{"tool": "list_skills"}]}])
     events_ = []
-    box = research(lambda prompt, log: next(turns), "a kitchen with an island", Design(), lambda *a: events_.append(a), rounds=3)
+    box = research(lambda log: next(turns), "a kitchen with an island", Design(), lambda *a: events_.append(a), rounds=3)
     assert "kitchen-layout" in box.skills
     assert [e[0] for e in events_].count("tool") == 1
     assert next(turns)["calls"][0]["tool"] == "list_skills"  # the third turn was never asked for
 
 
 def test_an_invalid_research_turn_ends_research_without_failing():
-    box = research(lambda prompt, log: {"calls": [{"tool": "rm -rf"}]}, "house", Design(), lambda *a: None, rounds=2)
+    box = research(lambda log: {"calls": [{"tool": "rm -rf"}]}, "house", Design(), lambda *a: None, rounds=2)
     assert box.bricks == []
 
 
@@ -89,10 +90,18 @@ def test_a_structure_issue_is_fixed_by_a_coordination_round():
     design = _room(12, 10, "Hall")
     results, issues = _verify(design, [], lambda *a: None)
     assert any(i.kind == "structure" for i in issues)
-    stream = build_round(MockLLM(), "a hall", design, [], lambda *a: None, guids={}, first_index=0, issues=issues)
+    stream = build_round(MockLLM(), "a hall", design, [], lambda *a: None, guids={}, first_index=0, feedback=Feedback(issues=issues))
     assert stream.accepted and any(b.brick == "steel_beam" for b in stream.design.bricks)
     _, after = _verify(stream.design, [], lambda *a: None)
     assert not [i for i in after if i.severity == "error"]
+
+
+def test_fix_round_labels_name_only_what_is_being_fixed():
+    warning = Issue("structure", "warning", "long span")
+    error = Issue("structure", "error", "no support")
+    assert Feedback().label(False) == "building the design"
+    assert Feedback(issues=[warning]).label(True) == "editing the design"
+    assert Feedback(unmet=["x"], issues=[error]).label(False) == "fixing unmet requirements and coordination issues"
 
 
 def _prompt(pid: str, text: str):

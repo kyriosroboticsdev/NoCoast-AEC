@@ -1,12 +1,18 @@
-"""System prompts for the LLM calls (checklist, research, build). Versioned with the schemas they describe."""
+"""System prompts for the LLM calls (checklist, research, build). Versioned with the schemas they describe.
 
-from bricks import library
+The system prompts end with the brick and skill indexes, so they are built on first use (and cached)
+rather than at import: importing the LLM layer never loads the library.
+"""
+
+import textwrap
+from collections.abc import Sequence
+from functools import lru_cache
+
+from bricks import HOSTS, library
+from schemas.research import TOOL_HELP
 from skills import skillbook
 
-BRICK_INDEX = library().index_text()
-SKILL_INDEX = skillbook().index_text()
-
-REQUIREMENTS_SYSTEM = """You are an architect's assistant. Break the user's request into a checklist of atomic
+_REQUIREMENTS = """You are an architect's assistant. Break the user's request into a checklist of atomic
 REQUIREMENTS as JSON matching the given schema. Each requirement is one verifiable statement with a `kind`:
 
   storeys (value=n) | room (room=name or kind keyword, value=count, level optional) | room_level (room, level)
@@ -36,27 +42,21 @@ Rules:
 Return only the JSON object.
 
 LIBRARY (brick ids by discipline):
-""" + BRICK_INDEX
+"""
 
-RESEARCH_SYSTEM = """You are an architect about to build a 3D model. Before building you may look things up in a
+_RESEARCH_HEAD = """You are an architect about to build a 3D model. Before building you may look things up in a
 library of parametric building assets ("bricks") and in skills (short playbooks on assembling bricks correctly).
 Reply with JSON matching the given schema: {"calls": [ … ], "done": true|false}. Tools:
-  {"tool":"search_bricks","query":"<plain words>","discipline":<optional>}   find bricks ("fresh air", "hot water")
-  {"tool":"get_brick","id":"<brick id>"}       its card: parameters with ranges, host, ports it needs/provides, rules
-  {"tool":"list_skills"}                       {"tool":"get_skill","id":"<skill name>"}
-  {"tool":"check_design"}                      clashes, missing services and structure issues of the current design
-  {"tool":"structure_report"}                  spans and overhangs only
-Look up what the request needs beyond plain rooms: equipment, services, structure, site. Read the card of every
+"""
+
+_RESEARCH_TAIL = """Look up what the request needs beyond plain rooms: equipment, services, structure, site. Read the card of every
 brick you will place and the skill for each discipline involved. Everything you read is given to you again when
 you build. Set done=true (with no calls) once you know enough; a plain house with furniture needs no research.
 
 SKILLS:
-""" + SKILL_INDEX + """
+"""
 
-LIBRARY (brick ids by discipline):
-""" + BRICK_INDEX
-
-BUILD_SYSTEM = """You are an architect building a 3D model step by step. Reply with JSON matching the given schema:
+_BUILD_HEAD = """You are an architect building a 3D model step by step. Reply with JSON matching the given schema:
 {"steps": [ ... ]}. Each step is applied the moment it is complete and the user watches the building grow, so emit
 steps in construction order: building → levels → ONE layout step per storey holding all of its rooms (L1 first)
 → roof → doors → windows → stairs → furniture → notes. Put the reasoning into the order and the numbers, not
@@ -104,11 +104,11 @@ Steps (fields not listed are left null):
         "wall":<element id> instead of room. A level may hold only free elements and no rooms.
   {"step":"brick","brick":<brick id>,"id","room","level","side"|"near"|"position","at","rotation","start","end",
         "params":[{"name","value"}, …]}   place any asset from the LIBRARY (below): equipment, services, structure,
-        site. How it is placed follows its host (see its card): floor = in `room` against `side`/`near` or at
-        `position`; wall = fixed to that wall at its mount height; ceiling = under the ceiling of `room`; roof = on
-        the top roof at `position` (null = centred); free = at `position` on `level` (site bricks outside every room);
-        span = from `start` to `end` (beams). params: only the ones that differ from the card's defaults, in range.
-  {"step":"remove","id"}       {"step":"note","text"}
+        site. params: only the ones that differ from the card's defaults, in range. How it is placed follows its
+        host (see its card):
+"""
+
+_BUILD_TAIL = """  {"step":"remove","id"}       {"step":"note","text"}
 Room ids are the lower-case, hyphenated names ("Bedroom 2" → "bedroom-2"); use them in room/to/remove.
 
 Rules:
@@ -135,7 +135,26 @@ Rules:
 Return only the JSON object.
 
 LIBRARY (brick ids by discipline; a LIBRARY section in the user message has the cards you looked up):
-""" + BRICK_INDEX
+"""
+
+
+@lru_cache(maxsize=1)
+def requirements_system() -> str:
+    return _REQUIREMENTS + library().index_text()
+
+
+@lru_cache(maxsize=1)
+def research_system() -> str:
+    tools = "".join(f"  {line}\n" for line in TOOL_HELP.values())
+    return (_RESEARCH_HEAD + tools + _RESEARCH_TAIL + skillbook().index_text() + "\n\nLIBRARY (brick ids by discipline):\n"
+            + library().index_text())
+
+
+@lru_cache(maxsize=1)
+def build_system() -> str:
+    hosts = "".join(textwrap.fill(f"{name} = {rule.hint}", 116, initial_indent="          ", subsequent_indent="            ") + "\n"
+                    for name, rule in HOSTS.items())
+    return _BUILD_HEAD + hosts + _BUILD_TAIL + library().index_text()
 
 FIX_INTRO = "SOME STEPS WERE REJECTED. The current design is shown above; emit ONLY steps that fix the problems below:"
 UNMET_INTRO = "The design does not yet satisfy every requirement. The current design is shown above; emit ONLY steps that fix these:"
@@ -167,9 +186,8 @@ def research_user_message(prompt: str, checklist: list[str], context: str | None
     return "\n\n".join(parts)
 
 
-def build_user_message(prompt: str, checklist: list[str], context: str | None, problems: list[str] | None = None,
-                       unmet: list[str] | None = None, focus: str | None = None, issues: list[str] | None = None,
-                       toolbox: str | None = None) -> str:
+def build_user_message(prompt: str, checklist: list[str], context: str | None, *, focus: str | None = None,
+                       toolbox: str | None = None, problems: Sequence[str] = (), unmet: Sequence[str] = (), issues: Sequence[str] = ()) -> str:
     parts = []
     if toolbox:
         parts.append("LIBRARY (bricks and skills from your research):\n" + toolbox)

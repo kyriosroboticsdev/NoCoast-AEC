@@ -8,12 +8,23 @@ are shown on the next turn and everything it found goes into the build prompt.
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal, Optional, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 ToolName = Literal["search_bricks", "get_brick", "list_skills", "get_skill", "check_design", "structure_report"]
 MAX_CALLS = 8
+
+# How each tool is called and what it returns, as the research prompt lists them.
+TOOL_HELP: dict[ToolName, str] = {
+    "search_bricks": '{"tool":"search_bricks","query":"<plain words>","discipline":<optional>}   find bricks ("fresh air", "hot water")',
+    "get_brick": '{"tool":"get_brick","id":"<brick id>"}   its card: parameters with ranges, host, ports it needs/provides, rules',
+    "list_skills": '{"tool":"list_skills"}   every skill with its title',
+    "get_skill": '{"tool":"get_skill","id":"<skill name>"}   one skill: how to assemble the bricks of a discipline',
+    "check_design": '{"tool":"check_design"}   clashes, missing services and structure issues of the current design',
+    "structure_report": '{"tool":"structure_report"}   spans and overhangs only',
+}
+assert set(TOOL_HELP) == set(get_args(ToolName)), "every tool needs a TOOL_HELP line"
 
 
 class ToolCall(BaseModel):

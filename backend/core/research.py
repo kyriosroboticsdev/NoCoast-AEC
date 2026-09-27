@@ -13,18 +13,19 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, get_args
 
 from bricks import library
 from core import structure
 from core.coordinate import coordinate
-from core.derive import DesignError, analyze
+from core.derive import DesignError, Derived, analyze
+from core.issues import Issue
 from schemas.design import Design
-from schemas.research import ResearchTurn, ToolCall
+from schemas.research import ResearchTurn, ToolCall, ToolName
 from skills import skillbook
 
 Emit = Callable[[str, str, dict | None], None]
-Complete = Callable[[str, list[str]], dict]
+Complete = Callable[[list[str]], dict]      # the tool log so far -> one research turn's JSON
 
 TOOLBOX_CAP = 14000      # chars of research carried into the build prompt
 RESULT_CAP = 3000        # chars of one tool result shown back to the model
@@ -65,50 +66,76 @@ class Toolbox:
         return "\n\n".join(out)
 
 
-def run_tool(call: ToolCall, design: Design, box: Toolbox) -> str:
+Tool = Callable[[ToolCall, Design, Toolbox], str]
+
+
+def _search_bricks(call: ToolCall, design: Design, box: Toolbox) -> str:
+    hits = library().search(call.query or "", call.discipline, SEARCH_LIMIT)
+    if not hits:
+        return f"no bricks match '{call.query}'" + (f" in {call.discipline}" if call.discipline else "")
+    text = "\n".join(b.line() for b, _ in hits)
+    box.add(f"search:{call.query}|{call.discipline}", f"search_bricks({call.query!r}):\n{text}")
+    return text
+
+
+def _get_brick(call: ToolCall, design: Design, box: Toolbox) -> str:
     lib = library()
-    if call.tool == "search_bricks":
-        hits = lib.search(call.query or "", call.discipline, SEARCH_LIMIT)
-        if not hits:
-            return f"no bricks match '{call.query}'" + (f" in {call.discipline}" if call.discipline else "")
-        text = "\n".join(b.line() for b, _ in hits)
-        box.add(f"search:{call.query}|{call.discipline}", f"search_bricks({call.query!r}):\n{text}")
-        return text
-    if call.tool == "get_brick":
-        brick = lib.get(call.id or "")
-        if brick is None:
-            return f"no brick '{call.id}'; closest: {', '.join(lib.suggest((call.id or '').replace('_', ' '))) or 'none'}"
-        box.add(f"brick:{brick.id}", brick.card())
-        return brick.card()
-    if call.tool == "list_skills":
-        return skillbook().index_text()
-    if call.tool == "get_skill":
-        skill = skillbook().get(call.id or "")
-        if skill is None:
-            return f"no skill '{call.id}'; skills: {', '.join(s.name for s in skillbook().all())}"
-        box.add(f"skill:{skill.name}", skill.text())
-        return skill.text()
-    if call.tool in ("check_design", "structure_report"):
+    brick = lib.get(call.id or "")
+    if brick is None:
+        return f"no brick '{call.id}'; closest: {', '.join(lib.suggest((call.id or '').replace('_', ' '))) or 'none'}"
+    box.add(f"brick:{brick.id}", brick.card())
+    return brick.card()
+
+
+def _list_skills(call: ToolCall, design: Design, box: Toolbox) -> str:
+    return skillbook().index_text()
+
+
+def _get_skill(call: ToolCall, design: Design, box: Toolbox) -> str:
+    skill = skillbook().get(call.id or "")
+    if skill is None:
+        return f"no skill '{call.id}'; skills: {', '.join(s.name for s in skillbook().all())}"
+    box.add(f"skill:{skill.name}", skill.text())
+    return skill.text()
+
+
+def _checked(report: Callable[[Design, Derived], list[Issue]]) -> Tool:
+    def run(call: ToolCall, design: Design, box: Toolbox) -> str:
         if not design.rooms:
             return "the design is empty; nothing to check yet"
         try:
             derived = analyze(design)
         except DesignError as exc:
             return f"the design is not buildable: {exc}"
-        issues = structure.report(design, derived) if call.tool == "structure_report" else coordinate(design, derived)
-        return "\n".join(i.line() for i in issues) or "no issues"
-    raise ValueError(f"unknown tool {call.tool}")
+        return "\n".join(i.line() for i in report(design, derived)) or "no issues"
+    return run
+
+
+TOOLS: dict[ToolName, Tool] = {
+    "search_bricks": _search_bricks,
+    "get_brick": _get_brick,
+    "list_skills": _list_skills,
+    "get_skill": _get_skill,
+    "check_design": _checked(coordinate),
+    "structure_report": _checked(structure.report),
+}
+assert set(TOOLS) == set(get_args(ToolName)), "every tool needs a handler"
+
+
+def run_tool(call: ToolCall, design: Design, box: Toolbox) -> str:
+    return TOOLS[call.tool](call, design, box)
 
 
 def _describe(call: ToolCall) -> str:
-    arg = call.query if call.tool == "search_bricks" else call.id
-    return f"{call.tool}({arg!r}" + (f", discipline={call.discipline!r}" if call.discipline else "") + ")" if arg else f"{call.tool}()"
+    args = call.model_dump(exclude_none=True, exclude={"tool"})
+    return f"{call.tool}(" + ", ".join(f"{k}={v!r}" for k, v in args.items()) + ")"
 
 
-def research(complete: Complete, prompt: str, design: Design, emit: Emit, rounds: int | None = None) -> Toolbox:
-    """Run up to `rounds` research turns; `complete(user_extra, log)` makes one LLM call and returns its JSON."""
+def research(complete: Complete, request: str, design: Design, emit: Emit, rounds: int | None = None) -> Toolbox:
+    """Run up to `rounds` research turns; `complete(log)` makes one LLM call and returns its JSON. `request`
+    (the prompt and checklist) picks the skills every build gets even without a tool call."""
     box = Toolbox()
-    for skill in skillbook().match(prompt):
+    for skill in skillbook().match(request):
         box.add(f"skill:{skill.name}", skill.text())
     if box.skills:
         emit("research", f"skills matched to the request: {', '.join(box.skills)}", {"skills": box.skills})
@@ -116,7 +143,7 @@ def research(complete: Complete, prompt: str, design: Design, emit: Emit, rounds
     for turn in range(rounds):
         emit("research", f"research turn {turn + 1}: asking the model which tools to call", {"turn": turn + 1})
         try:
-            reply = ResearchTurn.model_validate(complete(prompt, box.log))
+            reply = ResearchTurn.model_validate(complete(box.log))
         except ValueError as exc:
             emit("research", f"research turn {turn + 1} was not valid ({exc}); building with what was found", {"error": str(exc)})
             break

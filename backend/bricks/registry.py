@@ -79,8 +79,19 @@ class Library:
         key = brick_id.strip().lower().replace("-", "_").replace(" ", "_")
         return self.bricks.get(key)
 
-    def by_legacy(self, fixture_kind: str) -> Brick | None:
-        return next((b for b in self.bricks.values() if b.legacy_fixture == fixture_kind), None)
+    def resolve(self, item: str | None) -> set[str]:
+        """Brick ids a phrase names: an id, a name or tag exactly, else the best search hits."""
+        if not item:
+            return set()
+        exact = self.get(item)
+        if exact:
+            return {exact.id}
+        key = item.strip().lower()
+        named = {b.id for b in self.bricks.values() if key == b.name.lower() or key in (t.lower() for t in b.tags)}
+        if named:
+            return named
+        hits = self.search(item, limit=3)
+        return {b.id for b, score in hits if score >= hits[0][1] * 0.8} if hits else set()
 
     def disciplines(self) -> dict[str, list[Brick]]:
         out: dict[str, list[Brick]] = {}

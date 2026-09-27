@@ -20,7 +20,7 @@ from bricks import given_fields, library
 from schemas.bim import FixtureKind, RoofShape, WallMaterial
 from schemas.design import (MAX_STOREYS, ROOM_OWNED, UNROOFED_KINDS, UNWALLED_KINDS, BalconyDef, BrickDef, ColumnDef, CustomShapeDef, Design,
                             DoorDef, DoorKind, Edge, FixtureDef, FreeDef, FreeKind, LevelDef, PorchDef, RoofDef, RoomDef, RoomKind,
-                            ShapePartDef, Side, StairDef, WindowDef, WindowKind, guess_kind, slug)
+                            ShapePartDef, StairDef, WindowDef, WindowKind, guess_kind, slug)
 
 StepKind = Literal["building", "level", "room", "layout", "door", "window", "stair", "furniture", "custom", "brick", "balcony",
                    "porch", "roof", "column", "material", "element", "remove", "note"]
