@@ -48,8 +48,9 @@ ROOM_WORDS = [  # (regex, display name, kind)
     (r"server\s*rooms?|data\s*(centres?|centers?)|comms\s*rooms?", "Server Room", "server"),
     (r"barns?", "Barn", "barn"),
     (r"stables?", "Stable", "stable"),
+    (r"(open|design|drawing)\s*studios?|studio\s*spaces?", "Studio", "office"),
     (r"offices?|stud(y|ies)", "Office", "office"),
-    (r"bath(room)?s?|wash\s*rooms?|rest\s*rooms?|toilets?", "Bathroom", "bathroom"),
+    (r"bath(room)?s?|wash\s*rooms?|rest\s*rooms?|toilets?|wcs?", "Bathroom", "bathroom"),
     (r"bed\s*rooms?", "Bedroom", "bedroom"),
 ]
 NUM = r"(\d+|" + "|".join(NUMBERS) + r")"
@@ -81,6 +82,8 @@ FURNITURE = {  # kind -> [(fixture kind, side)]
 }
 # Prompts that describe a building that is not a house: the storey height and roof they want.
 NON_DOMESTIC = [
+    (r"\b((architecture|architects?'?|design|creative|engineering) (studio|practice|office)s?|co-?working|workplace)\b",
+     "office", 3.6, "flat"),
     (r"\b(warehouses?|depots?|distribution (centre|center|hub)|hangars?|logistics)\b", "warehouse", 8.0, "shed"),
     (r"\b(workshops?|maker ?spaces?|machine shops?|fabrication)\b", "workshop", 6.0, "shed"),
     (r"\b(barns?|stables?|farm building|granary)\b", "barn", 6.0, "gable"),
@@ -259,6 +262,18 @@ def _room_area(kind: str) -> float:
             "stable": 60}.get(kind, 18)
 
 
+TITLE = re.compile(r"^(?:(?:please\s+)?(?:design|build|make|create|draw|generate|model)\s+(?:me\s+|us\s+)?)?(?:an?\s+|the\s+)?(?:(?:\w+|\d+)[- ]stor(?:e)?(?:y|ies|eys)\s+)?(.+?)(?=\s+(?:with|for|on|in|at|that|which)\b|[:,.;(]|$)")
+
+
+def _title(text: str, fallback: str) -> str:
+    """What the brief calls the building ("Two storey architecture studio for 12 …" → "Architecture Studio")."""
+    m = TITLE.match(text.strip())
+    words = [w for w in m.group(1).split() if len(w) > 1 and not re.search(r"\d|^(sq)?m2?$|^ft$", w)] if m else []
+    if not 1 <= len(words) <= 4 or not re.search(r"[a-z]", m.group(1)):
+        return fallback
+    return " ".join(w if w.isupper() else w.capitalize() for w in words)
+
+
 def template_steps(prompt: str) -> list[dict]:
     """Build steps for a new design, in construction order."""
     text = prompt.lower()
@@ -273,10 +288,10 @@ def template_steps(prompt: str) -> list[dict]:
                 {"step": "level", "id": "L1"}] + shapes.bridge_steps(Design(levels=[LevelDef(id="L1")]))
     if kind_of_building:
         what, storey_height, default_roof = kind_of_building
-        name, description = what.title(), f"{storeys}-storey {what}"
+        name, description = _title(text, what.title()), f"{storeys}-storey {what}"
     else:
         storey_height, default_roof = 3.0, None
-        name, description = "Generated House", f"{storeys}-storey house" + (" with a basement" if basement else "")
+        name, description = _title(text, "Generated House"), f"{storeys}-storey house" + (" with a basement" if basement else "")
     steps: list[dict] = [{"step": "building", "name": name, "description": description}]
     if basement:
         steps.append({"step": "level", "id": "B1", "height": min(storey_height, 3.0)})
