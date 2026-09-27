@@ -244,7 +244,8 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
     if (ok) learn(step);
     hooks.onStep?.(step, ok);
     hooks.onLive?.(null);
-    const what = typeof d.headline === "string" && d.headline ? d.headline : describe(step, e.message);
+    const what = (typeof d.headline === "string" && d.headline ? d.headline : describe(step, e.message))
+      .replace(/^\p{Ll}/u, (c) => c.toUpperCase());
     // A note is the model's own commentary on the design, not part of reading the brief.
     const phase = kind === "note" ? "concept" : String(d.phase ?? facts?.phase ?? phaseOf(kind));
     const why = typeof d.why === "string" ? d.why : null;
@@ -283,7 +284,7 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
       child(parent, what, pruned, "done", { why, metric: metricOf(kind, facts) });
     } else {
       skipped++;
-      child(parent, `Could not ${what.replace(/^\w/, (c) => c.toLowerCase())}`, reason(d.error), "error");
+      child(parent, `${what} — set aside`, reason(d.error), "error");
     }
   }
 
