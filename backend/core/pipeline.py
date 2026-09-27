@@ -3,8 +3,9 @@
     prompt ─► LLM: requirements checklist
            ─► LLM: build steps (streamed; each step applied + previewed as it arrives)
            ─► rejected steps? ─► LLM: fix round (≤ BIM_MAX_REPAIRS)
-           ─► deterministic check of the design against the checklist
-           ─► unmet requirements? ─► LLM: fix round (≤ BIM_VERIFY_ROUNDS)
+           ─► deterministic check of the design against the checklist, plus coordination
+              (clashes, missing services, unsupported spans — core/coordinate.py)
+           ─► unmet requirements or coordination errors? ─► LLM: fix round (≤ BIM_VERIFY_ROUNDS)
            ─► derive spec ─► compile IFC ─► version (GlobalIds kept)
 
 A new project starts from an empty Design; an edit starts from the head version's
@@ -24,8 +25,10 @@ from pydantic import ValidationError
 import config
 from core.checks import CheckResult, check, score, unmet_lines
 from core.context import describe_design, describe_focus
+from core.coordinate import coordinate, errors, fix_lines
 from core.derive import DesignError, analyze, derive
 from core.guids import GuidMap, prune_guids
+from core.issues import Issue
 from core.ops import OpError, apply_ops
 from core.stream import StepStream
 from ifc.builder import GeometryError, compile_ifc, summarize
@@ -125,19 +128,21 @@ def checklist_lines(reqs: list[Requirement]) -> list[str]:
 
 def build_round(llm: LLM, prompt: str, design: Design, checklist: list[str], emit: Emit, *, guids: GuidMap,
                 first_index: int, problems: list[str] | None = None, unmet: list[str] | None = None,
-                editing: bool = False, focus: str | None = None) -> StepStream:
+                editing: bool = False, focus: str | None = None, issues: list[Issue] | None = None) -> StepStream:
     context = None
-    if design.rooms or editing or problems or unmet:
+    fixes = fix_lines(issues or [])
+    if design.rooms or editing or problems or unmet or fixes:
         try:
             context = describe_design(design, analyze(design))
         except DesignError:
             context = describe_design(design)
-    what = "fixing rejected steps" if problems else "fixing unmet requirements" if unmet else "editing the design" if editing else "building the design"
-    emit("build", f"{what}: asking the model for steps", {"problems": problems or [], "unmet": unmet or []})
+    what = ("fixing rejected steps" if problems else "fixing unmet requirements" if unmet else "fixing coordination issues" if fixes
+            else "editing the design" if editing else "building the design")
+    emit("build", f"{what}: asking the model for steps", {"problems": problems or [], "unmet": unmet or [], "issues": fixes})
     stream = StepStream(emit, design, guids, first_index)
     meta = {"prompt": prompt, "design": design.model_dump(mode="json"), "problems": problems or [], "unmet": unmet or [],
-            "editing": editing, "focus": focus}
-    raw = _call(llm, LLMRequest(system=BUILD_SYSTEM, user=build_user_message(prompt, checklist, context, problems, unmet, focus),
+            "editing": editing, "focus": focus, "issues": [i.as_dict() for i in errors(issues or [])]}
+    raw = _call(llm, LLMRequest(system=BUILD_SYSTEM, user=build_user_message(prompt, checklist, context, problems, unmet, focus, fixes),
                                 schema=STEPS_SCHEMA, schema_name="build", meta=meta), emit, stream)
     # Anything the streaming parser did not see (non-streaming adapters, or a reply that only parsed whole).
     try:
@@ -215,16 +220,17 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
         if stream.rejected:
             notes += [f"step rejected: {err}" for _, _, err in stream.rejected]
 
-        results = _verify(design, reqs.requirements, emit)
+        results, issues = _verify(design, reqs.requirements, emit)
         for _ in range(verify_rounds()):
             unmet = unmet_lines(results)
-            if not unmet:
+            if not unmet and not errors(issues):
                 break
-            stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=steps_total, unmet=unmet, editing=editing)
+            stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=steps_total, unmet=unmet,
+                                 editing=editing, issues=issues)
             design, guids = stream.design, stream.guids
             steps_total += stream.applied
             accepted_total += len(stream.accepted)
-            results = _verify(design, reqs.requirements, emit)
+            results, issues = _verify(design, reqs.requirements, emit)
 
         if accepted_total == 0:
             raise PipelineError("the model produced no applicable steps" + (": " + stream.rejected[0][2] if stream.rejected else ""))
@@ -234,7 +240,7 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
         emit("compile", "deriving geometry and compiling the final IFC")
         spec, derive_notes = derive(design)
         model, guids = compile_ifc(spec, guids, design.model_dump_json())
-        notes = design.notes + derive_notes + notes + [r.line() for r in results if r.status != "met"]
+        notes = design.notes + derive_notes + notes + [r.line() for r in results if r.status != "met"] + [i.line() for i in issues]
         met, total = score(results)
         if total:
             notes.append(f"requirements met: {met}/{total}")
@@ -247,19 +253,23 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
         raise PipelineError(f"the design could not be built: {exc}") from exc
 
 
-def _verify(design: Design, reqs: list[Requirement], emit: Emit) -> list[CheckResult]:
+def _verify(design: Design, reqs: list[Requirement], emit: Emit) -> tuple[list[CheckResult], list[Issue]]:
     try:
         derived = analyze(design)
     except DesignError as exc:
         emit("verify", f"design not buildable: {exc}", {"errors": [str(exc)]})
-        return []
-    results = check(design, derived, reqs)
+        return [], []
+    issues = coordinate(design, derived)
+    bad = errors(issues)
+    emit("coordinate", f"{len(bad)} coordination issue(s), {len(issues) - len(bad)} warning(s)" if issues else "no clashes, services covered, spans supported",
+         {"issues": [i.as_dict() for i in issues]})
+    results = check(design, derived, reqs, issues)
     met, total = score(results)
     unmet = [r for r in results if r.status == "unmet"]
     emit("verify", f"{met}/{total} checkable requirement(s) met" + (f", {len(unmet)} unmet" if unmet else ""),
          {"results": [{"text": r.requirement.text, "status": r.status, "detail": r.detail} for r in results],
           "unmet": [r.line() for r in unmet]})
-    return results
+    return results, issues
 
 
 def run_ops(store: Store, project_id: str, ops: list, base_version: int | None = None, emit: Emit = _noop) -> VersionData:

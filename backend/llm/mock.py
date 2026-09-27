@@ -42,7 +42,7 @@ class MockLLM:
         if request.schema_name == "requirements":
             reply = {"summary": prompt[:80], "requirements": [r.model_dump(exclude_none=True) for r in parse_requirements(prompt)]}
         elif request.schema_name == "build":
-            if request.meta.get("problems") or request.meta.get("unmet"):
+            if request.meta.get("problems") or request.meta.get("unmet") or request.meta.get("issues"):
                 reply = {"steps": self._fix(prompt, request.meta)}
             elif request.meta.get("editing"):
                 reply = {"steps": self._edit(prompt, Design.model_validate(request.meta["design"]), request.meta.get("focus"))}
@@ -59,8 +59,16 @@ class MockLLM:
     # --- fix rounds ----------------------------------------------------------
 
     def _fix(self, prompt: str, meta: dict) -> list[dict]:
-        """The mock cannot reason about its mistakes; it adds nothing (the pipeline reports the rest)."""
-        return []
+        """The mock cannot reason about its mistakes, but coordination issues come with steps that fix them:
+        it applies those (once each) and leaves the rest for the pipeline to report."""
+        steps, seen = [], set()
+        for issue in meta.get("issues") or []:
+            for s in issue.get("suggestions") or []:
+                key = json.dumps(s, sort_keys=True)
+                if key not in seen:
+                    seen.add(key)
+                    steps.append(s)
+        return steps
 
     # --- edits -----------------------------------------------------------------
 

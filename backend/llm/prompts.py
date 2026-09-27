@@ -94,6 +94,8 @@ Return only the JSON object."""
 
 FIX_INTRO = "SOME STEPS WERE REJECTED. The current design is shown above; emit ONLY steps that fix the problems below:"
 UNMET_INTRO = "The design does not yet satisfy every requirement. The current design is shown above; emit ONLY steps that fix these:"
+ISSUES_INTRO = ("COORDINATION ISSUES (clashes, missing services, unsupported spans). Emit ONLY steps that resolve them; the "
+                "suggested steps work, adjust them if you know better:")
 
 
 FOCUS_INTRO = "SELECTED IN THE VIEWER: "
@@ -110,7 +112,7 @@ def requirements_user_message(prompt: str, errors: list[str] | None = None, focu
 
 
 def build_user_message(prompt: str, checklist: list[str], context: str | None, problems: list[str] | None = None,
-                       unmet: list[str] | None = None, focus: str | None = None) -> str:
+                       unmet: list[str] | None = None, focus: str | None = None, issues: list[str] | None = None) -> str:
     parts = []
     if context:
         parts.append("CURRENT DESIGN:\n" + context)
@@ -125,4 +127,6 @@ def build_user_message(prompt: str, checklist: list[str], context: str | None, p
         parts.append(FIX_INTRO + "\n- " + "\n- ".join(problems))
     if unmet:
         parts.append(UNMET_INTRO + "\n- " + "\n- ".join(unmet))
+    if issues:
+        parts.append(ISSUES_INTRO + "\n- " + "\n- ".join(issues))
     return "\n\n".join(parts)

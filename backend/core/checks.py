@@ -11,7 +11,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from bricks import library
+from core import structure
 from core.derive import Derived
+from core.issues import Issue
 from schemas.design import Design, RoomDef, guess_kind, slug
 from schemas.requirements import Requirement
 
@@ -75,20 +78,36 @@ def _fixtures_for(item: str | None) -> tuple[str, ...]:
     return (norm,)
 
 
-def check(design: Design, derived: Derived, requirements: list[Requirement]) -> list[CheckResult]:
+def _bricks_for(item: str | None) -> set[str]:
+    """Brick ids a requirement's item names: an id, a name, or words matching its tags."""
+    if not item:
+        return set()
+    lib = library()
+    exact = lib.get(item)
+    if exact:
+        return {exact.id}
+    key = item.strip().lower()
+    named = {b.id for b in lib.bricks.values() if key == b.name.lower() or key in (t.lower() for t in b.tags)}
+    if named:
+        return named
+    hits = lib.search(item, limit=3)
+    return {b.id for b, score in hits if score >= hits[0][1] * 0.8} if hits else set()
+
+
+def check(design: Design, derived: Derived, requirements: list[Requirement], issues: list[Issue] | None = None) -> list[CheckResult]:
     out: list[CheckResult] = []
     for req in requirements:
         if not req.supported:
             out.append(CheckResult(req, "unsupported", "not supported by the builder"))
             continue
         try:
-            out.append(_check_one(design, derived, req))
+            out.append(_check_one(design, derived, req, issues))
         except Exception as exc:  # noqa: BLE001 - a check must never break the pipeline
             out.append(CheckResult(req, "skipped", f"check failed: {exc}"))
     return out
 
 
-def _check_one(design: Design, d: Derived, req: Requirement) -> CheckResult:
+def _check_one(design: Design, d: Derived, req: Requirement, issues: list[Issue] | None = None) -> CheckResult:
     k = req.kind
     n = int(req.value) if req.value else 1
 
@@ -182,11 +201,31 @@ def _check_one(design: Design, d: Derived, req: Requirement) -> CheckResult:
 
     if k == "furniture":
         kinds = _fixtures_for(req.item)
+        lib = library()
         fx = [f for f in design.fixtures if f.kind in kinds]
+        fx += [b for b in design.bricks if (lib.get(b.brick) and lib.get(b.brick).legacy_fixture in kinds) or b.brick in kinds]
         if req.room:
             ids = {r.id for r in _match_rooms(design, req.room)}
             fx = [f for f in fx if f.room in ids]
         return CheckResult(req, "met" if len(fx) >= n else "unmet", f"{len(fx)} {req.item}(s)" + (f" in {req.room}" if req.room else "") + f", wanted {n}")
+
+    if k == "asset":
+        wanted = _bricks_for(req.item)
+        if not wanted:
+            return CheckResult(req, "unmet", f"no brick in the library matches '{req.item}'")
+        placed = [b for b in design.bricks if b.brick in wanted]
+        if req.room:
+            ids = {r.id for r in _match_rooms(design, req.room)}
+            placed = [b for b in placed if b.room in ids]
+        where = f" in {req.room}" if req.room else ""
+        return CheckResult(req, "met" if len(placed) >= n else "unmet",
+                           f"{len(placed)} of {'/'.join(sorted(wanted)[:3])}{where}, wanted {n}")
+
+    if k == "structure":
+        found = [i for i in issues if i.kind == "structure"] if issues is not None else structure.report(design, d)
+        if found:
+            return CheckResult(req, "unmet", "; ".join(i.message for i in found[:3]))
+        return CheckResult(req, "met", f"spans within {structure.span_limit(design):g} m or supported, no unsupported overhangs")
 
     if k == "roof":
         want = (req.item or "").lower()
