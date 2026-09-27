@@ -19,12 +19,27 @@ from bricks.model import Connector, Material, PropertyValue
 
 Point = tuple[float, float]
 
-WallMaterial = Literal["masonry", "concrete", "timber", "plaster", "stone", "glass"]
-RoofShape = Literal["flat", "gable", "hip"]
+WallMaterial = Literal["masonry", "concrete", "timber", "plaster", "stone", "glass", "brick", "steel", "render"]
+RoofShape = Literal["flat", "gable", "hip", "shed"]
 FixtureKind = Literal[
+    # domestic
     "bed", "double_bed", "bunk_bed", "sofa", "armchair", "coffee_table", "tv_stand", "dining_table", "chair",
     "desk", "bookshelf", "wardrobe", "dresser", "kitchen_counter", "island", "fridge", "oven", "sink",
     "dishwasher", "washing_machine", "toilet", "shower", "bathtub", "washbasin", "fireplace", "car",
+    # workplace and education
+    "conference_table", "reception_desk", "filing_cabinet", "locker", "whiteboard", "lectern", "printer",
+    "server_rack", "school_desk",
+    # retail and hospitality
+    "shelving_unit", "display_case", "checkout_counter", "cafe_table", "stool", "bar_counter",
+    # health
+    "hospital_bed", "exam_table",
+    # industry and logistics
+    "pallet_rack", "workbench", "machine", "crate", "conveyor",
+    # sport and assembly
+    "treadmill", "weight_bench", "seating_row",
+    # plant, site and landscape (these may also stand outside any room)
+    "solar_panel", "water_tank", "hvac_unit", "boiler", "bench", "planter", "bollard", "bicycle_rack",
+    "lamp_post", "picnic_table", "dumpster",
 ]
 
 
@@ -118,7 +133,7 @@ class Door(_Element):
     offset: float = Field(ge=0, description="Distance along the wall from its start to the door's near edge")
     width: float = Field(0.9, gt=0)
     height: float = Field(2.1, gt=0)
-    kind: Literal["single", "double", "sliding", "french", "garage"] = "single"
+    kind: Literal["single", "double", "sliding", "french", "garage", "revolving", "roller"] = "single"
 
 
 class Window(_Element):
@@ -178,8 +193,8 @@ class Stair(_Element):
 
 
 class Fixture(_Element):
-    """Furniture, appliances and sanitary fittings as simple solids. `position` is the footprint centre;
-    `rotation` (degrees) turns the piece, whose back faces -y before rotation."""
+    """Furniture, appliances, equipment and site objects as simple solids. `position` is the footprint
+    centre; `rotation` (degrees) turns the piece, whose back faces -y before rotation."""
 
     type: Literal["fixture"] = "fixture"
     level: str
@@ -189,6 +204,7 @@ class Fixture(_Element):
     width: float = Field(gt=0)
     depth: float = Field(gt=0)
     height: float = Field(gt=0)
+    elevation: float = Field(0.0, ge=0, description="Offset above the level (equipment on a raised deck or a roof)")
 
 
 class ShapePart(BaseModel):
@@ -215,6 +231,7 @@ class CustomFixture(_Element):
     position: Point
     rotation: float = 0.0
     parts: list[ShapePart] = Field(min_length=1, max_length=12)
+    elevation: float = Field(0.0, ge=0, description="Offset above the level")
 
 
 class Asset(_Element):

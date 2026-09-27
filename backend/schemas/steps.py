@@ -602,10 +602,22 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
         return d, f"stair {sid}: in {room.id} along " + (f"side {side}" if side else f"the wall near {step.near}")
 
     if k == "furniture":
-        room = d.room(_need(step, "room"))
+        kind = _literal(step, (step.kind or "").lower().replace(" ", "_").replace("-", "_"), FixtureKind.__args__, "furniture kind")
+        if not step.room:  # free-standing: site furniture, roof plant, racking in an open yard
+            level = step.level or "L1"
+            if d.level(level) is None:
+                raise StepError(f"furniture: unknown level '{level}' (levels: {', '.join(l.id for l in d.levels)})")
+            at = _pt_or_none(step.position or step.near)
+            if at is None:
+                raise StepError("furniture without a room needs `position` [x, y] (and optionally `level`)")
+            fid = step.id or d.unique_id(f"{kind}-{level.lower()}")
+            d.fixtures = [x for x in d.fixtures if x.id != fid]
+            d.fixtures.append(FixtureDef(id=fid, room=None, level=level, position=at, elevation=step.elevation or 0.0,
+                                         kind=kind, rotation=step.rotation, width=step.width, depth=step.depth, height=step.height))
+            return d, f"{kind} {fid}: free-standing on {level} at {list(at)}"
+        room = d.room(step.room)
         if room is None:
             raise StepError(f"furniture: unknown room '{step.room}' (rooms: {', '.join(r.id for r in d.rooms)})")
-        kind = _literal(step, (step.kind or "").lower().replace(" ", "_").replace("-", "_"), FixtureKind.__args__, "furniture kind")
         side = _literal(step, step.side or "center", ("N", "S", "E", "W", "center"), "side")
         fid = step.id or d.unique_id(f"{kind}-{room.id}")
         d.fixtures = [x for x in d.fixtures if x.id != fid]
@@ -615,15 +627,27 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
         return d, f"{kind} {fid}: in {room.id}{where}"
 
     if k == "custom":
-        room = d.room(_need(step, "room"))
-        if room is None:
-            raise StepError(f"custom: unknown room '{step.room}' (rooms: {', '.join(r.id for r in d.rooms)})")
         if not step.parts:
             raise StepError("custom needs `parts`: 1-12 box/round solids (x, y, z, w, d, h) that together make the shape")
-        side = _literal(step, step.side or "center", ("N", "S", "E", "W", "center"), "side")
         name = step.name or "Custom object"
-        cid = step.id or d.unique_id(slug(name))
         parts = [ShapePartDef(shape=p.shape, x=p.x, y=p.y, z=p.z, w=p.w, d=p.d, h=p.h) for p in step.parts]
+        if not step.room:  # free-standing: a sculpture on the forecourt, a tank on a plinth
+            level = step.level or "L1"
+            if d.level(level) is None:
+                raise StepError(f"custom: unknown level '{level}' (levels: {', '.join(l.id for l in d.levels)})")
+            at = _pt_or_none(step.position or step.near)
+            if at is None:
+                raise StepError("a custom shape without a room needs `position` [x, y] (and optionally `level`)")
+            cid = step.id or d.unique_id(slug(name))
+            d.custom_shapes = [x for x in d.custom_shapes if x.id != cid]
+            d.custom_shapes.append(CustomShapeDef(id=cid, room=None, level=level, position=at, elevation=step.elevation or 0.0,
+                                                  name=name, rotation=step.rotation, parts=parts))
+            return d, f"custom {cid}: \"{name}\" free-standing on {level} at {list(at)} ({len(parts)} part(s))"
+        room = d.room(step.room)
+        if room is None:
+            raise StepError(f"custom: unknown room '{step.room}' (rooms: {', '.join(r.id for r in d.rooms)})")
+        side = _literal(step, step.side or "center", ("N", "S", "E", "W", "center"), "side")
+        cid = step.id or d.unique_id(slug(name))
         d.custom_shapes = [x for x in d.custom_shapes if x.id != cid]
         d.custom_shapes.append(CustomShapeDef(id=cid, room=room.id, name=name, side=side, near=_pt_or_none(step.near),
                                               at=step.at if step.at is not None else 0.5, rotation=step.rotation, parts=parts))
@@ -680,7 +704,8 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
         try:
             e = FreeDef(id=eid, kind=kind, level=level, name=step.name, path=step.path, poly=step.poly,
                         at=_pt_or_none(step.position or step.near), start=_pt_or_none(step.start), end=_pt_or_none(step.end),
-                        height=step.height, thickness=step.thickness, width=size, depth=step.depth, elevation=step.elevation or 0.0)
+                        height=step.height, thickness=step.thickness, width=size, depth=step.depth,
+                        rotation=step.rotation, to_level=step.to_level, elevation=step.elevation or 0.0)
         except ValueError as exc:
             raise StepError(f"element '{eid}': {_fmt(exc)}") from exc
         d.elements = [x for x in d.elements if x.id != eid]

@@ -16,7 +16,7 @@ import time
 
 from agents import shapes
 from agents.brick_words import mentioned_bricks
-from agents.template_planner import brick_steps, parse_requirements, template_steps
+from agents.template_planner import brick_steps, parse_requirements, site_steps, template_steps
 from core.derive import DesignError, analyze
 from llm.base import LLMRequest, OnNote, OnText
 from schemas.bim import FixtureKind
@@ -227,7 +227,18 @@ class MockLLM:
                 return [{"step": "room", "id": room.id, "poly": poly}]
         if re.search(r"\badd (a |an )?(foot)?bridge\b", text):
             return shapes.bridge_steps(design)
-        m = re.search(r"\badd (a |an )?(carport|courtyard|patio|terrace|pergola|gazebo|garden wall|fence|deck)\b", text)
+        # Equipment and site objects: things that stand outside the rooms, on the site or on the roof.
+        if re.search(r"solar|photovoltaic|\bpv\b|water tank|cistern|rainwater|cycle (rack|park|store)|bike rack|"
+                     r"bicycle|trees?\b|landscap|planting|bench|forecourt|car ?park|parking (bays?|spaces?|lot)|"
+                     r"loading (bay|dock)|\byard\b|hardstanding", text):
+            site = site_steps(text, design)
+            if site:
+                return site
+        if re.search(r"\badd (a |an |some )?(fence|railings?|parapets?|balustrades?|handrails?)\b", text):
+            return shapes.fence_steps(design)
+        if re.search(r"\badd (a |an |some )?(external|outside|entrance|front) (steps?|stairs?)\b", text):
+            return shapes.external_steps(design)
+        m = re.search(r"\badd (a |an )?(carport|courtyard|patio|terrace|pergola|gazebo|garden wall|deck)\b", text)
         if m:
             what = m.group(2)
             top = design.levels[-1].id
@@ -239,7 +250,7 @@ class MockLLM:
                 return [{"step": "room", "name": "Terrace", "kind": "terrace", "level": top, "rect": shapes.beside(design, top, 4, 4)}]
             if what in ("pergola", "gazebo"):
                 return shapes.pergola_steps(design)
-            if what in ("garden wall", "fence"):
+            if what == "garden wall":
                 return shapes.garden_wall_steps(design)
             return shapes.deck_steps(design)
 

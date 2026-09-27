@@ -204,14 +204,23 @@ def rect_at(cx: float, cy: float, w: float, d: float, angle: float) -> list[Pt]:
     return out
 
 
-def place_piece(what: str, room: RoomDef, info: RoomInfo, side: str, near: Pt | None, at: float, w: float, d: float) -> tuple[Pt, float]:
-    """Where a w × d footprint goes inside a room — against the wall named by `near`/`side`, or in the
-    middle — and which way it then faces (degrees; its back to the wall). Shared by catalogue fixtures
-    and model-composed custom shapes so both are placed the same way."""
+def place_piece(what: str, room: RoomDef, info: RoomInfo, side: str, near: Pt | None, at: float, w: float, d: float,
+                position: Pt | None = None) -> tuple[Pt, float]:
+    """Where a w × d footprint goes inside a room — at `position` if one is given, else against the
+    wall named by `near`/`side`, else in the middle — and which way it then faces (degrees; its back
+    to the wall). Shared by catalogue fixtures and model-composed custom shapes so both are placed
+    the same way."""
     poly = info.polygon
     x0, y0, x1, y1 = room.box
     rw, rd = x1 - x0, y1 - y0
     too_small = DesignError(f"{what}: room '{room.id}' is too small ({rw:.1f} x {rd:.1f} m) for a {w:.1f} x {d:.1f} m piece")
+
+    if position is not None:
+        # An explicit point in the room: how a machine in the middle of a wide span is actually sited.
+        if not fits(poly, rect_at(position[0], position[1], w, d, 0.0)):
+            raise DesignError(f"{what}: a {w:.1f} x {d:.1f} m piece at {list(position)} does not fit inside room "
+                              f"'{room.id}' ({rw:.1f} x {rd:.1f} m at {[r2(x0), r2(y0)]})")
+        return (r2(position[0]), r2(position[1])), 0.0
 
     if near is None and side == "center":
         c = poly.centroid if poly.contains(poly.centroid) else poly.representative_point()

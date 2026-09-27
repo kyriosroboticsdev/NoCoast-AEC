@@ -23,6 +23,16 @@ KIND_SYNONYMS = {
     "living room": "living", "dining": "dining", "dining room": "dining", "office": "office", "study": "office", "hall": "hall",
     "hallway": "hall", "entry": "hall", "garage": "garage", "utility": "utility", "laundry": "utility", "storage": "storage",
     "pantry": "storage", "closet": "storage",
+    # non-domestic room types
+    "reception": "reception", "lobby": "hall", "meeting": "meeting", "meeting room": "meeting", "conference": "meeting",
+    "boardroom": "meeting", "classroom": "classroom", "lecture": "classroom", "teaching": "classroom",
+    "lab": "lab", "laboratory": "lab", "clinic": "clinic", "consulting": "clinic", "consulting room": "clinic",
+    "exam": "clinic", "ward": "ward", "retail": "retail", "shop": "retail", "showroom": "retail", "store": "retail",
+    "cafe": "cafe", "café": "cafe", "bar": "cafe", "restaurant": "cafe", "gym": "gym", "fitness": "gym",
+    "auditorium": "auditorium", "theatre": "auditorium", "theater": "auditorium", "hall (assembly)": "auditorium",
+    "workshop": "workshop", "warehouse": "warehouse", "depot": "warehouse", "plant": "plant", "plant room": "plant",
+    "server": "server", "server room": "server", "data centre": "server", "parking": "parking", "car park": "parking",
+    "barn": "barn", "stable": "stable",
 }
 FURNITURE_SYNONYMS = {
     "bed": ("bed", "double_bed", "bunk_bed"), "double bed": ("double_bed",), "bunk bed": ("bunk_bed",), "sofa": ("sofa",),
@@ -33,7 +43,25 @@ FURNITURE_SYNONYMS = {
     "dishwasher": ("dishwasher",), "washing machine": ("washing_machine",), "toilet": ("toilet",), "shower": ("shower",),
     "bathtub": ("bathtub",), "bath": ("bathtub",), "tub": ("bathtub",), "washbasin": ("washbasin",), "basin": ("washbasin",),
     "fireplace": ("fireplace",), "car": ("car",), "tv": ("tv_stand",), "bookshelf": ("bookshelf",), "shelf": ("bookshelf",),
-    "armchair": ("armchair",), "chair": ("chair", "armchair"), "dresser": ("dresser",),
+    "armchair": ("armchair",), "chair": ("chair", "armchair", "stool"), "dresser": ("dresser",),
+    # non-domestic equipment and site objects
+    "conference table": ("conference_table",), "boardroom table": ("conference_table",),
+    "reception desk": ("reception_desk",), "filing cabinet": ("filing_cabinet",), "locker": ("locker",),
+    "whiteboard": ("whiteboard",), "lectern": ("lectern",), "podium": ("lectern",), "printer": ("printer",),
+    "server rack": ("server_rack",), "rack": ("server_rack", "pallet_rack", "shelving_unit"),
+    "school desk": ("school_desk", "desk"), "shelving": ("shelving_unit", "pallet_rack"),
+    "display case": ("display_case",), "checkout": ("checkout_counter",), "till": ("checkout_counter",),
+    "cafe table": ("cafe_table",), "stool": ("stool",), "bar": ("bar_counter",),
+    "hospital bed": ("hospital_bed",), "exam table": ("exam_table",), "examination table": ("exam_table",),
+    "pallet rack": ("pallet_rack",), "racking": ("pallet_rack",), "workbench": ("workbench",),
+    "machine": ("machine",), "crate": ("crate",), "conveyor": ("conveyor",),
+    "treadmill": ("treadmill",), "weight bench": ("weight_bench",), "seating": ("seating_row",),
+    "seats": ("seating_row",), "solar panel": ("solar_panel",), "solar": ("solar_panel",),
+    "water tank": ("water_tank",), "tank": ("water_tank",), "hvac": ("hvac_unit",), "air handling unit": ("hvac_unit",),
+    "boiler": ("boiler",), "bench": ("bench", "weight_bench", "workbench"), "planter": ("planter",),
+    "bollard": ("bollard",), "bike rack": ("bicycle_rack",), "bicycle rack": ("bicycle_rack",),
+    "lamp post": ("lamp_post",), "street light": ("lamp_post",), "picnic table": ("picnic_table",),
+    "dumpster": ("dumpster",), "bin": ("dumpster",),
 }
 
 
@@ -212,7 +240,8 @@ def _check_one(design: Design, d: Derived, req: Requirement) -> CheckResult:
 
     if k == "roof":
         want = (req.item or "").lower()
-        want = {"pitched": "gable", "gabled": "gable", "hipped": "hip"}.get(want, want)
+        want = {"pitched": "gable", "gabled": "gable", "hipped": "hip", "mono": "shed", "monopitch": "shed",
+                "mono-pitch": "shed", "skillion": "shed", "lean-to": "shed", "sloping": "shed"}.get(want, want)
         return CheckResult(req, "met" if design.roof.kind == want else "unmet", f"roof is {design.roof.kind}, wanted {want}")
 
     if k == "feature":
@@ -241,13 +270,32 @@ def _check_one(design: Design, d: Derived, req: Requirement) -> CheckResult:
                 return CheckResult(req, "met", f"{len(decks)} deck(s) on {len(supports)} pier(s)/girder(s)" if decks and supports
                                    else f"free element '{named[0].name}'")
             return CheckResult(req, "unmet", "no deck slab on piers or girders")
-        if "rail" in item or "parapet" in item or "balustrade" in item:
-            rails = [e for e in design.elements if e.kind == "wall" and e.height and e.height <= 1.5]
-            named = [e for e in design.elements if e.name and any(w in e.name.lower() for w in ("rail", "parapet", "balustrade"))]
+        if "rail" in item or "parapet" in item or "balustrade" in item or "fence" in item:
+            rails = [e for e in design.elements if e.kind == "railing"
+                     or (e.kind == "wall" and e.height and e.height <= 1.5)]
+            named = [e for e in design.elements if e.name and any(w in e.name.lower() for w in ("rail", "parapet", "balustrade", "fence"))]
             unroofed = [r for r in design.rooms if not r.roofed]
             if rails or named or unroofed or design.balconies:
-                return CheckResult(req, "met", f"{len(rails or named)} parapet wall(s)" if rails or named else "railings on open edges")
+                return CheckResult(req, "met", f"{len(rails or named)} railing/parapet element(s)" if rails or named else "railings on open edges")
             return CheckResult(req, "unmet", "no parapet or railing")
+        # Site equipment counts whether it came from the fixture catalogue or from a library brick.
+        for words, what, brick in ((("solar", "photovoltaic", "pv"), "solar_panel", "solar_pv_array"),
+                                   (("water tank", "cistern"), "water_tank", "rainwater_tank"),
+                                   (("cycle", "bicycle", "bike"), "bicycle_rack", "bike_rack"),
+                                   (("landscap", "planting"), None, "tree")):
+            if any(w in item for w in words):
+                have = [f for f in design.fixtures if what and f.kind == what] + [b for b in design.bricks if b.brick == brick]
+                label = (what or brick).replace("_", " ")
+                return CheckResult(req, "met" if have else "unmet", f"{len(have)} {label}(s)" if have else f"no {label}")
+        if "car park" in item or "parking" in item:
+            rooms = [r for r in design.rooms if r.kind in ("parking", "garage", "carport")]
+            cars = [f for f in design.fixtures if f.kind == "car"]
+            if rooms or cars:
+                return CheckResult(req, "met", f"{len(rooms)} parking space(s), {len(cars)} car(s)")
+            return CheckResult(req, "unmet", "no parking room or bays")
+        if "mezzanine" in item or "gallery" in item:
+            return CheckResult(req, "met" if design.storeys() > 1 else "unmet",
+                               f"{design.storeys()} storey(s)" if design.storeys() > 1 else "only one storey")
         if "curved" in item or "round" in item or "arc" in item:
             arcs = [r for r in design.rooms if r.poly and any(e.through for e in r.poly)] + [e for e in design.elements if e.kind == "wall" and e.path and any(x.through for x in e.path)]
             return CheckResult(req, "met" if arcs else "unmet", f"{len(arcs)} curved wall(s)" if arcs else "no curved walls")

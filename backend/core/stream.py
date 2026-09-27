@@ -248,7 +248,7 @@ class StepStream:
                                      "elements": len(derived.spec.elements)})
         with self._cond:
             self._dirty = candidate
-            self._cond.notify()
+            self._cond.notify_all()
         return True
 
     def _reject(self, index: int, raw: dict, error: str) -> None:
@@ -263,7 +263,7 @@ class StepStream:
         """Render the last pending design, then stop. Called before the final compile so IfcOpenShell is not used from two threads."""
         with self._cond:
             self._closed = True
-            self._cond.notify()
+            self._cond.notify_all()  # both the preview worker and the heartbeat wait here
         self._thread.join(timeout=120)
 
     # --- consumer side (worker thread) ------------------------------------

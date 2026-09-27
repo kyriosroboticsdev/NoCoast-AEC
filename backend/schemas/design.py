@@ -32,11 +32,22 @@ from bricks.place import Placement
 from schemas.bim import FixtureKind, RoofShape, WallMaterial
 
 Side = Literal["N", "S", "E", "W"]
-RoomKind = Literal["living", "kitchen", "dining", "office", "bedroom", "bathroom", "hall", "garage", "utility",
-                   "storage", "courtyard", "terrace", "carport", "pergola", "other"]
-DoorKind = Literal["single", "double", "sliding", "french", "garage"]
-WindowKind = Literal["standard", "large", "floor", "small"]
-FreeKind = Literal["wall", "slab", "roof", "column", "beam"]
+RoomKind = Literal[
+    # dwelling
+    "living", "kitchen", "dining", "office", "bedroom", "bathroom", "hall", "garage", "utility", "storage",
+    # outdoor / unenclosed
+    "courtyard", "terrace", "carport", "pergola",
+    # workplace, education, health
+    "reception", "meeting", "classroom", "lab", "clinic", "ward",
+    # retail, hospitality, assembly
+    "retail", "cafe", "gym", "auditorium",
+    # industry, agriculture, infrastructure
+    "workshop", "warehouse", "plant", "server", "parking", "barn", "stable",
+    "other",
+]
+DoorKind = Literal["single", "double", "sliding", "french", "garage", "revolving", "roller"]
+WindowKind = Literal["standard", "large", "floor", "small", "ribbon", "clerestory"]
+FreeKind = Literal["wall", "slab", "roof", "column", "beam", "railing", "stair"]
 Rect = tuple[float, float, float, float]
 Pt = tuple[float, float]
 
@@ -44,13 +55,36 @@ MAX_STOREYS = 40
 ARC_SEGMENT = 0.25       # chord length used to facet arcs
 UNROOFED_KINDS = ("courtyard", "terrace")
 UNWALLED_KINDS = ("carport", "pergola")
+# Matched in order against a room's name, so put the specific words before the generic ones.
 KIND_WORDS: list[tuple[str, RoomKind]] = [
-    (r"living|lounge|family|sitting|great room|salon", "living"), (r"kitchen", "kitchen"), (r"dining|breakfast", "dining"),
-    (r"office|study|studio|library", "office"), (r"bed|master|guest|nursery|suite", "bedroom"),
-    (r"bath|ensuite|en-suite|wc|toilet|powder|shower", "bathroom"), (r"hall|entry|foyer|corridor|landing|vestibule|lobby", "hall"),
-    (r"carport", "carport"), (r"pergola|loggia|gazebo", "pergola"), (r"courtyard|patio|atrium", "courtyard"),
-    (r"terrace|roof deck|deck|veranda", "terrace"),
-    (r"garage", "garage"), (r"laundry|utility|mud", "utility"), (r"stor|closet|pantry|walk-in", "storage"),
+    (r"living|lounge|family|sitting|great room|salon", "living"), (r"kitchen|galley|servery", "kitchen"),
+    (r"dining|breakfast|canteen|refectory|mess", "dining"),
+    (r"meeting|conference|board ?room|huddle|seminar", "meeting"),
+    (r"reception|front desk|welcome", "reception"),
+    (r"classroom|lecture|teaching|seminar room|nursery class", "classroom"),
+    (r"\blab\b|laboratory|research|workroom", "lab"),
+    (r"consult|exam(ination)? room|treatment|surgery|clinic|triage", "clinic"),
+    (r"\bward\b|patient room|recovery|ic ?u", "ward"),
+    (r"retail|shop|store ?front|showroom|sales floor|boutique|market", "retail"),
+    (r"caf[eé]|coffee|bar\b|bistro|restaurant|lounge bar|taproom", "cafe"),
+    (r"gym|fitness|training room|studio ?\(?fitness", "gym"),
+    (r"auditorium|theatre|theater|assembly hall|cinema|chapel|sanctuary|concert", "auditorium"),
+    (r"workshop|maker ?space|fabrication|repair bay|machine shop", "workshop"),
+    (r"warehouse|depot|distribution|logistics|hangar|silo floor", "warehouse"),
+    (r"plant ?room|mechanical room|boiler ?room|switch ?room|riser room|hvac", "plant"),
+    (r"server|data ?(centre|center)|comms ?room|it ?room|rack room", "server"),
+    (r"parking|car ?park|parking deck|parking level|garage deck", "parking"),
+    (r"\bbarn\b|hay ?loft|granary|milking", "barn"),
+    (r"stable|stall block|loose box|kennel|coop", "stable"),
+    (r"office|study|library|admin|back ?office", "office"),
+    (r"studio", "office"),
+    (r"bed|master|guest|nursery|suite|dorm", "bedroom"),
+    (r"bath|ensuite|en-suite|wc|toilet|powder|shower|washroom|restroom|changing|locker", "bathroom"),
+    (r"hall|entry|foyer|corridor|landing|vestibule|lobby|atrium walk|concourse", "hall"),
+    (r"carport", "carport"), (r"pergola|loggia|gazebo|canopy", "pergola"), (r"courtyard|patio|atrium|light ?well", "courtyard"),
+    (r"terrace|roof deck|deck|veranda|balcony deck", "terrace"),
+    (r"garage", "garage"), (r"laundry|utility|mud|cleaner", "utility"),
+    (r"stor|stock ?room|closet|pantry|walk-in|archive|cold room", "storage"),
 ]
 
 
@@ -367,8 +401,17 @@ class StairDef(BaseModel):
 
 
 class FixtureDef(BaseModel):
+    """A catalogue piece — furniture, an appliance, a machine, a bench, a solar panel.
+
+    Normally it belongs to a room and is placed against one of its walls. With `room` left out it is
+    free-standing: `level` and `position` put it anywhere, inside the building or out on the site, which
+    is how equipment yards, roof plant, street furniture and car parks are modelled."""
+
     id: str
-    room: str
+    room: Optional[str] = Field(None, description="Room it stands in; null = free-standing, then `level` and `position` are used")
+    level: Optional[str] = Field(None, description="Free-standing only: the storey it sits on (default L1)")
+    position: Optional[Pt] = Field(None, description="Free-standing only: [x, y] of the footprint centre")
+    elevation: float = Field(0.0, ge=0, description="Free-standing only: metres above the level (plant on a roof deck)")
     kind: FixtureKind
     side: Literal["N", "S", "E", "W", "center"] = Field("center", description="Against which wall (back to the wall)")
     near: Optional[Pt] = Field(None, description="Against the wall nearest this point")
@@ -378,10 +421,16 @@ class FixtureDef(BaseModel):
     depth: Optional[float] = Field(None, gt=0)
     height: Optional[float] = Field(None, gt=0)
 
-    @field_validator("near", mode="before")
+    @field_validator("near", "position", mode="before")
     @classmethod
     def _near(cls, v):
         return None if v is None else _pt(v)
+
+    @model_validator(mode="after")
+    def _placement(self) -> "FixtureDef":
+        if not self.room and self.position is None:
+            raise ValueError("a free-standing fixture (no room) needs `position` [x, y]")
+        return self
 
 
 class ShapePartDef(BaseModel):
@@ -402,7 +451,10 @@ class CustomShapeDef(BaseModel):
     fixed catalog doesn't cover — a round table, an L-shaped bench, a plinth."""
 
     id: str
-    room: str
+    room: Optional[str] = Field(None, description="Room it stands in; null = free-standing, then `level` and `position` are used")
+    level: Optional[str] = None
+    position: Optional[Pt] = None
+    elevation: float = Field(0.0, ge=0)
     name: str = "Custom object"
     side: Literal["N", "S", "E", "W", "center"] = "center"
     near: Optional[Pt] = None
@@ -410,10 +462,16 @@ class CustomShapeDef(BaseModel):
     rotation: Optional[float] = None
     parts: list[ShapePartDef] = Field(min_length=1, max_length=12)
 
-    @field_validator("near", mode="before")
+    @field_validator("near", "position", mode="before")
     @classmethod
     def _near(cls, v):
         return None if v is None else _pt(v)
+
+    @model_validator(mode="after")
+    def _placement(self) -> "CustomShapeDef":
+        if not self.room and self.position is None:
+            raise ValueError("a free-standing custom shape (no room) needs `position` [x, y]")
+        return self
 
 
 class BrickDef(Placement):
@@ -449,21 +507,24 @@ class ColumnDef(BaseModel):
 
 class FreeDef(BaseModel):
     """A free-standing element outside the room system: a garden wall, a deck, a pergola roof, a
-    pier. Unchecked by design except for `feature` requirements matched on its name."""
+    pier, a fence, an external flight of steps. Unchecked by design except for `feature`
+    requirements matched on its name."""
 
     id: str
     kind: FreeKind
     level: str = "L1"
     name: Optional[str] = None
-    path: Optional[list[Edge]] = Field(None, description="wall: polyline of vertices (arcs allowed), open-ended")
+    path: Optional[list[Edge]] = Field(None, description="wall/railing: polyline of vertices (arcs allowed), open-ended")
     poly: Optional[list[Edge]] = Field(None, description="slab/roof: outline")
-    at: Optional[Pt] = Field(None, description="column: position")
+    at: Optional[Pt] = Field(None, description="column/stair: position (a stair ascends from here)")
     start: Optional[Pt] = Field(None, description="beam: from")
     end: Optional[Pt] = Field(None, description="beam: to")
-    height: Optional[float] = Field(None, gt=0, description="wall/column: default the level height")
-    thickness: Optional[float] = Field(None, gt=0, description="wall/slab/roof")
-    width: Optional[float] = Field(None, gt=0, description="column size / beam width")
+    height: Optional[float] = Field(None, gt=0, description="wall/column: default the level height; railing: handrail height; stair: total rise")
+    thickness: Optional[float] = Field(None, gt=0, description="wall/slab/roof/railing")
+    width: Optional[float] = Field(None, gt=0, description="column size / beam width / stair width")
     depth: Optional[float] = Field(None, gt=0, description="beam depth")
+    rotation: Optional[float] = Field(None, description="stair: ascent direction in degrees (0 = east, 90 = north)")
+    to_level: Optional[str] = Field(None, description="stair: the level it arrives at (its slab gets the opening)")
     elevation: float = Field(0.0, ge=0, description="metres above the level (a bridge deck on piers, a raised walkway)")
 
     @field_validator("at", "start", "end", mode="before")
@@ -474,9 +535,12 @@ class FreeDef(BaseModel):
     @model_validator(mode="after")
     def _shape(self) -> "FreeDef":
         k = self.kind
-        if k == "wall":
+        if k in ("wall", "railing"):
             if not self.path or len(self.path) < 2:
-                raise ValueError("a free wall needs `path`: at least two points")
+                raise ValueError(f"a free {k} needs `path`: at least two points")
+        elif k == "stair":
+            if self.at is None:
+                raise ValueError("a free stair needs `at`: [x, y], the foot of the flight")
         elif k in ("slab", "roof"):
             if not self.poly or len(self.poly) < 3:
                 raise ValueError(f"a free {k} needs `poly`: at least three points")

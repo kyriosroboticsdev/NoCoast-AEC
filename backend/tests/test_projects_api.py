@@ -66,8 +66,8 @@ def test_design_then_edit_keeps_guids():
     assert "L1-space-garage" in g1 and "L1-space-garage" not in g2 and "car-garage" not in g2
     assert g1["L1-wall-hall-W"] == g2["L1-wall-hall-W"] and g1["L2-floor"] == g2["L2-floor"]
 
-    v3, evs = prompt(pid, "add a window to the kitchen on the west")
-    assert v3["mode"] == "edit" and any("Window to the west elevation of the kitchen" in e["message"]
+    v3, evs = prompt(pid, "add a window to the kitchen on the north")
+    assert v3["mode"] == "edit" and any("Window to the north elevation of the kitchen" in e["message"]
                                         for e in evs if e["stage"] == "step")
     assert v3["summary"]["counts"]["IfcWindow"] == v2["summary"]["counts"]["IfcWindow"] + 1
 
