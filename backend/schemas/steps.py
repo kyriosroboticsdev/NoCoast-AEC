@@ -254,6 +254,15 @@ def _literal(step: Step, value, allowed: tuple, what: str):
     return value
 
 
+def _fixture_kind(raw: str | None) -> str:
+    """"Office chair" → chair, "teacher_desk" → desk: a qualified kind falls back to the catalogue kind it ends in."""
+    norm = (raw or "").lower().replace(" ", "_").replace("-", "_")
+    if norm in FixtureKind.__args__:
+        return norm
+    tails = [k for k in FixtureKind.__args__ if norm.endswith("_" + k)]
+    return max(tails, key=len) if tails else norm
+
+
 def _pt_or_none(v):
     return None if v is None else (float(v[0]), float(v[1]))
 
@@ -602,7 +611,7 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
         return d, f"stair {sid}: in {room.id} along " + (f"side {side}" if side else f"the wall near {step.near}")
 
     if k == "furniture":
-        kind = _literal(step, (step.kind or "").lower().replace(" ", "_").replace("-", "_"), FixtureKind.__args__, "furniture kind")
+        kind = _literal(step, _fixture_kind(step.kind), FixtureKind.__args__, "furniture kind")
         if not step.room:  # free-standing: site furniture, roof plant, racking in an open yard
             level = step.level or "L1"
             if d.level(level) is None:
@@ -682,7 +691,9 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
 
     if k == "roof":
         kind = _literal(step, step.kind or "flat", RoofShape.__args__, "roof kind")
-        d.roof = RoofDef(kind=kind, pitch=step.pitch or d.roof.pitch, overhang=step.overhang if step.overhang is not None else d.roof.overhang)
+        # A flat roof's pitch is only its falls, so it never decides whether the roof can be built.
+        pitch = d.roof.pitch if kind == "flat" or not step.pitch else min(max(step.pitch, 5.0), 60.0)
+        d.roof = RoofDef(kind=kind, pitch=pitch, overhang=step.overhang if step.overhang is not None else d.roof.overhang)
         return d, f"roof: {kind}" + (f", pitch {d.roof.pitch:g}°" if kind != "flat" else "")
 
     if k == "column":

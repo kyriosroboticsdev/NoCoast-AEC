@@ -15,6 +15,7 @@ The stream is deliberately chatty so the UI never looks stuck:
     draft      the step being written right now, from the half-finished JSON object
     step       a complete step, applied (or rejected) — carries the model's rationale
     stream     throughput (chars, chars/s, steps) a few times a second
+    think      the model's reasoning before and between steps (ThoughtStream)
     partial    a compiled preview IFC of everything accepted so far
 
 Cadence is tunable with BIM_STREAM_EVERY / BIM_PREVIEW_DEBOUNCE / BIM_HEARTBEAT_EVERY
@@ -24,6 +25,7 @@ Cadence is tunable with BIM_STREAM_EVERY / BIM_PREVIEW_DEBOUNCE / BIM_HEARTBEAT_
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 import uuid
@@ -62,6 +64,7 @@ PREVIEW_DEBOUNCE = _seconds("BIM_PREVIEW_DEBOUNCE", 0.15)  # seconds a preview w
 DRAFT_EVERY = _seconds("BIM_DRAFT_EVERY", 0.15)            # seconds between "drafting …" events for the step being written
 STREAM_TEXT_CAP = 30000                        # chars of live reply text sent with each stream event
 HEARTBEAT_EVERY = _seconds("BIM_HEARTBEAT_EVERY", 1.0)     # seconds between "still working" events while the reply is silent
+THINK_EVERY = _seconds("BIM_THINK_EVERY", 0.25)            # seconds between "thinking …" events for the paragraph being written
 
 
 def prune_partials() -> None:
@@ -161,6 +164,10 @@ class StepStream:
                           {"chars": self._chars, "seconds": round(waited, 1), "steps": self.applied, "waiting": True})
 
     # --- producer side (LLM stream thread) ---------------------------------
+
+    def touch(self) -> None:
+        """The model is thinking: that is activity, so the heartbeat stays quiet."""
+        self._last_beat = time.time()
 
     def feed(self, text: str) -> None:
         now = time.time()
@@ -312,6 +319,70 @@ class StepStream:
                   {"ifc_url": f"/models/partial/{name}", "preview": self.count, "change": change,
                    "compile_ms": round(self._last_compile * 1000), "steps": self.first_index + self.applied,
                    "checked": len(changed), "gfa": gross_area(design), **desc})
+
+
+_HEADING = re.compile(r"^\*\*(.+?)\*\*\s*", re.S)
+
+
+def _sentence(text: str, last: bool = False) -> str:
+    parts = [p for p in re.split(r"(?<=[.!?])\s+", " ".join(text.split())) if p]
+    if not parts:
+        return ""
+    s = parts[-1] if last else parts[0]
+    return s if len(s) <= 180 else s[:177].rstrip() + "…"
+
+
+class ThoughtStream:
+    """The model's reasoning, narrated while it streams (Claude's summarised thinking, or the
+    `<think>` block of an open-weight model).
+
+    Each finished paragraph becomes a `think` event with its heading when the model wrote one
+    ("**Zoning the ground floor**") and the paragraph as text; the paragraph being written is sent
+    as `live` a few times a second so the UI can show what the model is weighing right now."""
+
+    def __init__(self, emit: Emit, purpose: str, on_activity: Callable[[], None] | None = None):
+        self.emit = emit
+        self.purpose = purpose              # the request's schema name: requirements, research, build, look …
+        self.on_activity = on_activity
+        self.text = ""
+        self.done = 0                       # paragraphs already sent
+        self._title = ""                    # a heading waiting for its paragraph
+        self._last_live = 0.0
+
+    def _paragraph(self, paragraph: str) -> None:
+        m = _HEADING.match(paragraph.strip())
+        title = m.group(1).strip() if m else ""
+        text = paragraph.strip()[m.end():].strip() if m else paragraph.strip()
+        if title and not text:              # a heading on its own line titles the paragraph after it
+            self._title = title
+            return
+        title, self._title = title or self._title, ""
+        if not (title or text):
+            return
+        self.emit("think", title or _sentence(text), {"purpose": self.purpose, "title": title, "text": text,
+                                                       "index": self.done})
+
+    def feed(self, text: str) -> None:
+        if len(text) < len(self.text):      # a retried request thinks again from the start
+            self.done = 0
+        self.text = text
+        if self.on_activity:
+            self.on_activity()
+        parts = re.split(r"\n\s*\n", text)
+        for paragraph in parts[self.done:-1]:
+            self._paragraph(paragraph)
+            self.done += 1
+        now = time.time()
+        if now - self._last_live >= THINK_EVERY and parts[-1].strip():
+            self._last_live = now
+            live = _HEADING.sub("", parts[-1].strip()) or parts[-1].strip().strip("*")
+            self.emit("think", _sentence(live, last=True), {"purpose": self.purpose, "live": _sentence(live, last=True)})
+
+    def flush(self) -> None:
+        parts = re.split(r"\n\s*\n", self.text)
+        for paragraph in parts[self.done:]:
+            self._paragraph(paragraph)
+            self.done += 1
 
 
 def steps_json(steps: list[dict]) -> str:

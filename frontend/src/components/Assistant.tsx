@@ -1,6 +1,6 @@
 import { IfcTurnCard } from "@nocoast/ifc-viewer";
 import {
-  ChevronDown, ChevronUp, Code, Compass, Database, Download, Eye, ListChecks, Package, Paperclip, RotateCcw, Sparkles, X,
+  ChevronDown, ChevronUp, Code, Compass, Database, Download, Eye, FileText, ListChecks, Package, Paperclip, RotateCcw, Sparkles, X,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { backendUrl, exportName, fetchExport, getSpec, type ExportFormat, type Version } from "../api/client";
@@ -10,6 +10,7 @@ import { PANEL_RANGE } from "../state/layout";
 import type { Message, Session } from "../state/sessions";
 import { turnId } from "../turns";
 import { Composer } from "./Composer";
+import { DeliverablesSummary, type DeliverableTab } from "./Deliverables";
 import { Reasoning } from "./Reasoning";
 import { Resizer } from "./Resizer";
 
@@ -28,6 +29,8 @@ interface Props {
   viewing: string | null;
   onView: (v: Version) => void;
   onRestore: (n: number) => void;
+  /** Open the drawings / code review / cost view of the version in the workspace. */
+  onOpenTab: (tab: DeliverableTab) => void;
   /** Panel width and turn-card height, both dragged by the user (state/layout.ts). */
   width: number;
   onResize: (width: number) => void;
@@ -38,7 +41,7 @@ interface Props {
 }
 
 export function Assistant({
-  session, busy, viewing, onView, onRestore,
+  session, busy, viewing, onView, onRestore, onOpenTab,
   width, onResize, onResetWidth, cardHeight, onResizeCard, onResetCard,
   ...composer
 }: Props) {
@@ -64,7 +67,7 @@ export function Assistant({
         {session.messages.map((m) => (m.role === "user" ? <UserBubble key={m.id} m={m} /> : (
           <AssistantMessage key={m.id} m={m} head={head} busy={busy} latest={m.id === latest}
             viewing={viewing === `${session.id}:v${m.run?.version?.number}.ifc`} onView={onView} onRestore={onRestore}
-            cardHeight={cardHeight} onResizeCard={onResizeCard} onResetCard={onResetCard} />
+            onOpenTab={onOpenTab} cardHeight={cardHeight} onResizeCard={onResizeCard} onResetCard={onResetCard} />
         )))}
       </div>
       {!atBottom && (
@@ -99,9 +102,9 @@ function UserBubble({ m }: { m: Message }) {
   );
 }
 
-function AssistantMessage({ m, head, busy, latest, viewing, onView, onRestore, cardHeight, onResizeCard, onResetCard }: {
+function AssistantMessage({ m, head, busy, latest, viewing, onView, onRestore, onOpenTab, cardHeight, onResizeCard, onResetCard }: {
   m: Message; head: number | null; busy: boolean; latest: boolean; viewing: boolean;
-  onView: (v: Version) => void; onRestore: (n: number) => void;
+  onView: (v: Version) => void; onRestore: (n: number) => void; onOpenTab: (tab: DeliverableTab) => void;
   cardHeight: number; onResizeCard: (height: number) => void; onResetCard: () => void;
 }) {
   const run = m.run;
@@ -144,6 +147,8 @@ function AssistantMessage({ m, head, busy, latest, viewing, onView, onRestore, c
             </span>
             <span className="chip">{v.summary.elements} elements</span>
           </div>
+          <DeliverablesSummary version={{ project: v.project_id, number: v.number }}
+            onOpen={(tab) => { if (!viewing) onView(v); onOpenTab(tab); }} />
           <table className="grid">
             <thead><tr><th>IFC class</th><th className="num">Count</th></tr></thead>
             <tbody>
@@ -199,7 +204,10 @@ function VersionExport({ v }: { v: Version }) {
       <button onClick={() => save("ifc")} disabled={busy} title={`Download ${v.project_id}-v${v.number}.ifc`}>
         <Download size={13} /> IFC
       </button>
-      <button onClick={() => save("zip")} disabled={busy} title="IFC, spec, design, schedule and checks as one zip">
+      <button onClick={() => save("drawings")} disabled={busy} title="Drawing set: plans, elevations, section, schedules (PDF)">
+        <FileText size={13} /> PDF
+      </button>
+      <button onClick={() => save("zip")} disabled={busy} title="IFC, drawings, code review, BCF, cost plan, spec and schedules as one zip">
         <Package size={13} /> Bundle
       </button>
     </>

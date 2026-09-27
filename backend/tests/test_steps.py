@@ -46,6 +46,16 @@ def test_rejections_are_explained():
         run(d, {"step": "remove", "id": "nope"})
 
 
+def test_qualified_furniture_and_out_of_range_roof_pitch_still_build():
+    d, _ = run(Design(), {"step": "room", "name": "Office", "rect": [0, 0, 4, 4]},
+               {"step": "furniture", "room": "office", "kind": "office chair"},
+               {"step": "furniture", "room": "office", "kind": "teacher_desk"},
+               {"step": "roof", "kind": "flat", "pitch": 2})
+    assert [f.kind for f in d.fixtures] == ["chair", "desk"] and d.roof.kind == "flat"
+    d, _ = run(d, {"step": "roof", "kind": "gable", "pitch": 75})
+    assert d.roof.pitch == 60
+
+
 def test_levels_in_order_and_updates():
     d, _ = run(Design(), {"step": "level", "id": "L1", "height": 3.2}, {"step": "level", "id": 2, "name": "Upper"})
     assert [l.id for l in d.levels] == ["L1", "L2"] and d.levels[0].height == 3.2 and d.levels[1].display == "Upper"
