@@ -36,7 +36,7 @@ from solver.layout import place_rooms
 EXT_T, INT_T = 0.3, 0.12
 MARGIN = 0.15          # openings keep this far from wall ends
 COLUMN_EVERY = 4.0     # open edges get a column at least this often
-DOOR_SIZES = {"single": (0.9, 2.1), "double": (1.6, 2.1), "sliding": (1.8, 2.1), "french": (1.6, 2.1),
+DOOR_SIZES = {"single": (0.915, 2.1), "double": (1.83, 2.1), "sliding": (1.83, 2.1), "french": (1.83, 2.1),
               "garage": (2.4, 2.2), "revolving": (2.2, 2.4), "roller": (4.0, 4.2)}
 WINDOW_SIZES = {"standard": (1.2, 1.2, 0.9), "large": (2.0, 1.6, 0.6), "floor": (2.0, 2.2, 0.1), "small": (0.6, 0.6, 1.5),
                 "ribbon": (6.0, 1.4, 1.0), "clerestory": (3.0, 0.9, 2.6)}
