@@ -25,7 +25,7 @@ import config
 from core.checks import CheckResult, check, score, unmet_lines
 from core.context import describe_design, describe_focus
 from core.derive import DesignError, analyze, derive
-from core.guids import GuidMap, prune_guids
+from core.guids import GuidMap, prune_spec_guids
 from core.ops import OpError, apply_ops
 from core.stream import StepStream
 from ifc.builder import GeometryError, compile_ifc, summarize
@@ -163,7 +163,7 @@ def _persist(store: Store, project_id: str, spec: BuildingSpec, guids: GuidMap, 
              model: ifcopenshell.file | None = None, checks: list[dict] | None = None) -> VersionData:
     if model is None:
         model, guids = compile_ifc(spec, guids, design.model_dump_json() if design else None)
-    guids = prune_guids(spec, guids)
+    guids = prune_spec_guids(spec, guids)
     head = store.head(project_id)
     number = head.number + 1 if head else 1
     path = store.ifc_path(project_id, number)

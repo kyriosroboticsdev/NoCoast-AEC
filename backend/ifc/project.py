@@ -18,7 +18,7 @@ import ifcopenshell.api.spatial
 import ifcopenshell.api.style
 import ifcopenshell.api.unit
 
-from core.guids import GuidMap, ensure_guids, key_for_element, key_for_level
+from core.guids import GuidMap, ensure_spec_guids, key_for_element, key_for_level
 from schemas.bim import BuildingSpec
 
 SPEC_PSET = "NoCoast_Spec"      # carries the element's spec JSON so our own files can be lifted back losslessly
@@ -105,7 +105,7 @@ def add_spec_pset(model: ifcopenshell.file, product, payload: str) -> None:
 
 
 def create_project(spec: BuildingSpec, guids: GuidMap | None = None, design_json: str | None = None) -> BuildContext:
-    guids = ensure_guids(spec, guids)
+    guids = ensure_spec_guids(spec, guids)
     model = ifcopenshell.api.project.create_file(version="IFC4")
     project = ifcopenshell.api.root.create_entity(model, ifc_class="IfcProject", name=spec.building.name)
     project.GlobalId = guids["project"]

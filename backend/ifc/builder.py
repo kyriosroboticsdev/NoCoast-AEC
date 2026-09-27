@@ -8,7 +8,7 @@ from pathlib import Path
 import ifcopenshell
 import ifcopenshell.geom
 
-from core.guids import GuidMap, ensure_guids
+from core.guids import GuidMap, ensure_spec_guids
 from ifc.fixtures import add_beam, add_custom, add_fixture, add_railing
 from ifc.mep import add_light, add_outlet, add_panel, add_pipe, add_wire
 from ifc.openings import add_opening
@@ -88,7 +88,7 @@ def compile_ifc(spec: BuildingSpec, guids: GuidMap | None = None, design_json: s
                 check: set[str] | None = None) -> tuple[ifcopenshell.file, GuidMap]:
     """Build and geometry-check. Returns the model and the (possibly extended) guid map.
     `check` limits the geometry check to those element ids (None = everything)."""
-    guids = ensure_guids(spec, guids)
+    guids = ensure_spec_guids(spec, guids)
     ctx = build_ifc(spec, guids, design_json)
     failures = check_geometry(ctx.model, check, ctx.products)
     if failures:

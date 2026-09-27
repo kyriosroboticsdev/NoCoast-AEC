@@ -3,7 +3,7 @@
 import ifcopenshell
 
 from agents.template_planner import TemplatePlanner
-from core.guids import ensure_guids, key_for_element, prune_guids
+from core.guids import ensure_spec_guids, key_for_element, prune_spec_guids
 from core.ops import apply_ops
 from ifc.builder import compile_ifc, write_ifc
 from ifc.lifter import lift
@@ -25,7 +25,7 @@ def test_lift_roundtrip(tmp_path):
     assert guids[key_for_element("L1-wall-hall-W")] == wall.GlobalId
     assert guids["building"] == model.by_type("IfcBuilding")[0].GlobalId
     # Every product got a spec pset and its GlobalId is in the map (incl. the stair well opening).
-    assert set(guids) == set(ensure_guids(spec, {}))
+    assert set(guids) == set(ensure_spec_guids(spec, {}))
     assert {e.type for e in spec.elements} >= {"wall", "slab", "space", "roof", "door", "window", "stair", "fixture"}
 
 
@@ -34,7 +34,7 @@ def test_guids_survive_edits(tmp_path):
     model1, guids1 = compile_ifc(spec, {})
     spec2, _ = apply_ops(spec, [ModifyElement(id="L1-wall-hall-S", set={"thickness": 0.4}), DeleteElement(id="win-kitchen-W")])
     model2, guids2 = compile_ifc(spec2, guids1)
-    guids2 = prune_guids(spec2, guids2)
+    guids2 = prune_spec_guids(spec2, guids2)
 
     def gid(model, tag):
         return next(p.GlobalId for p in model.by_type("IfcElement") if p.Tag == tag)
