@@ -104,7 +104,10 @@ DESIGN STANDARDS the finished model is reviewed against (IBC 2021, or IRC 2021 f
   and non-domestic buildings need one toilet room at least 1.6 m in both directions (ADA turning circle)
 - exits: more than 49 occupants (about 700 m² of offices, 70 m² of seated assembly) needs two exterior doors, far
   apart; each storey above 29 occupants needs two stairs. Main entrances of non-domestic buildings are "double"
-- a straight flight needs a straight wall about 5.2 m long for a 3 m storey (riser ≤ 178 mm, going 280 mm)
+- a straight flight needs a straight wall about 5.2 m long for a 3 m storey (riser ≤ 178 mm, going 280 mm), and
+  is 1,118 mm clear (give it "width":1.2) once the storeys above it hold 50 or more occupants
+- exit doors: every leaf clears 813 mm, and all exits together clear 5.1 mm per occupant (a 1.8 m pair clears
+  1.7 m, enough for about 330 people)
 
 Coordinates: metres, x east, y north, plan view. Most rooms are rectangles rect=[x, y, width, depth] with (x, y)
 the south-west corner. Any other shape is a polygon poly=[[x,y], [x,y], …] listed counter-clockwise; an edge is
@@ -139,7 +142,8 @@ Steps (fields not listed are left null):
         kind: single|double|sliding|french|garage|roller (4 m industrial shutter)|revolving (lobby entrance)
   {"step":"window","room","side"|"near":[x,y],"at":0..1,"kind"}      exterior walls only
         kind: standard|large|floor|small|ribbon (6 m horizontal band)|clerestory (high strip, tall spaces)
-  {"step":"stair","room","side"|"near"}                               straight flight along that wall, up to the level above
+  {"step":"stair","room","side"|"near","width","to_level"}           straight flight along that wall, up to the level above
+        width: clear metres (default 1.0); 1.2 for a stair serving 50+ occupants above it (IBC 1011.2)
   {"step":"furniture","room","kind","side":"N|S|E|W|center"|"near","at"}   catalogue piece against a wall or in the middle:
         home       bed|double_bed|bunk_bed|sofa|armchair|coffee_table|tv_stand|dining_table|chair|desk|bookshelf|
                    wardrobe|dresser|kitchen_counter|island|fridge|oven|sink|dishwasher|washing_machine|toilet|
