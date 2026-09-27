@@ -1,29 +1,9 @@
 {
-  "discipline": "data",
-  "phase": "electrical",
-  "finish": "device",
   "bricks": [
-    {"id": "router", "name": "Broadband router", "category": "network", "ifc_class": "IfcCommunicationsAppliance", "predefined_type": "ROUTER",
-     "host": "wall", "mount": 1.2, "tags": ["wifi", "internet", "modem", "broadband", "network"],
-     "description": "The building's internet connection; data outlets and access points need one.",
-     "params": {"w": [0.25, 0.15, 0.4], "d": [0.08, 0.04, 0.15], "h": [0.18, 0.1, 0.3]},
-     "ports": [{"kind": "power"}, {"kind": "data", "direction": "out"}], "rules": {"overlap_ok": true}},
-    {"id": "network_rack", "name": "Network cabinet", "category": "network", "ifc_class": "IfcCommunicationsAppliance", "predefined_type": "NETWORKAPPLIANCE",
-     "host": "floor", "finish": "metal", "tags": ["server rack", "comms cabinet", "patch panel", "data cabinet"],
-     "params": {"w": [0.6, 0.5, 0.8], "d": [0.6, 0.4, 1.0], "h": [1.2, 0.6, 2.1]},
-     "ports": [{"kind": "power"}, {"kind": "data", "direction": "out"}], "rules": {"rooms": ["utility", "storage", "office", "other"], "clearance": 0.9}},
-    {"id": "wifi_access_point", "name": "Wi-Fi access point", "category": "network", "ifc_class": "IfcCommunicationsAppliance", "predefined_type": "REPEATER",
-     "host": "ceiling", "mount": "ceiling", "tags": ["wifi", "wireless", "access point", "mesh"],
-     "params": {"w": [0.2, 0.15, 0.3], "d": [0.2, 0.15, 0.3], "h": [0.04, 0.02, 0.08]},
-     "parts": [["round", 0, 0, 0, "w", "w", "h"]],
-     "ports": [{"kind": "power"}, {"kind": "data"}], "rules": {"overlap_ok": true}},
-    {"id": "data_outlet", "name": "Data outlet (RJ45)", "category": "network", "ifc_class": "IfcOutlet", "predefined_type": "DATAOUTLET",
-     "host": "wall", "mount": 0.3, "tags": ["ethernet", "lan", "network socket", "cat6"],
-     "params": {"w": [0.086, 0.07, 0.15], "d": [0.03, 0.01, 0.05], "h": [0.086, 0.07, 0.12]},
-     "ports": [{"kind": "data"}], "rules": {"overlap_ok": true}},
-    {"id": "printer", "name": "Office printer", "category": "office equipment", "ifc_class": "IfcCommunicationsAppliance", "predefined_type": "PRINTER",
-     "host": "floor", "tags": ["printer", "copier", "mfp"],
-     "params": {"w": [0.6, 0.4, 1.0], "d": [0.6, 0.4, 0.8], "h": [1.1, 0.4, 1.3]},
-     "ports": [{"kind": "power"}, {"kind": "data"}], "rules": {"rooms": ["office", "hall", "other"], "clearance": 0.9}}
+    {"id": "router", "name": "Broadband router", "description": "The building's internet connection; data outlets and access points need one.", "tags": ["wifi", "internet", "modem", "broadband", "network", "data"], "ifc_class": "IfcCommunicationsAppliance", "predefined_type": "ROUTER", "params": {"w": [0.25, 0.15, 0.4], "d": [0.08, 0.04, 0.15], "h": [0.18, 0.1, 0.3]}, "geometry": [{"shape": "box", "size": ["w", "d", "h"]}], "origin": ["w / 2", "d / 2", 0], "mount": "fix", "elevation": 1.2, "materials": {"default": {"color": [0.9, 0.9, 0.88], "name": "Plastic"}}, "connectors": [{"kind": "power"}, {"kind": "data", "direction": "out"}], "collides": false},
+    {"id": "network_rack", "name": "Network cabinet", "tags": ["server rack", "comms cabinet", "patch panel", "data cabinet", "network", "data", "utility", "storage", "office", "other"], "ifc_class": "IfcCommunicationsAppliance", "predefined_type": "NETWORKAPPLIANCE", "params": {"w": [0.6, 0.5, 0.8], "d": [0.6, 0.4, 1.0], "h": [1.2, 0.6, 2.1]}, "geometry": [{"shape": "box", "size": ["w", "d", "h"]}], "origin": ["w / 2", "d / 2", 0], "materials": {"default": {"color": [0.58, 0.6, 0.63], "name": "Steel"}}, "connectors": [{"kind": "power"}, {"kind": "data", "direction": "out"}], "keepout": [{"shape": "box", "at": [0, "d", 0], "size": ["w", 0.9, 1.0]}]},
+    {"id": "wifi_access_point", "name": "Wi-Fi access point", "tags": ["wifi", "wireless", "access point", "mesh", "network", "data"], "ifc_class": "IfcCommunicationsAppliance", "predefined_type": "REPEATER", "params": {"w": [0.2, 0.15, 0.3], "d": [0.2, 0.15, 0.3], "h": [0.04, 0.02, 0.08]}, "geometry": [{"shape": "cylinder", "at": ["w / 2", "w / 2", 0], "radius": "w / 2", "height": "h"}], "origin": ["w / 2", "d / 2", 0], "mount": "hang", "materials": {"default": {"color": [0.9, 0.9, 0.88], "name": "Plastic"}}, "connectors": [{"kind": "power"}, {"kind": "data"}], "collides": false},
+    {"id": "data_outlet", "name": "Data outlet (RJ45)", "tags": ["ethernet", "lan", "network socket", "cat6", "network", "data"], "ifc_class": "IfcOutlet", "predefined_type": "DATAOUTLET", "params": {"w": [0.086, 0.07, 0.15], "d": [0.03, 0.01, 0.05], "h": [0.086, 0.07, 0.12]}, "geometry": [{"shape": "box", "size": ["w", "d", "h"]}], "origin": ["w / 2", "d / 2", 0], "mount": "fix", "elevation": 0.3, "materials": {"default": {"color": [0.9, 0.9, 0.88], "name": "Plastic"}}, "connectors": [{"kind": "data"}], "collides": false},
+    {"id": "printer", "name": "Office printer", "tags": ["printer", "copier", "mfp", "office equipment", "data", "office", "hall", "other"], "ifc_class": "IfcCommunicationsAppliance", "predefined_type": "PRINTER", "params": {"w": [0.6, 0.4, 1.0], "d": [0.6, 0.4, 0.8], "h": [1.1, 0.4, 1.3]}, "geometry": [{"shape": "box", "size": ["w", "d", "h"]}], "origin": ["w / 2", "d / 2", 0], "materials": {"default": {"color": [0.9, 0.9, 0.88], "name": "Plastic"}}, "connectors": [{"kind": "power"}, {"kind": "data"}], "keepout": [{"shape": "box", "at": [0, "d", 0], "size": ["w", 0.9, 1.0]}]}
   ]
 }
