@@ -31,6 +31,7 @@ import ifcopenshell
 from pydantic import ValidationError
 
 import config
+from core import export as deliverables
 from core.checks import CheckResult, check, score, unmet_lines
 from core.context import describe_design, describe_focus
 from core.coordinate import coordinate, errors, fix_lines
@@ -311,9 +312,49 @@ def _persist(store: Store, project_id: str, spec: BuildingSpec, guids: GuidMap, 
     version = store.add_version(project_id, spec=spec, guids=guids, mode=mode, summary=summarize(model), ifc_path=path,
                                 prompt=prompt, llm=llm, ops=ops, notes=notes, design=design, checks=checks or [],
                                 images=images or [], approach=approach)
+    analysis_url = _issue(version, emit)
     emit("done", f"version {version.number} ready",
-         version.as_version().model_dump() | {"ifc_url": version.ifc_url, "export_url": version.export_url})
+         version.as_version().model_dump() | {"ifc_url": version.ifc_url, "export_url": version.export_url,
+                                              "analysis_url": analysis_url})
     return version
+
+
+def _money(v: float) -> str:
+    return f"${v / 1e6:,.2f}M" if v >= 1e6 else f"${v / 1e3:,.0f}k"
+
+
+def _issue(version: VersionData, emit: Emit) -> str | None:
+    """Review the finished model like the office would before it goes out — code screen, cost and
+    carbon, drawing set — and narrate the findings into the trace. Never fails the run."""
+    try:
+        data = deliverables.analysis(version)
+    except Exception as exc:  # noqa: BLE001 — the model is built; a review bug must not lose it
+        log.exception("review of version %s failed", version.number)
+        emit("code", f"the design review could not run ({exc})", {"error": str(exc)})
+        return None
+    rev, est = data["review"], data["estimate"]
+    occ, tot, score = rev["occupancy"], rev["totals"], rev["score"]
+    findings = sorted(rev["checks"], key=lambda c: {"fail": 0, "warn": 1, "info": 2, "pass": 3}[c["status"]])
+    verdict = (f"{score['fail']} to fix" if score["fail"] else "nothing failing") + \
+              (f", {score['warn']} to review" if score["warn"] else "")
+    emit("code", f"Code screen against {rev['code']}: occupancy {occ['group']}, {occ['load']} occupants — "
+                 f"{score['pass']} of {score['total']} clauses pass, {verdict}",
+         {"phase": "code", "code": rev["code"], "occupancy": occ, "totals": tot, "score": score,
+          "checks": findings})
+    cost, carbon = est["cost"], est["carbon"]
+    best = carbon["options"][0] if carbon["options"] else None
+    emit("estimate", f"Concept estimate {_money(cost['total'])} (${cost['per_sf']:,}/sf, {cost['class'].split(' —')[0]}); "
+                     f"upfront carbon {carbon['per_m2']} kgCO2e/m², LETI band {carbon['band']}",
+         {"phase": "cost", "cost": {k: cost[k] for k in ("total", "low", "high", "per_m2", "per_sf", "class", "basis")},
+          "carbon": {k: carbon[k] for k in ("total_kg", "per_m2", "band", "typology", "target_2020", "target_2030",
+                                            "meets_2030", "options")},
+          "best": best, "gia": tot["gia"], "gia_sf": tot["gia_sf"]})
+    base = f"/projects/{version.project_id}/versions/{version.number}"
+    sheets = [{"number": s.number, "title": s.title, "url": f"{base}/sheets/{s.number}.svg"} for s in data["sheets"]]
+    emit("deliver", f"Drawing set issued: {len(sheets)} sheets, schedules, BCF issues and cost plan",
+         {"phase": "issue", "sheets": sheets, "pdf": f"{base}/export?format=drawings",
+          "bcf": f"{base}/export?format=bcf", "analysis_url": f"{base}/analysis"})
+    return f"{base}/analysis"
 
 
 def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_version: int | None = None,
