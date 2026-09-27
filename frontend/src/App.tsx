@@ -515,6 +515,8 @@ export default function App() {
   const running = active?.messages.some((m) => m.run && !["done", "error"].includes(m.run.stage));
   const status = loadError
     ?? (!shown && running ? "Generating model… the first preview appears after the first room." : null)
+    // A restored session has a model before the viewer has read it back.
+    ?? (!shown && active?.model ? `Loading ${active.model.name}…` : null)
     ?? (!shown && active ? "No model in this session yet." : null);
   const v = viewerRef.current;
   // The selection is only meaningful as prompt context when the workspace shows a version of this session.
