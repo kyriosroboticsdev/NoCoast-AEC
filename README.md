@@ -71,7 +71,7 @@ backend/
   tests/                pytest; runs entirely on the mock LLM; tests/evals/prompts.json = accuracy set
   tools/eval.py         score the configured model on the evaluation set
 frontend/
-  src/viewer/BimViewer.ts  That Open wrapper: model tree, properties, class visibility, hide/isolate
+  src/viewer/LegacyViewer.ts  web-ifc → three.js main viewer (kyriolexy's engine): picking, properties, storeys, fades
   src/api/client.ts        backend client incl. SSE-over-POST parser
   src/App.tsx, main.tsx    React entry point and top-level layout
   src/components/         Sidebar, TopBar, Workspace, Composer, LevelTree, DataViews, ViewerOverlays, …
@@ -476,8 +476,7 @@ The file name comes back in `X-Export-Filename`, and `X-Validation-Status` is `p
 
 ### 4.13 Frontend
 
-React + Vite (Kailash's redesign): a sessions sidebar, a chat assistant, and a Model / Elements / Data
-workspace. Each session is one backend project; its first prompt designs a building and later prompts
+React + Vite (Kailash's redesign): a sessions sidebar, a chat assistant, and a model workspace. Each session is one backend project; its first prompt designs a building and later prompts
 edit the head version (`base_version`). Older versions can be viewed or restored from the chat.
 
 While the model works, the assistant shows the stream as a **reasoning trace** in plain words
@@ -489,11 +488,12 @@ view. Each answer lists its **requirement checks**. Selecting an element in the 
 above the prompt and sends its spec id as `focus` with the next prompt. **Export IFC** opens the export
 dialog (§4.12) for the version in the workspace; for a file opened from disk it saves the file as is.
 
-Two viewers share the page, both on That Open with the same pinned versions:
+Two viewers share the page:
 
-- **Main viewer** (`src/viewer/BimViewer.ts`): the selected version at full size, with the model tree,
-  properties, class visibility, and hide/isolate. After every accepted version the **whole IFC is
-  reloaded**; incremental patching by GlobalId is deferred.
+- **Main viewer** (`src/viewer/LegacyViewer.ts`): the selected version at full size, drawn with web-ifc +
+  three.js (kyriolexy's original engine, restored on main for its rendering and camera feel; it has no
+  model tree or per-category hide/isolate). Previews and versions reload in place: changed elements fade
+  in and out by GlobalId and the camera stays put.
 - **History cards** (`packages/ifc-viewer`, wired in `src/turns.ts`): one card per version, showing a
   snapshot that turns into a live orbitable view on hover. At most 3 live WebGL canvases exist at
   once. **Inspect** on a card loads that version into the main viewer. Each version also gets a

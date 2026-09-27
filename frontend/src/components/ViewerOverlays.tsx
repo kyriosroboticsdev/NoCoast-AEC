@@ -1,12 +1,11 @@
-import { Box, BedDouble, Crosshair, RotateCcw, Scan } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { BedDouble, RotateCcw } from "lucide-react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import type { BimViewer, ElementSummary, ModelStats, ViewName } from "../viewer/BimViewer";
+import type { LegacyViewer, Picked, PropertySet, ViewName } from "../viewer/LegacyViewer";
 
 // --- floating view panel (top-right) ----------------------------------------
 
-export function ViewControls({ viewer, roomsVisible, onRooms }: { viewer: BimViewer; roomsVisible: boolean; onRooms: () => void }) {
-  const [projection, setProjection] = useState(viewer.projection);
+export function ViewControls({ viewer, roomsVisible, onRooms }: { viewer: LegacyViewer; roomsVisible: boolean; onRooms: () => void }) {
   const views: [ViewName, string][] = [
     ["top", "Top"], ["bottom", "Bottom"], ["front", "Front"], ["back", "Back"], ["left", "Left"], ["right", "Right"],
   ];
@@ -20,16 +19,7 @@ export function ViewControls({ viewer, roomsVisible, onRooms }: { viewer: BimVie
       </div>
       <div className="view-sep" />
       <div className="view-icons">
-        <button title="Fit model" onClick={() => viewer.fit()}><Scan size={17} /></button>
-        <button title="Focus selection" onClick={() => viewer.focusSelection()}><Crosshair size={17} /></button>
-        <button title={`${projection} — click for ${projection === "Perspective" ? "orthographic" : "perspective"}`}
-          className={projection === "Orthographic" ? "on" : ""}
-          onClick={async () => setProjection(await viewer.toggleProjection())}>
-          <Box size={17} />
-        </button>
-        <button title="Reset view" onClick={async () => { await viewer.reset(); setProjection(viewer.projection); }}>
-          <RotateCcw size={17} />
-        </button>
+        <button title="Reset view" onClick={() => viewer.reset()}><RotateCcw size={17} /></button>
         <button title={roomsVisible ? "Hide room volumes" : "Show room volumes"} className={roomsVisible ? "on" : ""} onClick={onRooms}>
           <BedDouble size={17} />
         </button>
@@ -43,34 +33,32 @@ export function ViewControls({ viewer, roomsVisible, onRooms }: { viewer: BimVie
 interface InfoProps {
   fileName: string;
   schema: string;
-  stats: ModelStats | null;
-  selected: ElementSummary | null;
+  picked: Picked | null;
+  properties: PropertySet[];
 }
 
-export function InfoCard({ fileName, schema, stats, selected }: InfoProps) {
-  const f = (n: number) => n.toLocaleString();
+export function InfoCard({ fileName, schema, picked, properties }: InfoProps) {
   return (
     <div className="float info-card">
       <div className="info-title" title={fileName}>{fileName}</div>
       <div className="muted small">{schema || "IFC"} · m</div>
-      {stats && (
-        <dl className="kv">
-          <dt>Elements</dt><dd>{f(stats.elements)}</dd>
-          <dt>Levels</dt><dd>{stats.levels}</dd>
-          <dt>Extent</dt><dd>{stats.extent.map((v) => v.toFixed(1)).join(" × ")} m</dd>
-          <dt>Triangles</dt><dd>{f(stats.triangles)}</dd>
-        </dl>
-      )}
       <div className="info-sep" />
-      {selected ? (
+      {picked ? (
         <>
-          <div className="info-sub" title={selected.name}>{selected.name}</div>
+          <div className="info-sub" title={picked.name || picked.type}>{picked.name || picked.type}</div>
           <dl className="kv">
-            <dt>Category</dt><dd>{selected.category}</dd>
-            <dt>Class</dt><dd>{selected.ifcClass}</dd>
-            {selected.level && <><dt>Level</dt><dd>{selected.level}</dd></>}
+            <dt>Class</dt><dd>{picked.type}</dd>
+            {picked.tag && <><dt>Tag</dt><dd>{picked.tag}</dd></>}
           </dl>
-          <div className="guid">{selected.guid}</div>
+          <div className="guid">{picked.globalId}</div>
+          {properties.slice(1).map((ps) => (
+            <div key={ps.name} className="info-pset">
+              <div className="info-pset-title">{ps.name}</div>
+              <dl className="kv">
+                {ps.props.map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}
+              </dl>
+            </div>
+          ))}
         </>
       ) : (
         <div className="muted small">Click an element to inspect it.</div>
@@ -88,7 +76,7 @@ const AXES: { label: string; color: string; dir: THREE.Vector3; pos: ViewName; n
   { label: "Z", color: "#3e63dd", dir: new THREE.Vector3(0, 1, 0), pos: "top", neg: "bottom" },
 ];
 
-export function AxisGizmo({ viewer }: { viewer: BimViewer }) {
+export function AxisGizmo({ viewer }: { viewer: LegacyViewer }) {
   const [pts, setPts] = useState<{ key: string; x: number; y: number; z: number; color: string; label?: string; view: ViewName; line: boolean }[]>([]);
   const last = useRef("");
 

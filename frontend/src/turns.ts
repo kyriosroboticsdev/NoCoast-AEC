@@ -21,7 +21,7 @@ const source: TurnSource = {
   // vision model, add a backend endpoint and POST the PNG here.
 };
 
-// Same asset locations Kailash's BimViewer uses; copied by scripts/copy-wasm.mjs.
+// web-ifc wasm and the fragments worker, copied into public/ by scripts/copy-wasm.mjs.
 export const runtime = new IfcViewerRuntime(source, {
   wasmPath: "wasm/",
   fragmentsWorkerUrl: new URL("fragments-worker.mjs", window.location.href).href,
