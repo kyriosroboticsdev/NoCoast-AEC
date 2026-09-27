@@ -75,8 +75,9 @@ def level_name(design: Design | None, level_id: Any) -> str:
 
 
 def _in_sentence(name: str) -> str:
-    """"Living Room" → "living room", but "Landing L2" and "Bedroom 2" keep their designations."""
-    return " ".join(w.lower() if w.isalpha() and not w.isupper() else w for w in name.split())
+    """"Living Room" → "living room", "plant-room" → "plant room", but "Landing L2" and
+    "Bedroom 2" keep their designations."""
+    return " ".join(w.lower() if w.isalpha() and not w.isupper() else w for w in name.replace("-", " ").split())
 
 
 def room_name(design: Design | None, ref: Any) -> str:
@@ -102,6 +103,19 @@ def _size(room: RoomDef | None) -> str:
     if room.area:
         return f"~{_f(room.area, 0)} m² (to be placed)"
     return ""
+
+
+def _standing(design: Design, raw: dict) -> str:
+    """Where a piece that belongs to no room stands: on the roof, on a storey, out on the site."""
+    at = raw.get("position") or raw.get("near")
+    where = f" at ({_f(at[0])}, {_f(at[1])})" if isinstance(at, (list, tuple)) and len(at) == 2 else ""
+    lid = str(raw.get("level") or "L1").upper()
+    level = design.level(lid)
+    if raw.get("elevation") and level is not None and float(raw["elevation"]) >= level.height - 0.01:
+        return f"on the roof of {level_name(design, lid)}{where}"
+    if raw.get("elevation"):
+        return f"{_f(raw['elevation'])} m above {level_name(design, lid)}{where}"
+    return f"standing on the site{where}" if lid in ("L1", "") else f"standing on {level_name(design, lid)}{where}"
 
 
 def gross_area(design: Design) -> float:
@@ -220,14 +234,20 @@ def _narrate(raw: dict, design: Design) -> str:  # noqa: PLR0911, PLR0912 - one 
 
     if kind == "furniture":
         item = str(raw.get("kind") or "fitting").replace("_", " ")
+        if not raw.get("room"):
+            return f"{item.capitalize()} {_standing(design, raw)}"
         side = raw.get("side")
         where = (f" against the {side_name(side)} wall" if side and side != "center" else
-                 " in the middle of the room" if side == "center" else "")
+                 " in the middle of the room" if side == "center" else
+                 f" at ({_f(raw['position'][0])}, {_f(raw['position'][1])})" if raw.get("position") else "")
         return f"{item.capitalize()} in {room_name(design, raw.get('room'))}{where}"
 
     if kind == "custom":
         parts = len(raw.get("parts") or [])
-        return f"Purpose-made {name.lower() or 'piece'} for {room_name(design, raw.get('room'))} ({parts} solids)"
+        label = f"Purpose-made {name.lower() or 'piece'}"
+        if not raw.get("room"):
+            return f"{label} {_standing(design, raw)} ({parts} solids)"
+        return f"{label} for {room_name(design, raw.get('room'))} ({parts} solids)"
 
     if kind == "balcony":
         where = f"the {side_name(raw['side'])} side of " if raw.get("side") else ""

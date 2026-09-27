@@ -620,10 +620,13 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
             raise StepError(f"furniture: unknown room '{step.room}' (rooms: {', '.join(r.id for r in d.rooms)})")
         side = _literal(step, step.side or "center", ("N", "S", "E", "W", "center"), "side")
         fid = step.id or d.unique_id(f"{kind}-{room.id}")
+        at_point = _pt_or_none(step.position)
         d.fixtures = [x for x in d.fixtures if x.id != fid]
-        d.fixtures.append(FixtureDef(id=fid, room=room.id, kind=kind, side=side, near=_pt_or_none(step.near), at=step.at if step.at is not None else 0.5,
+        d.fixtures.append(FixtureDef(id=fid, room=room.id, kind=kind, side=side, near=_pt_or_none(step.near),
+                                     position=at_point, at=step.at if step.at is not None else 0.5,
                                      rotation=step.rotation, width=step.width, depth=step.depth, height=step.height))
-        where = f" against the wall near {step.near}" if step.near else f" against side {side}" if side != "center" else " (centre)"
+        where = (f" at {list(at_point)}" if at_point else f" against the wall near {step.near}" if step.near
+                 else f" against side {side}" if side != "center" else " (centre)")
         return d, f"{kind} {fid}: in {room.id}{where}"
 
     if k == "custom":
@@ -650,6 +653,7 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
         cid = step.id or d.unique_id(slug(name))
         d.custom_shapes = [x for x in d.custom_shapes if x.id != cid]
         d.custom_shapes.append(CustomShapeDef(id=cid, room=room.id, name=name, side=side, near=_pt_or_none(step.near),
+                                              position=_pt_or_none(step.position),
                                               at=step.at if step.at is not None else 0.5, rotation=step.rotation, parts=parts))
         return d, f"custom {cid}: \"{name}\" in {room.id} ({len(parts)} part(s))"
 

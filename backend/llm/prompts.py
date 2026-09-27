@@ -139,6 +139,9 @@ Steps (fields not listed are left null):
         industry   pallet_rack|workbench|machine|crate|conveyor
         plant/site solar_panel|water_tank|hvac_unit|boiler|bench|planter|bollard|bicycle_rack|lamp_post|
                    picnic_table|dumpster|tree
+        Give "position":[x,y] as well as `room` to put the piece at an exact point in a big room instead of
+        against a wall (a machine in the middle of a 40 m span); `near` only ever names a WALL, and is rejected
+        when it is more than 3 m from one.
         Leave `room` out and give "position":[x,y] (plus "level", and "elevation" for a roof) to stand the piece
         anywhere instead — plant on a roof, racking in an open yard, benches and trees along an approach, cars in
         a surface car park.

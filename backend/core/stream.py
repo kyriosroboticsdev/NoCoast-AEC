@@ -38,7 +38,7 @@ from core.derive import DesignError, Derived, analyze
 from core.narrate import gross_area, narrate_draft, narrate_step, phase_of, step_facts
 from core.partial_json import parse_partial, peek_element
 from ifc.builder import GeometryError, compile_ifc
-from llm.base import clean_reply
+from llm.base import body
 from logsetup import log
 from pydantic import ValidationError
 from schemas.bim import BuildingSpec
@@ -185,7 +185,7 @@ class StepStream:
         if now - self._last_draft < DRAFT_EVERY:
             return
         self._last_draft = now
-        raw = peek_element(clean_reply(text), "steps")
+        raw = peek_element(body(text), "steps")
         if not raw:
             return
         key = json.dumps(raw, sort_keys=True)
@@ -198,7 +198,7 @@ class StepStream:
 
     def consume(self, text: str) -> None:
         """Apply every complete step in `text` that has not been applied yet."""
-        data = parse_partial(clean_reply(text))
+        data = parse_partial(body(text))
         if not isinstance(data, dict):
             return
         approach = data.get("approach")
