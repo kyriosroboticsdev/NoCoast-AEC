@@ -14,6 +14,14 @@ version, shown as a 3D turn card in the history (`packages/ifc-viewer`).
 *"Two storey house with a kitchen, living room and three bedrooms, a garage and a front porch" — mock LLM.*
 
 ---
+# Contributors: 
+
+- Kailash Kannan: kailashkannan06@gmail.com
+- Drona Thoka: thokadrona@gmail.com
+- Abhijyot Chadha: abhijyotschadha@gmail.com
+- Randy Yang: pineconees@gmail.com
+- Anshuman Sikhwal: anshumansikhwal@gmail.com
+- Andriy Mulyar: andriy@nomic.ai
 
 ## 1. Design in one page
 
