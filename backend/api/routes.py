@@ -11,6 +11,8 @@ Stateful (what the UI uses):
     GET  /projects/{id}/versions/{n}/render?azimuth=&elevation=&target=&level=…   a screenshot (PNG) from any view
     GET  /projects/{id}/versions/{n}/export?format=  zip bundle (default) or one artefact
     GET  /projects/{id}/export                       the head version as a bundle
+    GET  /projects/{id}/versions/{n}/analysis        design review, cost/carbon estimate and the drawing index
+    GET  /projects/{id}/versions/{n}/sheets/{no}.svg one drawing sheet (G-001, A-101, …) as SVG
     GET  /projects/{id}/shots/{name}                                 a screenshot the model was shown while checking its work
     GET  /projects/{id}/attachments/{file}                           an image the user attached to one of its prompts
     POST /projects/{id}/versions/{n}/construction                     start a live-build simulation job
@@ -246,6 +248,28 @@ def version_export(project_id: str, number: int, format: str = "zip"):
     name = export.filename(v, format)
     return Response(export.artifact(v, format), media_type=export.MEDIA[format],
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/projects/{project_id}/versions/{number}/analysis")
+def version_analysis(project_id: str, number: int) -> dict:
+    """What an architect checks before a model leaves the office: the code review, the area schedule,
+    quantities, cost plan, upfront carbon, and the drawing set drawn from the model."""
+    v = _version(project_id, number)
+    data = export.analysis(v)
+    base = f"/projects/{project_id}/versions/{number}"
+    return {"review": data["review"], "estimate": data["estimate"],
+            "sheets": [{"number": s.number, "title": s.title, "kind": s.kind, "scale": s.scale,
+                        "url": f"{base}/sheets/{s.number}.svg"} for s in data["sheets"]],
+            "exports": {fmt: f"{base}/export?format={fmt}" for fmt in export.FORMATS}}
+
+
+@router.get("/projects/{project_id}/versions/{number}/sheets/{sheet}.svg")
+def version_sheet(project_id: str, number: int, sheet: str):
+    v = _version(project_id, number)
+    for s in export.sheets(v):
+        if s.number.lower() == sheet.lower():
+            return Response(s.svg(), media_type="image/svg+xml", headers={"Cache-Control": "max-age=3600"})
+    raise HTTPException(404, f"sheet '{sheet}' not found (sheets: {', '.join(s.number for s in export.sheets(v))})")
 
 
 @router.get("/projects/{project_id}/export")

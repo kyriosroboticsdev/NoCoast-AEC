@@ -67,9 +67,13 @@ def test_bundle_holds_everything():
 
     with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
         names = set(zf.namelist())
-        assert names == {"README.md", "guids.json"} | {f"{pid}-v1.{ext}" for ext in
-                                                       ("ifc", "summary.md", "spec.json", "design.json",
-                                                        "context.txt", "checks.json", "schedule.csv")}
+        drawings = {n for n in names if n.startswith("drawings/")}
+        assert drawings >= {"drawings/G-001.svg", "drawings/A-101.svg", "drawings/A-201.svg", "drawings/A-301.svg"}
+        assert names - drawings == {"README.md", "guids.json"} | {
+            f"{pid}-v1.{ext}" for ext in ("ifc", "drawings.pdf", "review.md", "issues.bcfzip", "estimate.csv",
+                                          "summary.md", "spec.json", "design.json", "context.txt", "checks.json",
+                                          "schedule.csv")}
+        assert zf.read(f"{pid}-v1.drawings.pdf").startswith(b"%PDF-")
         assert zf.read("README.md").decode().startswith("# NoCoast export")
         model = ifcopenshell.file.from_string(zf.read(f"{pid}-v1.ifc").decode())
         assert model.by_type("IfcWall") and model.by_type("IfcSpace")

@@ -19,20 +19,30 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
+from core.bcf import bcf
 from core.context import describe_design, describe_spec
 from core.derive import DesignError, analyze
+from core.draw.canvas import pdf
+from core.draw.sheets import Meta, Sheet, drawing_set
+from core.estimate import estimate
+from core.review import review
 from schemas.bim import BuildingSpec, polygon_area
 from store.db import VersionData
 
-FORMATS = ("ifc", "zip", "spec", "design", "context", "checks", "schedule", "summary")
+FORMATS = ("ifc", "zip", "drawings", "review", "bcf", "estimate", "spec", "design", "context", "checks", "schedule",
+           "summary")
 MEDIA = {
     "ifc": "application/x-step", "zip": "application/zip", "spec": "application/json",
     "design": "application/json", "context": "text/plain; charset=utf-8", "checks": "application/json",
     "schedule": "text/csv; charset=utf-8", "summary": "text/markdown; charset=utf-8",
+    "drawings": "application/pdf", "review": "text/markdown; charset=utf-8", "bcf": "application/octet-stream",
+    "estimate": "text/csv; charset=utf-8",
 }
 EXTENSIONS = {"ifc": "ifc", "zip": "zip", "spec": "spec.json", "design": "design.json",
               "context": "context.txt", "checks": "checks.json", "schedule": "schedule.csv",
-              "summary": "summary.md"}
+              "summary": "summary.md", "drawings": "drawings.pdf", "review": "review.md", "bcf": "issues.bcfzip",
+              "estimate": "estimate.csv"}
+_CACHE: dict[tuple[str, int, float], dict] = {}
 
 
 def stem(version: VersionData) -> str:
@@ -45,6 +55,83 @@ def filename(version: VersionData, fmt: str) -> str:
 
 def _when(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _key(version: VersionData) -> tuple[str, int, float]:
+    return (version.project_id, version.number, version.created)
+
+
+def analysis(version: VersionData) -> dict:
+    """Review, estimate and drawing set of a version. Versions never change, so this is computed once."""
+    key = _key(version)
+    if key not in _CACHE:
+        if len(_CACHE) > 64:
+            _CACHE.clear()
+        rev = review(version.spec, version.design)
+        est = estimate(version.spec, rev)
+        meta = Meta(project=version.spec.building.name, project_id=version.project_id, version=version.number,
+                    description=version.spec.building.description or "", brief=version.prompt or "",
+                    author=(version.llm or version.mode or "NoCoast agent").split(":")[0][:22], created=version.created)
+        _CACHE[key] = {"review": rev, "estimate": est, "sheets": drawing_set(version.spec, rev, meta)}
+    return _CACHE[key]
+
+
+def sheets(version: VersionData) -> list[Sheet]:
+    return analysis(version)["sheets"]
+
+
+def drawings_pdf(version: VersionData) -> bytes:
+    return pdf([s.canvas for s in sheets(version)], title=f"{version.spec.building.name} — drawings v{version.number}")
+
+
+def review_markdown(version: VersionData) -> str:
+    rev = analysis(version)["review"]
+    est = analysis(version)["estimate"]
+    occ, tot, cost, carbon = rev["occupancy"], rev["totals"], est["cost"], est["carbon"]
+    icon = {"pass": "PASS", "warn": "REVIEW", "fail": "FAIL", "info": "INFO"}
+    lines = [f"# Design review — {version.spec.building.name}, version {version.number}", "",
+             f"Code basis: {rev['code']}. Occupancy **{occ['group']}** ({occ['name']}), design occupant load "
+             f"**{occ['load']}**, {occ['construction']}.", "",
+             f"GIA {tot['gia']:,.1f} m² ({tot['gia_sf']:,} sf), NIA {tot['nia']:,.1f} m², efficiency "
+             f"{tot['efficiency']:.0%}, {tot['storeys']} storeys.", "",
+             f"**{rev['score']['pass']} pass · {rev['score']['warn']} to review · {rev['score']['fail']} fail**", "",
+             "| Status | Clause | Check | Measured | Required |", "| --- | --- | --- | --- | --- |"]
+    for c in rev["checks"]:
+        lines.append(f"| {icon[c['status']]} | {c['reference']} | {c['title']} | {c['value']} | {c['target']} |")
+    actions = [c for c in rev["checks"] if c["advice"]]
+    if actions:
+        lines += ["", "## Actions", ""] + [f"- **{c['title']}** ({c['reference']}): {c['advice']}" for c in actions]
+    lines += ["", "## Cost plan", "", f"{cost['class']}; {cost['basis']}.", "",
+              f"**${cost['total']:,}** (${cost['low']:,} – ${cost['high']:,}), ${cost['per_m2']:,}/m² · "
+              f"${cost['per_sf']:,}/sf.", "", "| Element | Qty | Unit | Rate | Total |", "| --- | ---: | --- | ---: | ---: |"]
+    lines += [f"| {l['element']} | {l['quantity']:,} | {l['unit']} | ${l['rate']:,.0f} | ${l['total']:,.0f} |" for l in cost["lines"]]
+    lines += [f"| General conditions, OH&P | | | | ${cost['general_conditions']:,} |",
+              f"| Design contingency | | | | ${cost['contingency']:,} |", "",
+              "## Upfront carbon", "", f"{carbon['basis']}.", "",
+              f"**{carbon['per_m2']} kgCO2e/m²** ({carbon['total_kg'] / 1000:,.1f} tCO2e), LETI band **{carbon['band']}** "
+              f"for {carbon['typology']} (2020 target {carbon['target_2020']}, 2030 target {carbon['target_2030']}).", ""]
+    lines += [f"- {o['move']}: −{o['saving_kg'] / 1000:,.1f} tCO2e ({o['saving_pct']:.0%}), {o['per_m2']} kgCO2e/m²"
+              for o in carbon["options"]]
+    lines += ["", "## Assumptions", ""] + [f"- {a}" for a in rev["assumptions"]] + [""]
+    return "\n".join(lines)
+
+
+def estimate_csv(version: VersionData) -> str:
+    est = analysis(version)["estimate"]
+    out = io.StringIO()
+    w = csv.writer(out, lineterminator="\n")
+    w.writerow(["uniformat", "element", "quantity", "unit", "rate_usd", "total_usd"])
+    for l in est["cost"]["lines"]:
+        w.writerow([l["group"], l["element"], l["quantity"], l["unit"], l["rate"], l["total"]])
+    w.writerow(["", "General conditions, OH&P", "", "", "", est["cost"]["general_conditions"]])
+    w.writerow(["", "Design contingency", "", "", "", est["cost"]["contingency"]])
+    w.writerow(["", "TOTAL", "", "", "", est["cost"]["total"]])
+    w.writerow([])
+    w.writerow(["carbon", "element", "kgCO2e"])
+    for r in est["carbon"]["rows"]:
+        w.writerow(["", r["element"], r["kg"]])
+    w.writerow(["", "TOTAL A1-A5", est["carbon"]["total_kg"]])
+    return out.getvalue()
 
 
 def context_text(version: VersionData) -> str:
@@ -118,6 +205,11 @@ Generated {when} by {by}.
 | File | What it is |
 | --- | --- |
 | `{stem}.ifc` | The model. IFC4 (`IfcProject` → storeys → elements), openable in any BIM tool. |
+| `{stem}.drawings.pdf` | The drawing set: cover, code analysis, plans, elevations, section, schedules (A3). |
+| `drawings/*.svg` | The same sheets as vector SVG, one per sheet, for CAD/Illustrator/InDesign. |
+| `{stem}.review.md` | Indicative code review (IBC/IRC 2021, ADA), cost plan and upfront carbon. |
+| `{stem}.issues.bcfzip` | The review's open issues as BCF 2.1 topics, linked to IFC GlobalIds (Revit, Solibri, BIMcollab). |
+| `{stem}.estimate.csv` | UniFormat II cost plan and A1–A5 carbon by element. |
 | `{stem}.summary.md` | Brief, design approach, element counts and the requirement checklist. |
 | `{stem}.spec.json` | The geometric IR the IFC was compiled from: every wall, slab, opening and fixture. |
 | `{stem}.design.json` | The semantic design the model actually authored: rooms as rectangles, doors, windows. |
@@ -149,6 +241,15 @@ def artifact(version: VersionData, fmt: str) -> bytes:
         return schedule_csv(version.spec).encode()
     if fmt == "summary":
         return summary_markdown(version).encode()
+    if fmt == "drawings":
+        return drawings_pdf(version)
+    if fmt == "review":
+        return review_markdown(version).encode()
+    if fmt == "bcf":
+        return bcf(version.spec, version.guids, analysis(version)["review"]["checks"], filename(version, "ifc"),
+                   version.spec.building.name)
+    if fmt == "estimate":
+        return estimate_csv(version).encode()
     raise ValueError(f"unknown export format '{fmt}' (known: {', '.join(FORMATS)})")
 
 
@@ -159,7 +260,10 @@ def bundle(version: VersionData) -> bytes:
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("README.md", README.format(name=version.spec.building.name, number=version.number,
                                                when=_when(version.created), by=version.llm or version.mode, stem=base))
-        for fmt in ("ifc", "summary", "spec", "design", "context", "checks", "schedule"):
+        for fmt in ("ifc", "drawings", "review", "bcf", "estimate", "summary", "spec", "design", "context", "checks",
+                    "schedule"):
             zf.writestr(filename(version, fmt), artifact(version, fmt))
+        for sheet in sheets(version):
+            zf.writestr(f"drawings/{sheet.number}.svg", sheet.svg())
         zf.writestr("guids.json", json.dumps(version.guids, indent=1))
     return buf.getvalue()
