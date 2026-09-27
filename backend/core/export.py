@@ -23,25 +23,29 @@ from core.bcf import bcf
 from core.context import describe_design, describe_spec
 from core.derive import DesignError, analyze
 from core.draw.canvas import pdf
+from core.draw.dxf import plans_dxf
 from core.draw.sheets import Meta, Sheet, drawing_set
 from core.estimate import estimate
 from core.review import review
+from core.workbook import schedules_xlsx
 from schemas.bim import BuildingSpec, polygon_area
+from schemas.design import slug
 from store.db import VersionData
 
-FORMATS = ("ifc", "zip", "drawings", "review", "bcf", "estimate", "spec", "design", "context", "checks", "schedule",
-           "summary")
+FORMATS = ("ifc", "zip", "drawings", "dxf", "xlsx", "review", "bcf", "estimate", "spec", "design", "context", "checks",
+           "schedule", "summary")
 MEDIA = {
     "ifc": "application/x-step", "zip": "application/zip", "spec": "application/json",
     "design": "application/json", "context": "text/plain; charset=utf-8", "checks": "application/json",
     "schedule": "text/csv; charset=utf-8", "summary": "text/markdown; charset=utf-8",
     "drawings": "application/pdf", "review": "text/markdown; charset=utf-8", "bcf": "application/octet-stream",
-    "estimate": "text/csv; charset=utf-8",
+    "estimate": "text/csv; charset=utf-8", "dxf": "image/vnd.dxf",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
 EXTENSIONS = {"ifc": "ifc", "zip": "zip", "spec": "spec.json", "design": "design.json",
               "context": "context.txt", "checks": "checks.json", "schedule": "schedule.csv",
               "summary": "summary.md", "drawings": "drawings.pdf", "review": "review.md", "bcf": "issues.bcfzip",
-              "estimate": "estimate.csv"}
+              "estimate": "estimate.csv", "dxf": "plans.dxf", "xlsx": "schedules.xlsx"}
 _CACHE: dict[tuple[str, int, float], dict] = {}
 
 
@@ -69,15 +73,24 @@ def analysis(version: VersionData) -> dict:
             _CACHE.clear()
         rev = review(version.spec, version.design)
         est = estimate(version.spec, rev)
-        meta = Meta(project=version.spec.building.name, project_id=version.project_id, version=version.number,
-                    description=version.spec.building.description or "", brief=version.prompt or "",
-                    author=(version.llm or version.mode or "NoCoast agent").split(":")[0][:22], created=version.created)
-        _CACHE[key] = {"review": rev, "estimate": est, "sheets": drawing_set(version.spec, rev, meta)}
+        _CACHE[key] = {"review": rev, "estimate": est, "sheets": drawing_set(version.spec, rev, meta(version))}
     return _CACHE[key]
 
 
 def sheets(version: VersionData) -> list[Sheet]:
     return analysis(version)["sheets"]
+
+
+def meta(version: VersionData) -> Meta:
+    return Meta(project=version.spec.building.name, project_id=version.project_id, version=version.number,
+                description=version.spec.building.description or "", brief=version.prompt or "",
+                author=(version.llm or version.mode or "NoCoast agent").split(":")[0][:22], created=version.created)
+
+
+def schedules_workbook(version: VersionData) -> bytes:
+    a, m = analysis(version), meta(version)
+    return schedules_xlsx(version.spec, a["review"], a["estimate"],
+                          {"project_id": m.project_id, "version": m.version, "date": m.date, "brief": m.brief, "status": m.status})
 
 
 def drawings_pdf(version: VersionData) -> bytes:
@@ -206,7 +219,10 @@ Generated {when} by {by}.
 | --- | --- |
 | `{stem}.ifc` | The model. IFC4 (`IfcProject` → storeys → elements), openable in any BIM tool. |
 | `{stem}.drawings.pdf` | The drawing set: cover, code analysis, plans, elevations, section, schedules (A3). |
-| `drawings/*.svg` | The same sheets as vector SVG, one per sheet, for CAD/Illustrator/InDesign. |
+| `drawings/*.svg` | The same sheets as vector SVG, one per sheet, for Illustrator/InDesign. |
+| `{stem}.plans.dxf` | Every floor plan in model space, in metres, on NCS/AIA layers (A-WALL, A-DOOR, A-GLAZ, A-AREA-IDEN…), for AutoCAD, Rhino, Vectorworks or a Revit link. |
+| `cad/*.dxf` | The same plans, one DXF per storey, each at its true coordinates, ready to xref. |
+| `{stem}.schedules.xlsx` | The schedules in Excel: areas, rooms, doors, windows, equipment, cost plan, carbon and the code review, with live totals. |
 | `{stem}.review.md` | Indicative code review (IBC/IRC 2021, ADA), cost plan and upfront carbon. |
 | `{stem}.issues.bcfzip` | The review's open issues as BCF 2.1 topics, linked to IFC GlobalIds (Revit, Solibri, BIMcollab). |
 | `{stem}.estimate.csv` | UniFormat II cost plan and A1–A5 carbon by element. |
@@ -250,6 +266,10 @@ def artifact(version: VersionData, fmt: str) -> bytes:
                    version.spec.building.name)
     if fmt == "estimate":
         return estimate_csv(version).encode()
+    if fmt == "dxf":
+        return plans_dxf(version.spec, analysis(version)["review"])
+    if fmt == "xlsx":
+        return schedules_workbook(version)
     raise ValueError(f"unknown export format '{fmt}' (known: {', '.join(FORMATS)})")
 
 
@@ -260,9 +280,12 @@ def bundle(version: VersionData) -> bytes:
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("README.md", README.format(name=version.spec.building.name, number=version.number,
                                                when=_when(version.created), by=version.llm or version.mode, stem=base))
-        for fmt in ("ifc", "drawings", "review", "bcf", "estimate", "summary", "spec", "design", "context", "checks",
-                    "schedule"):
+        for fmt in ("ifc", "drawings", "dxf", "xlsx", "review", "bcf", "estimate", "summary", "spec", "design", "context",
+                    "checks", "schedule"):
             zf.writestr(filename(version, fmt), artifact(version, fmt))
+        for level in version.spec.levels:
+            zf.writestr(f"cad/{level.id}-{slug(level.name)}.dxf",
+                        plans_dxf(version.spec, analysis(version)["review"], level.id))
         for sheet in sheets(version):
             zf.writestr(f"drawings/{sheet.number}.svg", sheet.svg())
         zf.writestr("guids.json", json.dumps(version.guids, indent=1))
