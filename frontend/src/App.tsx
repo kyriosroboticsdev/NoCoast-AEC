@@ -528,13 +528,15 @@ export default function App() {
     }
   };
 
-  const openSample = async () => {
+  const openNamedSample = async (name: string, url: string) => {
     try {
-      await openSessionWithModel("sample-house.ifc", await api.fetchBytes(SAMPLE_URL), SAMPLE_URL);
+      await openSessionWithModel(name, await api.fetchBytes(url), url);
     } catch (e) {
       setLoadError(String(e instanceof Error ? e.message : e));
     }
   };
+
+  const openSample = () => openNamedSample("sample-house.ifc", SAMPLE_URL);
 
   const toggleRooms = () => {
     const next = !roomsVisible;
@@ -644,7 +646,8 @@ export default function App() {
           {!active && (
             <div className="home-layer">
               <Home busy={busy} planners={planners} planner={planner} setPlanner={setPlanner}
-                onSubmit={startSession} onAttach={openFile} onReplay={(r) => void replaySession(r)} backendUp={backendUp} />
+                onSubmit={startSession} onAttach={openFile} onOpenSample={(name, url) => void openNamedSample(name, url)}
+                onReplay={(r) => void replaySession(r)} backendUp={backendUp} />
             </div>
           )}
         </div>
