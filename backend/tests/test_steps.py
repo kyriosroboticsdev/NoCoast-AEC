@@ -1,6 +1,7 @@
 """Build steps: application, rejection messages, cascades, and the streaming runner."""
 
 import json
+from unittest.mock import patch
 
 import pytest
 
@@ -72,10 +73,13 @@ def test_stream_applies_steps_as_they_complete_and_rejects_bad_ones():
              {"step": "room", "name": "Kitchen", "rect": [1, 0, 3, 5]},   # overlaps → rejected
              {"step": "window", "room": "hall", "side": "S"}]
     text = json.dumps({"steps": steps})
-    for cut in range(0, len(text) + 1, 17):
-        stream.feed(text[:cut])
-    stream.feed(text)
-    stream.close()
+    # Previews write the IFC without tessellating; the finished model is what gets geometry-checked.
+    with patch("ifc.builder.ifcopenshell.geom.create_shape") as shape:
+        for cut in range(0, len(text) + 1, 17):
+            stream.feed(text[:cut])
+        stream.feed(text)
+        stream.close()
+        assert shape.call_count == 0
     assert stream.applied == 3 and len(stream.accepted) == 2 and len(stream.rejected) == 1
     assert "overlaps" in stream.rejected[0][2] and stream.rejected[0][0] == 2
     assert [r.id for r in stream.design.rooms] == ["hall"] and stream.design.windows
@@ -84,3 +88,29 @@ def test_stream_applies_steps_as_they_complete_and_rejects_bad_ones():
     partial = next(e for e in events if e[0] == "partial")
     assert partial[2]["ifc_url"].startswith("/models/partial/") and partial[2]["elements"] >= 5
     assert stream.count >= 1
+
+
+def test_an_open_layout_is_previewed_before_the_step_closes():
+    events = []
+    stream = StepStream(lambda stage, msg, data=None: events.append((stage, msg, data)), Design(), {})
+    text = ('{"steps":[{"step":"level","id":"L1"},'
+            '{"step":"layout","level":"L1","rooms":[{"name":"Hall","rect":[0,0,4,6]},{"name":"Kitchen","rect":[4,0,4,4]}]}]}')
+    cut = text.index(',{"name":"Kitchen"')
+    stream.feed(text[:cut])
+    stream.close()
+    assert stream.design.rooms == []  # the layout step has not closed, so nothing is committed
+    partials = [e for e in events if e[0] == "partial" and e[2] and "ifc_url" in e[2]]
+    assert partials and partials[0][2]["elements"] >= 4
+
+
+def test_an_unfinished_rewrite_does_not_preview_a_storey_with_rooms_missing():
+    events = []
+    design, _ = run(Design(), {"step": "level", "id": "L1"},
+                    {"step": "room", "name": "Hall", "rect": [0, 0, 4, 6]},
+                    {"step": "room", "name": "Kitchen", "rect": [4, 0, 4, 4]})
+    stream = StepStream(lambda stage, msg, data=None: events.append((stage, msg, data)), design, {})
+    # The model has restated only the hall so far; previewing that would erase the kitchen.
+    stream.feed('{"steps":[{"step":"layout","level":"L1","rooms":[{"name":"Hall","rect":[0,0,5,6]},{"name":"Kit')
+    stream.close()
+    assert [r.id for r in stream.design.rooms] == ["hall", "kitchen"]
+    assert not [e for e in events if e[0] == "partial" and e[2] and "ifc_url" in e[2]]
