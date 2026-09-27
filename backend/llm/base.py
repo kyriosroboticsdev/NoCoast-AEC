@@ -28,12 +28,15 @@ class LLMError(RuntimeError):
 
 @dataclass(frozen=True)
 class Image:
-    """A PNG shown to the model after the user text, introduced by its caption."""
-    png: bytes
+    """An image shown to the model after the user text, introduced by its caption. A screenshot of
+    the model's own work is a PNG (render/); an image the user attached to the prompt may be any
+    format the providers take (schemas/attachments.py)."""
+    data: bytes
     caption: str
+    media_type: str = "image/png"
 
     def b64(self) -> str:
-        return base64.b64encode(self.png).decode("ascii")
+        return base64.b64encode(self.data).decode("ascii")
 
 
 @dataclass

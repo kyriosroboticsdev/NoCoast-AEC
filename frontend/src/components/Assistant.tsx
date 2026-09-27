@@ -1,7 +1,8 @@
 import { IfcTurnCard } from "@nocoast/ifc-viewer";
-import { ChevronDown, ChevronUp, Code, Database, Eye, ListChecks, RotateCcw, Sparkles, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Code, Database, Eye, ListChecks, Paperclip, RotateCcw, Sparkles, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { getSpec, type Version } from "../api/client";
+import { backendUrl, getSpec, type Version } from "../api/client";
+import { formatSize, type Attachment } from "../state/attachments";
 import { PANEL_RANGE } from "../state/layout";
 import type { Message, Session } from "../state/sessions";
 import { turnId } from "../turns";
@@ -15,7 +16,7 @@ interface Props {
   planners: string[];
   planner: string | null;
   setPlanner: (p: string) => void;
-  onSubmit: (text: string) => void;
+  onSubmit: (text: string, images: Attachment[]) => void;
   onAttach: () => void;
   /** Viewer selection that the next prompt will be about. */
   focus: { id: string; label: string } | null;
@@ -76,7 +77,23 @@ export function Assistant({
 }
 
 function UserBubble({ m }: { m: Message }) {
-  return <div className="bubble">{m.text}</div>;
+  return (
+    <div className="bubble">
+      {m.images && m.images.length > 0 && (
+        <div className="bubble-images">
+          {m.images.map((img, i) => {
+            // The thumbnail of this run, or the copy the backend kept with the version after a reload.
+            const src = img.dataUrl ?? (img.url ? backendUrl(img.url) : null);
+            const title = `${img.name} · ${formatSize(img.size)}`;
+            return src
+              ? <img key={i} src={src} alt={img.name} title={title} />
+              : <span key={i} className="attachment-name" title={title}><Paperclip size={13} /> {img.name}</span>;
+          })}
+        </div>
+      )}
+      {m.text}
+    </div>
+  );
 }
 
 function AssistantMessage({ m, head, busy, latest, viewing, onView, onRestore, cardHeight, onResizeCard, onResetCard }: {

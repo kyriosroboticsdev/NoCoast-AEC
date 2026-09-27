@@ -10,6 +10,7 @@ Stateful (what the UI uses):
     GET  /projects/{id}/versions/{n}/{ifc|spec|context|slices|gcode}
     GET  /projects/{id}/versions/{n}/render?azimuth=&elevation=&target=&level=…   a screenshot (PNG) from any view
     GET  /projects/{id}/shots/{name}                                 a screenshot the model was shown while checking its work
+    GET  /projects/{id}/attachments/{file}                           an image the user attached to one of its prompts
     POST /projects/{id}/versions/{n}/construction                     start a live-build simulation job
     GET  /projects/{id}/versions/{n}/construction/{job_id}            poll it
 
@@ -33,7 +34,7 @@ from pathlib import Path
 import ifcopenshell
 from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, Response
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 import config
 from agents import PLANNERS, PlanResult, get_planner
@@ -45,6 +46,7 @@ from ifc.builder import write_ifc
 from ifc.lifter import LiftError, lift
 from llm import PROVIDERS, get_llm
 from render import ViewError, render, scene_of
+from schemas.attachments import MAX_IMAGES, STORED_NAME, ImageAttachment, media_type_for
 from schemas.bim import BuildingSpec
 from schemas.look import View
 from schemas.ops import Op
@@ -69,6 +71,8 @@ class PromptRequest(BaseModel):
     planner: str | None = None
     base_version: int | None = None
     focus: str | None = None  # spec element id selected in the viewer (e.g. "L1-wall-hall-W"); described to the model
+    # Images attached to this prompt (a sketched plan, a photo): base64 or a data: URL, validated in schemas/attachments.py.
+    images: list[ImageAttachment] = Field(default_factory=list, max_length=MAX_IMAGES)
 
 
 class OpsRequest(BaseModel):
@@ -179,7 +183,8 @@ def get_project(project_id: str) -> dict:
 def prompt_project(project_id: str, req: PromptRequest):
     _project(project_id)
     llm = get_llm(req.planner) if req.planner in PROVIDERS else get_llm()
-    return sse_response(lambda emit: pipeline.run_prompt(store, llm, project_id, req.prompt, req.base_version, emit, req.focus))
+    return sse_response(lambda emit: pipeline.run_prompt(store, llm, project_id, req.prompt, req.base_version, emit, req.focus,
+                                                         req.images))
 
 
 @router.post("/projects/{project_id}/ops")
@@ -300,6 +305,16 @@ def project_shot(project_id: str, name: str):
     if not SHOT_NAME.match(name) or not path.is_file():
         raise HTTPException(404, f"no screenshot '{name}'")
     return FileResponse(path, media_type="image/png")
+
+
+@router.get("/projects/{project_id}/attachments/{name}")
+def project_attachment(project_id: str, name: str):
+    """An image attached to one of this project's prompts, by its content-addressed name (see `Version.images`)."""
+    _project(project_id)
+    path = store.attachment_path(project_id, name)
+    if not STORED_NAME.match(name) or not path.is_file():
+        raise HTTPException(404, f"no attachment '{name}'")
+    return FileResponse(path, media_type=media_type_for(name))
 
 
 @router.post("/projects/{project_id}/versions/{number}/construction")

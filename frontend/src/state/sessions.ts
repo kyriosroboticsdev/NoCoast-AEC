@@ -41,10 +41,20 @@ export interface Run {
   endedAt?: number;
 }
 
+/** An image the user attached to a prompt. `dataUrl` lives only in memory; `url` is the backend's copy. */
+export interface MessageImage {
+  name: string;
+  mediaType: string;
+  size: number;
+  url?: string;
+  dataUrl?: string;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
   text: string;
+  images?: MessageImage[];
   run?: Run;
 }
 
@@ -172,6 +182,9 @@ const stripSteps = (s: Session): Session => ({
   messages: s.messages.map((m) => (m.run?.steps ? { ...m, run: { ...m.run, steps: undefined } } : m)),
 });
 
+/** Attached images are stored by the backend; their bytes would eat the quota on their own. */
+const withoutImageData = (key: string, value: unknown) => (key === "dataUrl" ? undefined : value);
+
 /**
  * The list as it should be written at a given pressure level: traces of older sessions
  * first, then every trace, then the oldest sessions. `null` when there is nothing left
@@ -202,7 +215,7 @@ function write(list: Session[]) {
       return;
     }
     try {
-      localStorage.setItem(SESSIONS_KEY, JSON.stringify(payload));
+      localStorage.setItem(SESSIONS_KEY, JSON.stringify(payload, withoutImageData));
       pressure = level;
       return;
     } catch (e) {
@@ -345,6 +358,14 @@ export const addMessage = (m: Message) => (s: Session): Session => ({ ...s, mess
 export const patchRun = (msgId: string, patch: Partial<Run>) => (s: Session): Session => ({
   ...s,
   messages: s.messages.map((m) => (m.id === msgId ? { ...m, run: { ...(m.run ?? { stage: "planning" }), ...patch } } : m)),
+});
+
+/** Point a user message's attachments at the backend's copies, so they survive a reload. */
+export const linkImages = (msgId: string, urls: string[]) => (s: Session): Session => ({
+  ...s,
+  messages: s.messages.map((m) => (m.id === msgId && m.images
+    ? { ...m, images: m.images.map((img, i) => (urls[i] ? { ...img, url: urls[i] } : img)) }
+    : m)),
 });
 
 /** Insert or update a trace step on a run (steps arrive as running, then done/error). */

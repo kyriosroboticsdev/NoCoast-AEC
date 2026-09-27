@@ -13,7 +13,9 @@
 
 A new project starts from an empty Design; an edit starts from the head version's
 Design and the model emits only the steps that change it. `emit` receives progress
-stages so the API can stream them.
+stages so the API can stream them. Images the user attached to the prompt go to the
+checklist and to every build round (their names to a model that cannot see them) and
+are stored with the version, so the history shows what the request really was.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -45,6 +48,7 @@ from llm.prompts import (build_system, build_user_message, look_system, look_use
                          requirements_user_message, research_system, research_user_message)
 from render import Shot
 from logsetup import log
+from schemas.attachments import ImageAttachment
 from schemas.bim import BuildingSpec
 from schemas.design import Design
 from schemas.look import LookTurn
@@ -81,6 +85,14 @@ def _noop(stage: str, message: str, data: dict | None = None) -> None:
     pass
 
 
+def attached_images(llm: LLM, images: Sequence[ImageAttachment]) -> list[Image]:
+    """The user's attachments as the adapters take them — empty for a model that cannot see images,
+    which is given their names in the prompt text instead."""
+    if not getattr(llm, "vision", False):
+        return []
+    return [Image(i.raw, f"attached by the user: {i.name}", i.media_type) for i in images]
+
+
 def _call(llm: LLM, request: LLMRequest, emit: Emit = _noop, stream: StepStream | None = None) -> dict:
     """One streamed LLM call with timing and (at DEBUG) the full prompt and reply."""
     model = getattr(llm, "model", None)
@@ -114,12 +126,15 @@ def _call(llm: LLM, request: LLMRequest, emit: Emit = _noop, stream: StepStream 
 
 # --- requirements -------------------------------------------------------------
 
-def request_requirements(llm: LLM, prompt: str, emit: Emit = _noop, focus: str | None = None) -> RequirementsResponse:
+def request_requirements(llm: LLM, prompt: str, emit: Emit = _noop, focus: str | None = None,
+                         attached: Sequence[ImageAttachment] = ()) -> RequirementsResponse:
     errors: list[str] = []
     for attempt in range(config.MAX_REPAIRS + 1):
         emit("requirements", "extracting a checklist from the request" if not attempt else f"repair attempt {attempt}", {"errors": errors})
-        raw = _call(llm, LLMRequest(system=requirements_system(), user=requirements_user_message(prompt, errors, focus),
-                                    schema=REQUIREMENTS_SCHEMA, schema_name="requirements", meta={"prompt": prompt, "focus": focus}), emit)
+        raw = _call(llm, LLMRequest(system=requirements_system(),
+                                    user=requirements_user_message(prompt, errors, focus, [i.name for i in attached]),
+                                    schema=REQUIREMENTS_SCHEMA, schema_name="requirements", meta={"prompt": prompt, "focus": focus},
+                                    images=attached_images(llm, attached)), emit)
         try:
             resp = RequirementsResponse.model_validate(raw)
             unsupported = [r.text for r in resp.requirements if not r.supported]
@@ -185,7 +200,7 @@ class Feedback:
 
 def build_round(llm: LLM, prompt: str, design: Design, checklist: list[str], emit: Emit, *, guids: GuidMap,
                 first_index: int, feedback: Feedback = Feedback(), editing: bool = False, focus: str | None = None,
-                toolbox: Toolbox | None = None) -> StepStream:
+                toolbox: Toolbox | None = None, attached: Sequence[ImageAttachment] = ()) -> StepStream:
     context = _context(design)
     fixes = fix_lines(feedback.issues)
     emit("build", f"{feedback.label(editing)}: asking the model for steps",
@@ -195,9 +210,10 @@ def build_round(llm: LLM, prompt: str, design: Design, checklist: list[str], emi
             "editing": editing, "focus": focus, "issues": [i.as_dict() for i in errors(feedback.issues)], "seen": feedback.seen,
             "bricks": toolbox.bricks if toolbox else []}
     user = build_user_message(prompt, checklist, context, focus=focus, toolbox=toolbox.text() if toolbox else None,
-                              problems=feedback.problems, unmet=feedback.unmet, issues=fixes, seen=feedback.seen)
-    raw = _call(llm, LLMRequest(system=build_system(), user=user,
-                                schema=STEPS_SCHEMA, schema_name="build", meta=meta), emit, stream)
+                              problems=feedback.problems, unmet=feedback.unmet, issues=fixes, seen=feedback.seen,
+                              attached=[i.name for i in attached])
+    raw = _call(llm, LLMRequest(system=build_system(), user=user, schema=STEPS_SCHEMA, schema_name="build", meta=meta,
+                                images=attached_images(llm, attached)), emit, stream)
     # Anything the streaming parser did not see (non-streaming adapters, or a reply that only parsed whole).
     try:
         steps = StepsResponse.model_validate(raw).steps
@@ -236,7 +252,8 @@ def _problem_lines(stream: StepStream) -> list[str]:
 
 def _persist(store: Store, project_id: str, spec: BuildingSpec, guids: GuidMap, *, mode: str, prompt: str | None,
              llm: str | None, ops: list[dict], notes: list[str], design: Design | None, emit: Emit,
-             model: ifcopenshell.file | None = None, checks: list[dict] | None = None) -> VersionData:
+             model: ifcopenshell.file | None = None, checks: list[dict] | None = None,
+             images: list[dict] | None = None) -> VersionData:
     if model is None:
         model, guids = compile_ifc(spec, guids, design.model_dump_json() if design else None)
     guids = prune_guids(spec, guids)
@@ -247,13 +264,14 @@ def _persist(store: Store, project_id: str, spec: BuildingSpec, guids: GuidMap, 
     model.write(str(path))
     log.info("project %s: wrote %s (%d elements, mode=%s)", project_id, path.name, len(spec.elements), mode)
     version = store.add_version(project_id, spec=spec, guids=guids, mode=mode, summary=summarize(model), ifc_path=path,
-                                prompt=prompt, llm=llm, ops=ops, notes=notes, design=design, checks=checks or [])
+                                prompt=prompt, llm=llm, ops=ops, notes=notes, design=design, checks=checks or [],
+                                images=images or [])
     emit("done", f"version {version.number} ready", version.as_version().model_dump() | {"ifc_url": version.ifc_url})
     return version
 
 
 def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_version: int | None = None,
-               emit: Emit = _noop, focus: str | None = None) -> VersionData:
+               emit: Emit = _noop, focus: str | None = None, attached: Sequence[ImageAttachment] = ()) -> VersionData:
     if not prompt.strip():
         raise PipelineError("prompt is empty")
     head = store.head(project_id)
@@ -270,8 +288,17 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
     focus_text = describe_focus(design, focus) if focus and focus.strip() and editing else None
     if focus_text:
         emit("focus", f"selected: {focus_text}", {"id": focus, "text": focus_text})
+    # Attachments belong to this prompt only: they are kept with the version, not carried into later edits.
+    stored_images = [store.save_attachment(project_id, image) for image in attached]
+    if attached:
+        seen = getattr(llm, "vision", False)
+        emit("attachments", f"{len(attached)} image(s) attached: " + ", ".join(i.label() for i in attached)
+             + ("" if seen else f" — {llm.name} cannot see images, only their names are in the prompt"),
+             {"images": stored_images, "seen": seen})
+        if not seen:
+            notes.append(f"{len(attached)} image(s) attached, but {llm.name} cannot read images; the text alone was used")
     try:
-        reqs = request_requirements(llm, prompt, emit, focus_text)
+        reqs = request_requirements(llm, prompt, emit, focus_text, attached)
         checklist = checklist_lines(reqs.requirements)
         notes += [f"not supported: {r.text}" for r in reqs.requirements if not r.supported]
 
@@ -279,7 +306,7 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
 
         steps_total, accepted_total = 0, 0
         stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=0, editing=editing, focus=focus_text,
-                             toolbox=toolbox)
+                             toolbox=toolbox, attached=attached)
         design, guids = stream.design, stream.guids
         steps_total += stream.applied
         accepted_total += len(stream.accepted)
@@ -288,7 +315,7 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
                 break
             stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=steps_total,
                                  feedback=Feedback(problems=_problem_lines(stream)), editing=editing, focus=focus_text,
-                                 toolbox=toolbox)
+                                 toolbox=toolbox, attached=attached)
             design, guids = stream.design, stream.guids
             steps_total += stream.applied
             accepted_total += len(stream.accepted)
@@ -301,7 +328,8 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
             if not unmet and not errors(issues):
                 break
             stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=steps_total,
-                                 feedback=Feedback(unmet=unmet, issues=issues), editing=editing, toolbox=toolbox)
+                                 feedback=Feedback(unmet=unmet, issues=issues), editing=editing, toolbox=toolbox,
+                                 attached=attached)
             design, guids = stream.design, stream.guids
             steps_total += stream.applied
             accepted_total += len(stream.accepted)
@@ -319,7 +347,8 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
             if not review.problems:
                 break
             stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=steps_total,
-                                 feedback=Feedback(seen=review.problems), editing=editing, toolbox=toolbox)
+                                 feedback=Feedback(seen=review.problems), editing=editing, toolbox=toolbox,
+                                 attached=attached)
             design, guids = stream.design, stream.guids
             steps_total += stream.applied
             accepted_total += len(stream.accepted)
@@ -339,7 +368,8 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
             notes.append(f"requirements met: {met}/{total}")
         return _persist(store, project_id, spec, guids, mode="edit" if editing else "design", prompt=prompt, llm=llm.name,
                         ops=[{"step": s} for s in []], notes=notes, design=design, emit=emit, model=model,
-                        checks=[{"text": r.requirement.text, "status": r.status, "detail": r.detail} for r in results])
+                        checks=[{"text": r.requirement.text, "status": r.status, "detail": r.detail} for r in results],
+                        images=stored_images)
     except LLMError as exc:
         raise PipelineError(f"language model unavailable: {exc}") from exc
     except (DesignError, GeometryError) as exc:

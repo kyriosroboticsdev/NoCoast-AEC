@@ -51,6 +51,7 @@ backend/
   schemas/requirements.py  Requirement checklist (typed, checkable) extracted before building
   schemas/bim.py        BuildingSpec — the geometric IR: walls/slabs/roofs/doors/windows/columns/beams/spaces/stairs/fixtures/railings
   schemas/ops.py        Raw element ops (UI/scripts escape hatch; stored as design overrides)
+  schemas/attachments.py  Images attached to a prompt: sniffed, size-capped, content-addressed
   schemas/phases.py     construction phases, derived from an element's IFC class
   core/derive.py        Design → BuildingSpec: walls from room edges, opening placement, stairs, roofs, balconies, porch
   core/rooms.py         room geometry shared by derive and placement: wall pieces, sides, fitting a piece against a wall
@@ -77,7 +78,8 @@ backend/
   llm/                  adapter protocol + mock / llamacpp / claude / ollama / openai-compatible implementations, prompts
   ifc/                  IfcOpenShell compiler: project, walls, slabs, roofs (flat/gable/hip), openings, stairs (+ slab wells),
                         fixtures/railings/beams, geometry helpers; lifter (IFC → spec + design)
-  store/db.py           SQLite projects/versions (spec + design + checks); IFC files under backend/output/projects/<id>/vN.ifc
+  store/db.py           SQLite projects/versions (spec + design + checks + attachments); IFC files, screenshots and
+                        attached images under backend/output/projects/<id>/
   api/routes.py         HTTP API; api/sse.py streams pipeline progress as Server-Sent Events
   agents/               stateless planners for /plan and /generate (template regex → steps, llm)
   tests/                pytest; runs entirely on the mock LLM; tests/evals/prompts.json = accuracy set
@@ -87,6 +89,7 @@ frontend/
   src/api/client.ts        backend client incl. SSE-over-POST parser
   src/App.tsx, main.tsx    React entry point and top-level layout
   src/components/         Sidebar, TopBar, Workspace, Composer, LevelTree, DataViews, ViewerOverlays, …
+  src/state/attachments.ts images attached to a prompt: read, size/type checked, base64 for the backend
   src/turns.ts            version history cards, wiring `packages/ifc-viewer`
   src/platform.ts         the only frontend file that knows about Tauri
   src-tauri/              Tauri 2 shell; starts `backend/.venv` python on start, kills it on exit
@@ -105,7 +108,7 @@ cd backend
 pip install -r requirements.txt
 cp .env.example .env            # optional; defaults to the mock LLM
 python main.py                  # http://127.0.0.1:8765
-python -m pytest                # 348 tests, ~40 s
+python -m pytest                # 413 tests, ~80 s
 python tools/eval.py            # accuracy of the configured model on tests/evals/prompts.json
 
 # frontend (once)
@@ -347,7 +350,8 @@ browser ────────────────────────
 - preview files are served by the `/models` static mount and pruned after 30 minutes.
 
 **Step log (transparency).** Every SSE event carries `seq` and `t`; stages: `requirements` (the checklist,
-unsupported items flagged), `focus` (what the viewer selection resolved to, when one was sent), `build`
+unsupported items flagged), `focus` (what the viewer selection resolved to, when one was sent),
+`attachments` (the images sent with the prompt, and whether this provider can see them), `build`
 (which round and why: rejected steps / unmet requirements listed),
 `llm` (what was sent to which model; then chars, seconds, steps applied/rejected, previews), `stream`,
 `step` (one per step: applied with its effect, or rejected with the reason and the raw step), `partial`
@@ -389,7 +393,7 @@ ones that no longer apply, with a note). Deleting a wall deletes its openings; l
 class LLMRequest:
     system: str; user: str; schema: dict; schema_name: str  # "requirements" | "research" | "build" | "look"
     meta: dict                                              # side channel for the mock only
-    images: list[Image]                                     # PNG + caption each; sent only to vision models
+    images: list[Image]                                     # bytes + caption + media type; vision models only
 
 class LLM(Protocol):
     name: str
@@ -407,6 +411,8 @@ class LLM(Protocol):
 
 Images go after the user text, each introduced by its caption: Anthropic `image` blocks (`claude`), `image_url`
 data-URL parts (`openai`, `llamacpp`), or the message's `images` list with the captions appended (`ollama`).
+They are screenshots of the model's own work (§4.15) and images the user attached to the prompt (§4.8.1), which
+is why an image carries its own media type rather than being assumed to be a PNG.
 
 Every provider receives the schema through `llm/schema.py::strict_schema` (all properties required,
 objects closed, tuples as arrays, `oneOf`→`anyOf`, optionally without numeric bounds). Two prompts exist
@@ -418,6 +424,24 @@ step to rearrange a storey because rooms may never overlap between steps). The u
 `CURRENT DESIGN` (empty or the rendered design) + `REQUEST` + `CHECKLIST` (+ rejected steps or unmet
 requirements in fix rounds). `(context, prompt) → steps` pairs are stored with every version — the
 fine-tuning target for a specialised model later.
+
+#### 4.8.1 Images the user attaches
+
+A prompt may carry up to 6 images (`schemas/attachments.py`): a sketched plan, a photo of the plot, a
+reference building. `POST /projects/{id}/prompt` takes them as base64 (a `data:` URL is unwrapped), and
+the magic bytes — not the client's claim — decide the media type, so a PDF or an IFC file is refused with
+a message instead of reaching the model. They then go to the checklist call and to every build round,
+because a sketch is as much a source of requirements as the sentence next to it; the system prompts say to
+take the layout from a plan and the style from a photo, and to let the text win where the two disagree.
+
+The file names are always named in the user message (`ATTACHED IMAGES (2), sent with this request: …`); the
+bytes only go to a provider whose `vision` is true. A text-only provider therefore still knows something was
+sent, an `attachments` event says so in the step log, and the version notes record *"1 image(s) attached, but
+llamacpp cannot read images; the text alone was used"* rather than pretending the picture was used.
+Attachments belong to the prompt that carried them, not to the project: a later edit starts from the design,
+not from the sketch. Each one is stored under `output/projects/<id>/attachments/<sha1>.<ext>` (so the same
+sketch sent twice is stored once), recorded on the version as `{name, media_type, bytes, url}` and served
+back by `GET /projects/{id}/attachments/{file}` for the conversation to show.
 
 ### 4.9 GlobalId stability
 
@@ -452,7 +476,7 @@ edited with the same ids. A geometric lifter for *foreign* IFC files is the desi
 ### 4.12 Version store and API
 
 `backend/store/db.py`, SQLite: `versions(project_id, number, parent, prompt, mode, llm, spec, design,
-checks, guids, ops, notes, summary, ifc_path)`. Modes: `design`, `edit`, `ops`, `revert`, `import`.
+checks, images, guids, ops, notes, summary, ifc_path)`. Modes: `design`, `edit`, `ops`, `revert`, `import`.
 History is linear; `revert/{n}` appends a copy of *n*; `base_version` gives optimistic concurrency (409).
 
 | method / path | body | result |
@@ -460,7 +484,7 @@ History is linear; `revert/{n}` appends a copy of *n*; `base_version` gives opti
 | `GET /health` | | `{ok, llm: {provider, model}}` |
 | `POST /projects` | `{name}` | project |
 | `GET /projects/{id}` | | `{project, head, versions}` |
-| `POST /projects/{id}/prompt` | `{prompt, base_version?, focus?}` | **SSE** — design or edit; `focus` is the spec element id selected in the viewer (`L1-wall-hall-W`, `door-kitchen-hall`, `L1-space-hall`, …), described to the model in words by `core/context.py::describe_focus` ("SELECTED IN THE VIEWER: the west exterior wall of the Hall (L1) …") |
+| `POST /projects/{id}/prompt` | `{prompt, base_version?, focus?, images?}` | **SSE** — design or edit; `focus` is the spec element id selected in the viewer (`L1-wall-hall-W`, `door-kitchen-hall`, `L1-space-hall`, …), described to the model in words by `core/context.py::describe_focus` ("SELECTED IN THE VIEWER: the west exterior wall of the Hall (L1) …"); `images` are `{name, data}` attachments (§4.8.1) |
 | `POST /projects/{id}/ops` | `{ops, base_version?}` | **SSE** — raw element ops (stored as overrides) |
 | `POST /projects/{id}/revert/{n}` | | **SSE** |
 | `POST /projects/{id}/import` | multipart `file` (.ifc) | **SSE** |
@@ -469,6 +493,7 @@ History is linear; `revert/{n}` appends a copy of *n*; `base_version` gives opti
 | `GET /projects/{id}/versions/{n}/context` | | text — exactly what the LLM sees when editing |
 | `GET /projects/{id}/versions/{n}/render` | `?target=&azimuth=&elevation=&level=&cut=&hide=&position=&look_at=&distance=&ortho=&fov=&width=&height=` | a PNG from any view — the renderer the model looks through; `X-Visible` lists the elements in frame |
 | `GET /projects/{id}/shots/{name}` | | a screenshot the model was shown (linked from the `look` SSE stage) |
+| `GET /projects/{id}/attachments/{file}` | | an image the user attached to one of this project's prompts |
 | `GET /projects/{id}/versions/{n}/slices`, `…/gcode` | `?layer_height=` | horizontal slices of the compiled IFC in construction-phase order; slicer-style preview G-code (`slicer/`) |
 | `POST /projects/{id}/versions/{n}/construction`, `GET …/construction/{job}` | | live-build job: one IFC per element in construction order, polled by the viewer (`core/construction.py`) |
 | `POST /plan`, `/build`, `/generate` | | stateless one-shots (scripts, tests) |
@@ -516,6 +541,11 @@ remembered so a merge cannot resurrect them). IFC files opened from disk are kep
 IndexedDB, since `localStorage` is far too small for a model, and are deleted with the session.
 Opening a session re-reads its project head from the backend, so a run that finished after the window
 went away is picked up instead of leaving the session a version behind.
+
+**Attaching images** (`src/state/attachments.ts`). The composer's **+** menu attaches images to the next
+prompt — picked, dropped onto the composer, or pasted into it. They appear as thumbnails before sending and
+stay with the sent message; their bytes are never written to `localStorage` (the sessions there would blow
+the quota), so after a reload the thumbnails come from the backend's copy on the version.
 
 `Open IFC…` and `Sample` view a file in the main viewer without adding it to the project; the
 backend's `/projects/{id}/import` endpoint has no button yet. The server-side slicer and live-build
@@ -653,7 +683,7 @@ shows each reason (usually an edit request the model could not map onto existing
 
 ## 5. Tests
 
-`cd backend && python -m pytest` — 400 tests on the mock LLM, no network: the look loop (screenshots sent to
+`cd backend && python -m pytest` — 413 tests on the mock LLM, no network: the look loop (screenshots sent to
 the model, the views it asks for, what it sees driving a fix round, text-only models skipping it, each
 adapter's image format) and the renderer (plan cuts with solid caps, x-rayed targets, bad views explained,
 the render and screenshot routes) · the geometry kernel (every
@@ -667,7 +697,9 @@ in a garden wall, a room-less footbridge through the pipeline, the template and 
 overlapping room mid-stream) · checks against a template design and the eval fixtures · raw ops
 semantics · partial-JSON parsing of every prefix · compile→lift round trip incl. the design · GlobalId
 survival across edits, ops, revert · the SSE project API end to end (design with streamed steps and
-previews, edits keeping GlobalIds, overrides replayed, conflict 409, import) · every element kind
+previews, edits keeping GlobalIds, overrides replayed, conflict 409, import) · prompt attachments (sniffing
+and the size cap, the bytes reaching a vision model and staying behind for one without, a prompt whose images
+are recorded on the version and served back) · every element kind
 compiling. `python tools/eval.py` measures accuracy on the real model.
 
 ## 6. Decisions and their reasons

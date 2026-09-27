@@ -115,6 +115,7 @@ body.resizing * { cursor: var(--drag-cursor, col-resize) !important; }
 .picker-btn:hover { background: var(--hover); color: var(--text-2); }
 .menu { position: absolute; bottom: calc(100% + 8px); right: 0; min-width: 300px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-lg); padding: 6px; z-index: 50; }
 .menu.right { top: calc(100% + 6px); bottom: auto; min-width: 180px; }
+.menu.left { left: 0; right: auto; min-width: 290px; }
 .menu-label { font-size: 12.5px; color: var(--muted); padding: 6px 10px 4px; }
 .menu-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border-radius: 8px; text-align: left; color: var(--text-2); }
 .menu-item:hover:not(:disabled) { background: var(--sunken); }
@@ -133,6 +134,18 @@ body.resizing * { cursor: var(--drag-cursor, col-resize) !important; }
 .send:disabled { background: var(--sunken); color: #aaa9a2; opacity: 1; }
 .composer.hero { width: min(760px, 100%); }
 .composer.hero textarea { min-height: 52px; }
+.composer.dropping { border-color: var(--accent); background: var(--accent-soft); }
+.composer-problem { color: var(--danger); font-size: 12.5px; padding: 0 2px; }
+
+/* attached images, in the composer and in the prompt they went with */
+.attachments { display: flex; flex-wrap: wrap; gap: 8px; }
+.thumb { position: relative; width: 62px; height: 62px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--sunken); }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb button { position: absolute; top: 3px; right: 3px; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: rgba(20, 20, 15, 0.6); color: #fff; }
+.thumb button:hover { background: rgba(20, 20, 15, 0.85); }
+.bubble-images { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.bubble-images img { max-width: 170px; max-height: 130px; border: 1px solid var(--line); border-radius: 10px; object-fit: cover; }
+.attachment-name { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
 
 /* ---------- home ---------- */
 .home-layer { position: absolute; inset: 0; background: var(--bg); z-index: 20; overflow-y: auto; }
