@@ -124,6 +124,7 @@ def _check(cid: str, category: str, title: str, reference: str, status: str, val
 
 
 LIFT = re.compile(r"elevator|(^|_)(platform_)?lift(_|$)")
+TOILET = re.compile(r"(^|_)(wc|toilet|water_closet)(_|$)")
 
 
 def lifts(spec: BuildingSpec) -> list[list[Asset]]:
@@ -194,6 +195,16 @@ class Model:
                 (r.windows if isinstance(item, Window) else r.doors).append(item)
                 if isinstance(item, Door) and (wall.external or len(near) == 1):
                     r.exits.append(item)
+
+    def arrives(self, s: Stair) -> str | None:
+        """The storey a flight climbs to: its egress route down from that storey."""
+        if s.to_level:
+            return s.to_level
+        idx = self.order.index(s.level) if s.level in self.order else -1
+        return self.order[idx + 1] if 0 <= idx < len(self.order) - 1 else None
+
+    def down(self, level: str) -> list[Stair]:
+        return [s for s in self.stairs if self.arrives(s) == level]
 
     def level_of(self, item: Door | Window) -> str | None:
         wall = self.walls.get(item.wall)
@@ -283,7 +294,7 @@ def _travel(m: Model) -> list[tuple[RoomData, float]]:
         if idx == 0:
             dist = max(min(_manhattan(c, e) for e in exits) for c in corners)
         else:
-            flights = [s for s in m.stairs if r.level in (s.level, s.to_level)]
+            flights = m.down(r.level)
             if not flights:
                 continue
             best = math.inf
@@ -349,7 +360,7 @@ def _checks(m: Model, group: str, load: int) -> list[dict]:
                              "" if ok else "Move one exit to the opposite end of the plan so one fire can't block both."))
 
     for lid in m.order[1:]:
-        flights = [s for s in m.stairs if lid in (s.level, s.to_level)]
+        flights = m.down(lid)
         need = 1 if residential else (1 if per_level.get(lid, 0) <= 29 else 2)
         name = m.levels[lid].name
         checks.append(_check(
@@ -528,7 +539,7 @@ def _checks(m: Model, group: str, load: int) -> list[dict]:
 
     # --- plumbing fixtures --------------------------------------------------
     toilets = [f for f in m.fixtures if f.kind == "toilet"] + [
-        a for a in m.assets if re.search(r"(^|_)(wc|toilet|water_closet)(_|$)", a.brick)]
+        a for a in m.assets if TOILET.search(a.brick)]
     count = len(toilets) or sum(1 for r in m.rooms if r.kind == "bathroom")
     if residential:
         need = 1
