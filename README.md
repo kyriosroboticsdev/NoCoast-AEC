@@ -50,7 +50,11 @@ backend/
   schemas/requirements.py  Requirement checklist (typed, checkable) extracted before building
   schemas/bim.py        BuildingSpec — the geometric IR: walls/slabs/roofs/doors/windows/columns/beams/spaces/stairs/fixtures/railings
   schemas/ops.py        Raw element ops (UI/scripts escape hatch; stored as design overrides)
+  schemas/brick_types.py  shared literals: disciplines, hosts, construction phases, finishes, ports
   core/derive.py        Design → BuildingSpec: walls from room edges, opening placement, stairs, roofs, balconies, porch
+  core/rooms.py         room geometry shared by derive and placement: wall pieces, sides, fitting a piece against a wall
+  core/derive_bricks.py brick placement → Asset element (one match over hosts for position, one for elevation)
+  core/placement.py     candidate placements per host and first_fit (the first one that derives without a clash)
   core/checks.py        deterministic verification of a design against its requirements
   bricks/               the brick library: parametric JSON assets per discipline (bricks/library/*.json), search, index
   skills/               assembly know-how the model reads on demand (skills/library/*.md)
@@ -96,7 +100,7 @@ cd backend
 pip install -r requirements.txt
 cp .env.example .env            # optional; defaults to the mock LLM
 python main.py                  # http://127.0.0.1:8765
-python -m pytest                # 104 tests, ~19 s
+python -m pytest                # 348 tests, ~40 s
 python tools/eval.py            # accuracy of the configured model on tests/evals/prompts.json
 
 # frontend (once)
@@ -494,11 +498,15 @@ with one generic step. 169 bricks across 11 disciplines (architecture, interior,
 electrical, data, fire, energy, structure, transport, site), each a JSON card in `bricks/library/`:
 
 - `ifc_class` / `predefined_type` (IfcSolarDevice, IfcBoiler, IfcTransportElement, IfcBeam, IfcGeographicElement …),
-  `host` (`floor`, `wall`, `ceiling`, `roof`, `free`, `span`), `phase`, `finish`, `tags`, `description`;
+  `host` (`floor`, `wall`, `ceiling`, `roof` in a room; `free` or `span` between two points anywhere;
+  `site` / `site_span` outside the building), `phase`, `finish`, `tags`, `description`. One table
+  (`bricks/model.py::HOSTS`) says which placement fields each host takes, and drives step validation,
+  the card text and the build prompt;
 - `params` as `[default, min, max]` and `parts` — boxes whose dimensions are expressions over the params
   (`"w"`, `"d - 0.05"`), so one card resizes;
-- `ports` (`needs` / `provides`: water, drain, gas, flue, power, data …), `clearance`, and `rules`
-  (`rooms`, `exterior`, `ground_only`, `not_below_ground`, `one_per_building`, `overlap_ok`, `max_span`, `structural`).
+- `ports` (a service kind — water, drain, gas, flue, power, data … — going in or out), `structural`,
+  `max_span`, and `rules` (`rooms`, `ground_only`, `not_below_ground`, `one_per_building`,
+  `clearance`, `overlap_ok`).
 
 ```json
 {"step": "brick", "brick": "solar_pv_array", "id": "pv-1", "params": [{"name": "w", "value": 8}]}
@@ -507,8 +515,8 @@ electrical, data, fire, energy, structure, transport, site), each a JSON card in
 ```
 
 `schemas/steps.py::_apply_brick` rejects an unknown id (with the closest matches), out-of-range params and
-broken rules; `core/derive.py` turns each placement into an `Asset` element (floor/wall/ceiling/roof hosted,
-free, or a span between two points), adds wet risers for rooms whose bricks need water, and
+broken rules; `core/derive_bricks.py` turns each placement into an `Asset` element (floor/wall/ceiling/roof hosted,
+free, on site clear of the building, or a span between two points), `core/derive.py` adds wet risers for rooms whose bricks need water, and
 `ifc/assets.py` compiles it to the card's IFC class with a `NoCoast_Brick` pset (id, params, phase).
 
 **Skills** (`skills/library/*.md`, 14 of them) are how-to notes: kitchen and bathroom layout, plumbing and
@@ -556,7 +564,7 @@ shows each reason (usually an edit request the model could not map onto existing
 
 ## 5. Tests
 
-`cd backend && python -m pytest` — 346 tests on the mock LLM, no network: every brick placing with
+`cd backend && python -m pytest` — 348 tests on the mock LLM, no network: every brick placing with
 its defaults and compiling to valid IFC, brick rules, clashes, ports and spans, the research loop and an
 end-to-end prompt with a lift, solar, heat pump, boiler and trees · derivation (walls from shared
 and free edges, opening placement, stairs and wells, roofs over partial footprints, id stability when a
