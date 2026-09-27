@@ -1,9 +1,9 @@
 """The brick library: loading, lookup and search.
 
-Bricks live as JSON files in `bricks/library/` (one file per discipline). Adding a brick
-is adding a JSON object — no code. `search` is a small BM25 over the id, name, category,
-tags and description, with a few trade synonyms, so the model can ask in its own words
-("somewhere to hang coats", "fresh air", "stop the floor sagging").
+Bricks live as JSON files in `bricks/library/` (grouped however is convenient; the loader reads them
+all). Adding a brick is adding a JSON object — no code. `search` is a small BM25 over the id, name,
+tags and description, with a few synonyms, so the model can ask in its own words ("somewhere to
+hang coats", "fresh air", "stop the floor sagging").
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 from bricks.model import Brick
 
 LIBRARY_DIR = Path(__file__).resolve().parent / "library"
-FIELD_WEIGHTS = {"id": 3.0, "name": 3.0, "tags": 2.0, "category": 1.5, "discipline": 1.0, "description": 1.0}
+FIELD_WEIGHTS = {"id": 3.0, "name": 3.0, "tags": 2.0, "description": 1.0}
 SYNONYMS = {
     "toilet": ["wc"], "wc": ["toilet"], "loo": ["wc", "toilet"], "tub": ["bath", "bathtub"], "bathtub": ["bath"],
     "fridge": ["refrigerator"], "refrigerator": ["fridge"], "stove": ["cooker", "hob", "oven"], "cooker": ["oven", "hob"],
@@ -93,13 +93,10 @@ class Library:
         hits = self.search(item, limit=3)
         return {b.id for b, score in hits if score >= hits[0][1] * 0.8} if hits else set()
 
-    def disciplines(self) -> dict[str, list[Brick]]:
-        out: dict[str, list[Brick]] = {}
-        for b in self.bricks.values():
-            out.setdefault(b.discipline, []).append(b)
-        return out
+    def tags(self) -> Counter:
+        return Counter(t for b in self.bricks.values() for t in b.tags)
 
-    def search(self, query: str, discipline: str | None = None, limit: int = 8) -> list[tuple[Brick, float]]:
+    def search(self, query: str, tag: str | None = None, limit: int = 8) -> list[tuple[Brick, float]]:
         q = tokens(query or "")
         expanded: Counter = Counter()
         for t in q:
@@ -110,7 +107,7 @@ class Library:
         scored = []
         for bid, doc in self._docs.items():
             brick = self.bricks[bid]
-            if discipline and brick.discipline != discipline and brick.category != discipline:
+            if tag and tag.lower() not in brick.tags:
                 continue
             length = sum(doc.values())
             score = 0.0
@@ -121,7 +118,7 @@ class Library:
                 score += qw * self._idf.get(t, 0.0) * tf * (k1 + 1) / (tf + k1 * (1 - b + b * length / self._avg))
             if query and query.strip().lower().replace(" ", "_") == bid:
                 score += 10.0
-            if score > 0 or (not q and discipline):
+            if score > 0 or (not q and tag):
                 scored.append((brick, round(score, 3)))
         scored.sort(key=lambda s: (-s[1], s[0].id))
         return scored[:limit]
@@ -130,11 +127,8 @@ class Library:
         return [b.id for b, _ in self.search(text, limit=limit)]
 
     def index_text(self) -> str:
-        """Every brick id grouped by discipline: small enough for a system prompt (~2k chars)."""
-        lines = []
-        for disc, bricks in sorted(self.disciplines().items()):
-            lines.append(f"  {disc}: " + ", ".join(sorted(b.id for b in bricks)))
-        return "\n".join(lines)
+        """Every brick id: small enough for a system prompt (~3k chars)."""
+        return ", ".join(sorted(self.bricks))
 
 
 def _load_file(path: Path) -> list[Brick]:

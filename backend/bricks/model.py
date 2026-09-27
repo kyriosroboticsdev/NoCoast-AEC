@@ -1,65 +1,46 @@
-"""What a brick is: one reusable, parametric building asset the model can search for and place.
+"""What a brick is: one reusable, parametric asset definition — anything that has a shape.
 
-A brick knows its IFC identity (class + predefined type), its size parameters and their
-limits, how it is hosted (`HOSTS`: standing on the floor, fixed to a wall, hung from the
-ceiling, on the roof, free-standing, spanning two points, or outside on the site), the service ports it
-needs or provides (water, drain, power, air …), placement rules, and the solids it is
-drawn with. The solids are expressions over the parameters, so one brick covers every
-size of the thing it describes.
+A brick is data, never code: an IFC identity (any non-abstract IfcElement class), named parameters
+with limits, a geometry tree (bricks/geometry.py) whose numbers are expressions over the parameters,
+and a little generic metadata:
 
-Parts are authored in the brick's own bounding-box frame: (0, 0, 0) is the back-left
-corner on the floor, x runs across the width `w`, y from the back (against the wall)
-to the front over the depth `d`, z up over the height `h`. Derivation re-centres the
-footprint on the placement point, the same way catalog fixtures are placed.
+  * `origin`     the point of the geometry that lands on the placement point
+  * `mount`      how it attaches when placed against something (bricks/place.py): `rest` on an upward
+                 surface, `fix` its back (local -y) against a vertical face, `hang` from a downward
+                 surface, or run along a `path` between two points
+  * `elevation`  default gap between that surface and the origin (a wall cabinet at 1.5 m)
+  * `materials`  named colours; geometry nodes pick one by key, the first is the default
+  * `connectors` what it needs (`in`) and supplies (`out`), as free-form kinds ("water", "power", "air")
+  * `keepout`    volumes (geometry nodes) nothing else may stand in — access space, swing, clearance
+  * `properties` free-form values written to IFC and read by whatever rules a project applies
+
+A parameter can `fit` its placement: an expression over PLACEMENT_VARS (`ref_w`, `ref_d`, `ref_h`
+— the size of what it is placed in or on — and `path_length`) that sets it when the step leaves
+it out, so a column fills its storey and a beam takes the length of its path.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal, Optional, Union, get_args
+from functools import lru_cache
+from typing import Literal, Optional, Union
 
+import ifcopenshell.ifcopenshell_wrapper as ifc_wrapper
+import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from bricks.expr import ExprError, evaluate, names_in
-from schemas.brick_types import Discipline, Finish, Host, Phase, Port, PortKind
+from bricks.geometry import Bounds, GeometryError, Node, bounds, corners, evaluate as evaluate_geometry, transform, unknown_names
 
 Number = Union[float, str]
-
-# Port kinds every building already has once it has rooms: the derived rough-in brings them to
-# any room that needs them (core/derive.py::_mep).
-BASE_SERVICES: tuple[PortKind, ...] = ("water_cold", "drain", "power")
-
-
-@dataclass(frozen=True)
-class HostRule:
-    """How a brick with this host is placed: which step fields it needs and what that means."""
-
-    hint: str
-    needs: tuple[tuple[str, ...], ...] = ()   # each group: at least one of these step fields
-    outside: bool = False                     # stands outside every room; a `room` is refused
-    spans: bool = False                       # placed from `start` to `end`; its length replaces `d`
-
-
-PLACEMENT_FIELDS = ("room", "position", "start", "end")
-
-
-def given_fields(placed) -> set[str]:
-    """Which of PLACEMENT_FIELDS a brick step or placed BrickDef sets."""
-    return {f for f in PLACEMENT_FIELDS if getattr(placed, f) is not None}
-
-
-_LINE = (("start",), ("end",))
-HOSTS: dict[Host, HostRule] = {
-    "floor": HostRule("stands on the floor of `room`, against `side`/`near` or at `position`", (("room",),)),
-    "wall": HostRule("fixed to a wall of `room` (`side`/`near`) at its mount height", (("room",),)),
-    "ceiling": HostRule("hangs under the ceiling of `room`", (("room",),)),
-    "roof": HostRule("on the top roof at `position` (null = centred)"),
-    "free": HostRule("free-standing at `position` on `level`, or in `room`", (("room", "position"),)),
-    "span": HostRule("spans from `start` to `end` inside the building (beams)", _LINE, spans=True),
-    "site": HostRule("outside the building at `position` [x, y], clear of every room", (("position",),), outside=True),
-    "site_span": HostRule("runs outside the building from `start` to `end` (hedges, fences)", _LINE, outside=True, spans=True),
+Mount = Literal["rest", "fix", "hang", "path"]
+PLACEMENT_VARS = ("ref_w", "ref_d", "ref_h", "path_length")
+MOUNT_HINTS: dict[Mount, str] = {
+    "rest": "stands on an upward surface: the floor of `ref`, or the top of a solid `ref`; `side`/`near` puts its back against a side",
+    "fix": "fixed by its back to a vertical side of `ref` (`side` or `near`), `elevation` above its base",
+    "hang": "hangs from a downward surface: the ceiling of `ref`, or the underside of a solid `ref`",
+    "path": "runs from `start` to `end`; its length is the distance between them",
 }
-assert set(HOSTS) == set(get_args(Host)), "every host needs a HostRule"
+IFC_SCHEMA = ifc_wrapper.schema_by_name("IFC4")
 
 
 class Param(BaseModel):
@@ -70,48 +51,57 @@ class Param(BaseModel):
     max: Optional[float] = None
     unit: str = "m"
     description: str = ""
+    fit: Optional[str] = Field(None, description="Expression over the placement (ref_w, ref_d, ref_h, path_length) used when not given")
 
     @model_validator(mode="after")
     def _range(self) -> "Param":
         if (self.min is not None and self.default < self.min) or (self.max is not None and self.default > self.max):
             raise ValueError(f"param {self.name}: default {self.default} is outside [{self.min}, {self.max}]")
+        if self.fit is not None and names_in(self.fit) - set(PLACEMENT_VARS):
+            raise ValueError(f"param {self.name}: fit may only use {', '.join(PLACEMENT_VARS)}")
         return self
 
-
-class PartSpec(BaseModel):
-    """One solid, in the brick's bounding-box frame; every coordinate may be an expression."""
-
-    model_config = ConfigDict(extra="forbid")
-    shape: Literal["box", "round"] = "box"
-    x: Number = 0
-    y: Number = 0
-    z: Number = 0
-    w: Number = "w"
-    d: Number = "d"
-    h: Number = "h"
-
-    @model_validator(mode="before")
-    @classmethod
-    def _compact(cls, v):
-        """[x, y, z, w, d, h] is a box; ["round", x, y, z, w, d, h] a cylinder."""
-        if isinstance(v, (list, tuple)):
-            if len(v) == 7:
-                return dict(zip(("shape", "x", "y", "z", "w", "d", "h"), v))
-            if len(v) == 6:
-                return dict(zip(("x", "y", "z", "w", "d", "h"), v))
-            raise ValueError(f"a compact part is [x, y, z, w, d, h] or [shape, x, y, z, w, d, h], got {v!r}")
+    def check(self, owner: str, v: float) -> float:
+        if (self.min is not None and v < self.min) or (self.max is not None and v > self.max):
+            lo = "-inf" if self.min is None else f"{self.min:g}"
+            hi = "inf" if self.max is None else f"{self.max:g}"
+            raise ValueError(f"brick {owner}: {self.name}={v:g} is outside {lo}..{hi} {self.unit}")
         return v
 
 
-class Rules(BaseModel):
+class Material(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    rooms: Optional[list[str]] = Field(None, description="Room kinds it belongs in; null = any room")
-    not_below_ground: bool = False
-    ground_only: bool = False
-    min_room_area: Optional[float] = None
-    clearance: float = Field(0.0, ge=0, description="Free floor in front of it, metres")
-    overlap_ok: bool = Field(False, description="May overlap other pieces (rugs, wall-mounted items above a counter)")
-    one_per_building: bool = False
+    color: tuple[float, float, float] = Field((0.8, 0.8, 0.8), description="RGB, 0..1")
+    opacity: float = Field(1.0, ge=0.05, le=1.0)
+    name: Optional[str] = Field(None, description="IFC material name, e.g. Timber, Steel")
+
+    @field_validator("color")
+    @classmethod
+    def _rgb(cls, v):
+        if any(not 0 <= c <= 1 for c in v):
+            raise ValueError(f"colour components are 0..1, got {v}")
+        return v
+
+
+class Connector(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    kind: str
+    direction: Literal["in", "out"] = "in"
+
+    @field_validator("kind")
+    @classmethod
+    def _kind(cls, v: str) -> str:
+        v = v.strip().lower().replace(" ", "_").replace("-", "_")
+        if not v:
+            raise ValueError("a connector needs a kind")
+        return v
+
+    @property
+    def label(self) -> str:
+        return f"{self.kind}:{self.direction}"
+
+
+PropertyValue = Union[bool, float, str]
 
 
 class Brick(BaseModel):
@@ -119,29 +109,25 @@ class Brick(BaseModel):
 
     id: str
     name: str
-    discipline: Discipline
-    category: str
-    ifc_class: str
-    predefined_type: Optional[str] = None
     description: str = ""
     tags: list[str] = Field(default_factory=list)
-    host: Host = "floor"
-    params: list[Param]
-    parts: list[PartSpec] = Field(default_factory=list, description="Empty = one box filling the bounding box")
-    ports: list[Port] = Field(default_factory=list)
-    rules: Rules = Field(default_factory=Rules)
-    phase: Phase = "details"
-    finish: Finish = "device"
-    full_height: bool = Field(False, description="`h` defaults to the storey height (columns, lifts, shafts)")
-    mount: Number = Field(0, description="Height of the brick's base above the floor; 'ceiling' hangs it under the ceiling")
-    legacy_fixture: Optional[str] = Field(None, description="The FixtureKind this brick generalises, if any")
-    structural: bool = Field(False, description="Carries load: counts as a support for the structure check")
-    max_span: Optional[float] = Field(None, description="span bricks: the longest unsupported length it can carry")
+    ifc_class: str = "IfcBuildingElementProxy"
+    predefined_type: Optional[str] = None
+    params: list[Param] = Field(default_factory=list)
+    geometry: list[Node] = Field(min_length=1)
+    origin: tuple[Number, Number, Number] = (0, 0, 0)
+    mount: Mount = "rest"
+    elevation: Number = 0
+    materials: dict[str, Material] = Field(default_factory=lambda: {"default": Material()})
+    connectors: list[Connector] = Field(default_factory=list)
+    keepout: list[Node] = Field(default_factory=list)
+    collides: bool = Field(True, description="False: may overlap other things (a rug, a light over a table)")
+    properties: dict[str, PropertyValue] = Field(default_factory=dict)
 
     @field_validator("params", mode="before")
     @classmethod
     def _params(cls, v):
-        """Library files write params compactly: {"w": [default, min, max], "shelves": [3, 0, 6, "-"]}."""
+        """Compact form: {"w": [default, min, max, unit, description], "n": 3}."""
         if not isinstance(v, dict):
             return v
         out = []
@@ -154,10 +140,8 @@ class Brick(BaseModel):
             item = {"name": name, "default": spec[0]}
             if len(spec) > 2:
                 item["min"], item["max"] = spec[1], spec[2]
-            if len(spec) > 3:
-                item["unit"] = spec[3]
-            if len(spec) > 4:
-                item["description"] = spec[4]
+            for key, value in zip(("unit", "description"), spec[3:]):
+                item[key] = value
             out.append(item)
         return out
 
@@ -173,110 +157,103 @@ class Brick(BaseModel):
         names = [p.name for p in self.params]
         if len(set(names)) != len(names):
             raise ValueError(f"{self.id}: duplicate params")
-        required = {"w", "h"} if self.spans else {"w", "d", "h"}
-        missing = required - set(names)
-        if missing:
-            raise ValueError(f"{self.id}: needs size params {sorted(missing)}")
-        known = set(names) | {"level_h", "length"}
-        for i, part in enumerate(self.parts):
-            for attr in ("x", "y", "z", "w", "d", "h"):
-                value = getattr(part, attr)
-                if isinstance(value, str):
-                    unknown = names_in(value) - known
-                    if unknown:
-                        raise ValueError(f"{self.id}: part {i} {attr} uses unknown names {sorted(unknown)}")
-        if isinstance(self.mount, str) and self.mount != "ceiling" and names_in(self.mount) - known:
-            raise ValueError(f"{self.id}: mount uses unknown names {sorted(names_in(self.mount) - known)}")
+        _check_ifc(self.ifc_class, self.predefined_type)
+        known = set(names) | set(PLACEMENT_VARS)
+        for text, missing in unknown_names(self.geometry + self.keepout, known):
+            raise ValueError(f"{self.id}: {text!r} uses unknown names {sorted(missing)} (params: {', '.join(names) or 'none'})")
+        for text in [v for v in (*self.origin, self.elevation) if isinstance(v, str)]:
+            if names_in(text) - known:
+                raise ValueError(f"{self.id}: {text!r} uses unknown names {sorted(names_in(text) - known)}")
+        if not self.materials:
+            raise ValueError(f"{self.id}: needs at least one material")
+        used = _materials_used(self.geometry)
+        if used - set(self.materials):
+            raise ValueError(f"{self.id}: geometry uses materials {sorted(used - set(self.materials))} it does not define")
+        if self.mount == "path" and self.path_param is None:
+            raise ValueError(f"{self.id}: a path brick needs a param with fit \"path_length\" (its length)")
         return self
 
     # --- evaluation ---------------------------------------------------------
 
     @property
-    def placement(self) -> HostRule:
-        return HOSTS[self.host]
+    def path_param(self) -> Param | None:
+        return next((p for p in self.params if p.fit and "path_length" in names_in(p.fit)), None)
 
     @property
-    def spans(self) -> bool:
-        return self.placement.spans
-
-    @property
-    def outside(self) -> bool:
-        return self.placement.outside
-
-    def placement_error(self, given: set[str]) -> str | None:
-        """Why a placement giving these fields (room, position, start, end) cannot work for this host."""
-        rule = self.placement
-        if rule.outside and "room" in given:
-            return f"brick {self.id} ({rule.hint}): drop `room`"
-        missing = [" or ".join(f"`{f}`" for f in group) for group in rule.needs if not given & set(group)]
-        if missing:
-            return f"brick {self.id} ({rule.hint}): give " + " and ".join(missing)
-        return None
+    def default_material(self) -> str:
+        return next(iter(self.materials))
 
     def param(self, name: str) -> Param | None:
         return next((p for p in self.params if p.name == name), None)
 
-    def resolve(self, given: dict[str, float] | None = None) -> dict[str, float]:
-        """Parameter values: the defaults overridden by `given`, each checked against its limits."""
+    def resolve(self, given: dict[str, float] | None = None, context: dict[str, float] | None = None) -> dict[str, float]:
+        """Parameter values — defaults, then fitted to `context`, then `given` — each checked against its
+        limits, plus the context itself (geometry may read ref_w … path_length)."""
+        context = context or {}
         values = {p.name: p.default for p in self.params}
+        for p in self.params:
+            if p.fit and p.name not in (given or {}) and names_in(p.fit) <= set(context):
+                values[p.name] = p.check(self.id, round(evaluate(p.fit, context), 4))
         for name, value in (given or {}).items():
             p = self.param(name)
             if p is None:
-                raise ValueError(f"brick {self.id} has no param '{name}' (params: {', '.join(values)})")
-            v = float(value)
-            if (p.min is not None and v < p.min) or (p.max is not None and v > p.max):
-                lo = "-inf" if p.min is None else f"{p.min:g}"
-                hi = "inf" if p.max is None else f"{p.max:g}"
-                raise ValueError(f"brick {self.id}: {name}={v:g} is outside {lo}..{hi} {p.unit}")
-            values[name] = v
-        return values
+                raise ValueError(f"brick {self.id} has no param '{name}' (params: {', '.join(values) or 'none'})")
+            values[name] = p.check(self.id, float(value))
+        return {**{k: 0.0 for k in PLACEMENT_VARS}, **context, **values}
 
-    def solids(self, values: dict[str, float]) -> list[tuple[str, float, float, float, float, float, float]]:
-        """(shape, x, y, z, w, d, h) per part in the bounding-box frame."""
-        parts = self.parts or [PartSpec(w="length", d="w") if self.spans else PartSpec()]
-        out = []
-        for i, part in enumerate(parts):
-            try:
-                nums = [_num(getattr(part, a), values) for a in ("x", "y", "z", "w", "d", "h")]
-            except ExprError as exc:
-                raise ValueError(f"brick {self.id} part {i}: {exc}") from exc
-            x, y, z, w, d, h = nums
-            if w <= 0 or h <= 0 or (part.shape == "box" and d <= 0):
-                continue  # a part sized away by its parameters (e.g. no shelf when shelves=0)
-            out.append((part.shape, x, y, max(z, 0.0), w, d if part.shape == "box" else w, h))
-        if not out:
+    def _num(self, v: Number, values: dict[str, float]) -> float:
+        return float(v) if not isinstance(v, str) else evaluate(v, values)
+
+    def solids(self, values: dict[str, float]) -> list:
+        """The evaluated solids with the origin moved to (0, 0, 0)."""
+        try:
+            solids = evaluate_geometry(self.geometry, values)
+            shift = transform(tuple(-self._num(v, values) for v in self.origin))
+        except (GeometryError, ExprError) as exc:
+            raise ValueError(f"brick {self.id}: {exc}") from exc
+        if not solids:
             raise ValueError(f"brick {self.id}: every part has zero size with these params")
-        return out
+        return [_moved(s, shift) for s in solids]
 
-    def mount_height(self, values: dict[str, float]) -> float | None:
-        """Base height above the floor; None = hang under the ceiling."""
-        if self.mount == "ceiling":
-            return None
-        return _num(self.mount, values)
+    def keepout_boxes(self, values: dict[str, float]) -> list[Bounds]:
+        """Each keepout volume's bounding box, in the same frame as `solids`."""
+        try:
+            shift = transform(tuple(-self._num(v, values) for v in self.origin))
+            out = []
+            for node in self.keepout:
+                solids = evaluate_geometry([node], values)
+                if solids:
+                    pts = corners(solids, shift)
+                    out.append(tuple(round(float(v), 4) for v in (*pts.min(axis=0), *pts.max(axis=0))))
+            return out
+        except (GeometryError, ExprError) as exc:
+            raise ValueError(f"brick {self.id} keepout: {exc}") from exc
+
+    def elevation_of(self, values: dict[str, float]) -> float:
+        return self._num(self.elevation, values)
 
     @property
-    def provides(self) -> list[PortKind]:
-        return [p.kind for p in self.ports if p.direction == "out"]
+    def provides(self) -> list[str]:
+        return [c.kind for c in self.connectors if c.direction == "out"]
 
     @property
-    def needs(self) -> list[PortKind]:
-        return [p.kind for p in self.ports if p.direction == "in"]
+    def needs(self) -> list[str]:
+        return [c.kind for c in self.connectors if c.direction == "in"]
 
     # --- text for the model ------------------------------------------------
 
     def size_text(self) -> str:
-        v = {p.name: p.default for p in self.params}
-        if self.spans:
-            return f"{v['w']:g}x{v['h']:g} section"
-        return f"{v['w']:g}x{v['d']:g}x{v['h']:g} m"
+        try:
+            x0, y0, z0, x1, y1, z1 = bounds(self.solids(self.resolve()))
+        except ValueError:
+            return "size varies"
+        return f"{x1 - x0:.2g}x{y1 - y0:.2g}x{z1 - z0:.2g} m"
 
     def line(self) -> str:
         """One-line summary for search results."""
-        ports = ""
-        if self.ports:
-            ports = " ports=" + ",".join(f"{p.kind}{'↑' if p.direction == 'out' else ''}" for p in self.ports)
-        rooms = f" rooms={'|'.join(self.rules.rooms)}" if self.rules.rooms else ""
-        return f"{self.id} — {self.name} [{self.discipline}/{self.category}] host={self.host} {self.size_text()}{rooms}{ports}"
+        conn = " connectors=" + ",".join(f"{c.kind}{'↑' if c.direction == 'out' else ''}" for c in self.connectors) if self.connectors else ""
+        tags = f" [{', '.join(self.tags[:5])}]" if self.tags else ""
+        return f"{self.id} — {self.name}{tags} mount={self.mount} {self.size_text()}{conn}"
 
     def card(self) -> str:
         """Everything the model needs to place it correctly."""
@@ -285,31 +262,73 @@ class Brick(BaseModel):
         params = []
         for p in self.params:
             rng = f" {p.min:g}..{p.max:g}" if p.min is not None and p.max is not None else ""
-            params.append(f"{p.name}={p.default:g}{p.unit if p.unit != '-' else ''}{rng}" + (f" ({p.description})" if p.description else ""))
-        lines.append("  params: " + "; ".join(params))
-        lines.append(f"  host {self.host}: {self.placement.hint}")
-        r = self.rules
-        rule_bits = []
-        if r.not_below_ground:
-            rule_bits.append("not below ground")
-        if r.ground_only:
-            rule_bits.append("ground floor only")
-        if r.min_room_area:
-            rule_bits.append(f"room ≥ {r.min_room_area:g} m²")
-        if r.clearance:
-            rule_bits.append(f"{r.clearance:g} m clear in front")
-        if r.one_per_building:
-            rule_bits.append("one per building")
+            fit = f" (fits {p.fit})" if p.fit else ""
+            params.append(f"{p.name}={p.default:g}{p.unit if p.unit != '-' else ''}{rng}{fit}" + (f" ({p.description})" if p.description else ""))
+        if params:
+            lines.append("  params: " + "; ".join(params))
+        lines.append(f"  mount {self.mount}: {MOUNT_HINTS[self.mount]}")
+        bits = []
+        if isinstance(self.elevation, str) or self.elevation:
+            bits.append(f"elevation {self.elevation}")
+        if self.keepout:
+            bits.append(f"{len(self.keepout)} keep-out volume(s)")
+        if not self.collides:
+            bits.append("may overlap other things")
         if self.needs:
-            rule_bits.append("needs " + ", ".join(self.needs))
+            bits.append("needs " + ", ".join(self.needs))
         if self.provides:
-            rule_bits.append("provides " + ", ".join(self.provides))
-        if self.max_span:
-            rule_bits.append(f"spans ≤ {self.max_span:g} m unsupported")
-        if rule_bits:
-            lines.append("  rules: " + "; ".join(rule_bits))
+            bits.append("provides " + ", ".join(self.provides))
+        bits += [f"{k}={v}" for k, v in self.properties.items()]
+        if bits:
+            lines.append("  " + "; ".join(bits))
         return "\n".join(l for l in lines if l)
 
 
-def _num(value: Number, values: dict[str, float]) -> float:
-    return float(value) if not isinstance(value, str) else evaluate(value, values)
+def _moved(solid, shift: np.ndarray):
+    return solid.model_copy(update={"matrix": _mul(shift, solid), "cuts": [_moved(c, shift) for c in solid.cuts]})
+
+
+def _mul(shift: np.ndarray, solid) -> tuple[float, ...]:
+    return tuple(round(float(v), 6) for v in (shift @ solid.m)[:3, :].reshape(-1))
+
+
+def _materials_used(nodes: list) -> set[str]:
+    out = set()
+    for n in nodes:
+        if n.material:
+            out.add(n.material)
+        out |= _materials_used(n.subtract)
+        out |= _materials_used(getattr(n, "children", []))
+    return out
+
+
+@lru_cache(maxsize=512)
+def _check_ifc(ifc_class: str, predefined_type: str | None) -> None:
+    try:
+        decl = IFC_SCHEMA.declaration_by_name(ifc_class)
+    except (RuntimeError, IndexError) as exc:
+        raise ValueError(f"'{ifc_class}' is not an IFC4 class") from exc
+    if not hasattr(decl, "is_abstract") or decl.is_abstract():
+        raise ValueError(f"{ifc_class} is abstract or not an entity; use a concrete class such as IfcBuildingElementProxy")
+    parent, chain = decl, set()
+    while parent is not None:
+        chain.add(parent.name())
+        parent = parent.supertype()
+    if "IfcElement" not in chain:
+        raise ValueError(f"{ifc_class} is not an IfcElement; use an element class such as IfcBuildingElementProxy")
+    if predefined_type is None:
+        return
+    enum = predefined_types(ifc_class)
+    if not enum or predefined_type not in enum:
+        raise ValueError(f"{ifc_class} has no predefined type {predefined_type!r}" + (f" (one of {', '.join(enum)})" if enum else ""))
+
+
+@lru_cache(maxsize=512)
+def predefined_types(ifc_class: str) -> tuple[str, ...]:
+    for attr in IFC_SCHEMA.declaration_by_name(ifc_class).all_attributes():
+        if attr.name() == "PredefinedType":
+            t = attr.type_of_attribute()
+            while hasattr(t, "declared_type"):
+                t = t.declared_type()
+            return tuple(t.enumeration_items())
+    return ()

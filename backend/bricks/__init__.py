@@ -1,7 +1,6 @@
-"""The brick library: parametric, IFC-typed building assets the model searches and places."""
+"""Parametric assets: definitions (model), their geometry, generic placement, and the shared library."""
 
-from bricks.model import BASE_SERVICES, HOSTS, Brick, HostRule, Param, PartSpec, Rules, given_fields
+from bricks.model import MOUNT_HINTS, PLACEMENT_VARS, Brick, Connector, Material, Mount, Param
 from bricks.registry import Library, library
-from schemas.brick_types import Port
 
-__all__ = ["BASE_SERVICES", "HOSTS", "Brick", "HostRule", "Library", "Param", "PartSpec", "Port", "Rules", "given_fields", "library"]
+__all__ = ["MOUNT_HINTS", "PLACEMENT_VARS", "Brick", "Connector", "Library", "Material", "Mount", "Param", "library"]
