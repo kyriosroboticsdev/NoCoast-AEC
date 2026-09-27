@@ -24,7 +24,7 @@ roof from those and compiles them to IFC after every step.
         ──► LLM: BUILD STEPS, streamed ──► each complete step ─► apply to DESIGN ─► derive ─► preview IFC ─► viewer
                                    (room, door, window, stair, brick, roof …)                     ▲     (≤ 1 s apart)
                  rejected steps ─────────────────────────────── fix round (≤ N) ──────────────────┘
-        ──► COORDINATE (clashes, ports/services, structural spans) + CHECK against the checklist ──► errors/unmet → fix round
+        ──► COORDINATE (clashes, connectors, structural spans) + CHECK against the checklist ──► errors/unmet → fix round
         ──► derive BuildingSpec (IR) ─► IfcOpenShell compiler (stable GlobalIds) ─► version store ─► viewer
  edit:  the same, starting from the head version's DESIGN; the model emits only the steps that change it
 ```
@@ -50,16 +50,17 @@ backend/
   schemas/requirements.py  Requirement checklist (typed, checkable) extracted before building
   schemas/bim.py        BuildingSpec — the geometric IR: walls/slabs/roofs/doors/windows/columns/beams/spaces/stairs/fixtures/railings
   schemas/ops.py        Raw element ops (UI/scripts escape hatch; stored as design overrides)
-  schemas/brick_types.py  shared literals: disciplines, hosts, construction phases, finishes, ports
+  schemas/phases.py     construction phases, derived from an element's IFC class
   core/derive.py        Design → BuildingSpec: walls from room edges, opening placement, stairs, roofs, balconies, porch
   core/rooms.py         room geometry shared by derive and placement: wall pieces, sides, fitting a piece against a wall
-  core/derive_bricks.py brick placement → Asset element (one match over hosts for position, one for elevation)
-  core/placement.py     candidate placements per host and first_fit (the first one that derives without a clash)
+  core/derive_bricks.py the building's frames (rooms, site, roof, walls, slabs, placed assets) and brick placement → Asset
+  core/placement.py     candidate placements by mount and tags, and first_fit (the first one that derives without a clash)
   core/checks.py        deterministic verification of a design against its requirements
-  bricks/               the brick library: parametric JSON assets per discipline (bricks/library/*.json), search, index
+  bricks/               the parametric geometry kernel: expr.py (expressions), geometry.py (nodes → solids),
+                        model.py (Brick), place.py (placement against frames), and the JSON library (bricks/library/*.json)
   skills/               assembly know-how the model reads on demand (skills/library/*.md)
   core/research.py      the research loop: the model's tool calls into bricks and skills, collected into a toolbox
-  core/coordinate.py    coordination: clash.py (hard/clearance clashes), assembly.py (ports, room rules), structure.py (spans)
+  core/coordinate.py    coordination: clash.py (solid and keep-out clashes), assembly.py (connectors), structure.py (spans)
   core/stream.py        apply steps as they stream; worker thread compiles previews (geometry-checks only what changed)
   core/pipeline.py      the run: requirements → build stream → fix rounds → check → compile → version
   core/ops.py           apply raw ops to a spec (pure, cascading deletes, re-validates)
@@ -455,7 +456,7 @@ History is linear; `revert/{n}` appends a copy of *n*; `base_version` gives opti
 | `GET /projects/{id}/versions/{n}/slices`, `…/gcode` | `?layer_height=` | horizontal slices of the compiled IFC in construction-phase order; slicer-style preview G-code (`slicer/`) |
 | `POST /projects/{id}/versions/{n}/construction`, `GET …/construction/{job}` | | live-build job: one IFC per element in construction order, polled by the viewer (`core/construction.py`) |
 | `POST /plan`, `/build`, `/generate` | | stateless one-shots (scripts, tests) |
-| `GET /bricks` | `?q=&discipline=&limit=` | brick search (the same ranking the model's `search_bricks` tool uses) |
+| `GET /bricks` | `?q=&tag=&limit=` | brick search (the same ranking the model's `search_bricks` tool uses) |
 | `GET /bricks/{id}` | | the full brick card; 404 lists the closest ids |
 | `GET /skills`, `GET /skills/{name}` | | skill index; one skill's markdown |
 
@@ -493,54 +494,75 @@ on a crash or force-quit. The shell also provides native open/save dialogs and r
 
 ### 4.14 Bricks, skills, research and coordination
 
-Instead of a fixed furniture vocabulary, the model searches a **library of bricks** and places them
-with one generic step. 169 bricks across 11 disciplines (architecture, interior, plumbing, hvac,
-electrical, data, fire, energy, structure, transport, site), each a JSON card in `bricks/library/`:
+Instead of a fixed furniture vocabulary, the model places **bricks**: parametric assets described as
+data, drawn from a library or written by the model itself. Nothing in a brick, or in the kernel that
+evaluates and places it, knows about houses, rooms or disciplines; the building is just one host
+application that supplies frames to place into.
 
-- `ifc_class` / `predefined_type` (IfcSolarDevice, IfcBoiler, IfcTransportElement, IfcBeam, IfcGeographicElement …),
-  `host` (`floor`, `wall`, `ceiling`, `roof` in a room; `free` or `span` between two points anywhere;
-  `site` / `site_span` outside the building), `phase`, `finish`, `tags`, `description`. One table
-  (`bricks/model.py::HOSTS`) says which placement fields each host takes, and drives step validation,
-  the card text and the build prompt;
-- `params` as `[default, min, max]` and `parts` — boxes whose dimensions are expressions over the params
-  (`"w"`, `"d - 0.05"`), so one card resizes;
-- `ports` (a service kind — water, drain, gas, flue, power, data … — going in or out), `structural`,
-  `max_span`, and `rules` (`rooms`, `ground_only`, `not_below_ground`, `one_per_building`,
-  `clearance`, `overlap_ok`).
+**The kernel** (`bricks/`):
+
+- `expr.py` — a safe expression language for every number: arithmetic, comparisons, `and`/`or`/`not`,
+  `a if c else b`, `min max abs sqrt pow floor ceil round clamp hypot`, trigonometry in degrees, `pi`.
+- `geometry.py` — geometry nodes: `box`, `cylinder` (optionally hollow), `cone`, `sphere`, `extrude`,
+  `revolve` (a profile in (r, z) about +z), `sweep` (a profile along a polyline; a circle becomes a pipe),
+  `loft` (between sections with the same vertex count), `mesh`, and `group`. Profiles are `rect`,
+  `circle`, `ngon`, or `points` with `holes`. Any node takes `at`, `rotate` (degrees), `repeat`
+  (`count`, loop variable), `when` (a condition), `material`, and `subtract` (nodes cut out of it).
+  Evaluation yields extrusions, revolutions, pipes and meshes, each with a transform and its cuts.
+- `model.py` — a `Brick`: `ifc_class` / `predefined_type` (any IFC4 product class), `params`
+  (`default`/`min`/`max`, or `fit` to the space it is placed in: `ref_w`, `ref_d`, `ref_h`, `path_length`),
+  `geometry`, `origin`, `mount`, `elevation`, named `materials`, `connectors` (a free-form kind going in
+  or out), `keepout` volumes, `collides`, and free `properties` (e.g. `load_bearing`, `max_span`).
+- `place.py` — generic placement. The host supplies **frames**: an id, a level, a z range, a footprint
+  (a void to stand in, or a solid to stand on), and sides (a line with an outward normal). A placement names a
+  `ref` frame (or a level) and one of `position`, `side`/`near`/`at`, or `start`/`end`. The mount decides the rest:
+  `rest` stands on the floor of a void or the top of a solid, `fix` backs onto a side at an elevation,
+  `hang` hangs from a ceiling or an underside, and `path` runs from start to end with its length as a param.
+
+The 169 library bricks are JSON cards in `bricks/library/*.json`. The files group them for browsing
+only; search is by words and `tags`. The model writes its own with the `asset` step, stored in
+`Design.library` and validated like a library card:
 
 ```json
-{"step": "brick", "brick": "solar_pv_array", "id": "pv-1", "params": [{"name": "w", "value": 8}]}
-{"step": "brick", "brick": "passenger_elevator", "room": "hall", "level": "L1"}
-{"step": "brick", "brick": "hedge", "start": [-2, -2], "end": [14, -2]}
+{"step": "asset", "definition": "{\"id\": \"planter\", \"name\": \"Planter\", \"ifc_class\": \"IfcFurniture\", \"params\": [...], \"geometry\": [...]}"}
+{"step": "brick", "brick": "planter", "ref": "living", "side": "S", "params": [{"name": "w", "value": 1.2}]}
+{"step": "brick", "brick": "solar_pv_array", "ref": "roof", "params": [{"name": "w", "value": 8}]}
+{"step": "brick", "brick": "hedge", "ref": "site", "start": [-2, -2], "end": [14, -2]}
 ```
 
-`schemas/steps.py::_apply_brick` rejects an unknown id (with the closest matches), out-of-range params and
-broken rules; `core/derive_bricks.py` turns each placement into an `Asset` element (floor/wall/ceiling/roof hosted,
-free, on site clear of the building, or a span between two points), `core/derive.py` adds wet risers for rooms whose bricks need water, and
-`ifc/assets.py` compiles it to the card's IFC class with a `NoCoast_Brick` pset (id, params, phase).
+**The building host** (`core/derive_bricks.py::building_frames`) turns the design into frames:
+each room (a void up to the underside of the slab above, with its walls as sides), `site` (the ground around
+the building, whose sides are the building's outer faces), `roof`, every wall, slab, column and beam,
+and every asset once it is placed, so bricks can stand on, hang from or back onto each other.
+`derive_bricks` places bricks in dependency order and turns each into an `Asset`; `ifc/solids.py` compiles
+every solid kind to parametric IFC geometry (swept solids, revolved solids, swept disks, polygonal face
+sets, and boolean differences for cuts), and `ifc/assets.py` emits the brick's IFC class with per-item
+material styles and `NoCoast_Brick` / `NoCoast_Properties` psets. Construction phases come from the IFC class.
 
-**Skills** (`skills/library/*.md`, 14 of them) are how-to notes: kitchen and bathroom layout, plumbing and
-hot water, HVAC, electrical, fire safety, accessibility, structural spans, energy, site, placing bricks.
+**Skills** (`skills/library/*.md`, 15 of them) are how-to notes: kitchen and bathroom layout, plumbing and
+hot water, HVAC, electrical, fire safety, accessibility, structural spans, energy, site, placing bricks, and
+writing assets.
 
 **Research** (`core/research.py`). Between the checklist and the build, the model gets up to
-`BIM_TOOL_ROUNDS` (default 3) turns of at most 8 tool calls each — `search_bricks`, `get_brick`,
-`list_skills`, `get_skill`, `check_design`, `structure_report` — or says it is done. Results stream as
-`research` / `tool` SSE stages and are collected into a toolbox (capped at 14k chars) that goes into every
-build and fix prompt as `LIBRARY`. The build prompt always carries the one-line brick and skill index.
+`BIM_TOOL_ROUNDS` (default 3) turns of at most 8 tool calls each (`search_bricks`, `get_brick`,
+`check_asset`, `list_skills`, `get_skill`, `check_design`, `structure_report`) or says it is done.
+`check_asset` validates a draft definition and returns its card, so the model can iterate on geometry
+before placing it. Results stream as `research` / `tool` SSE stages and are collected into a toolbox
+(capped at 14k chars) that goes into every build and fix prompt as `LIBRARY`.
 
 **Coordination** (`core/coordinate.py`) runs with the checks after the build:
 
-- `clash.py` — footprint + height overlap for any pair involving an asset (skipping `overlap_ok` and
-  structural-on-structural) and intrusions into clearance zones; the stream rejects a clashing brick step
+- `clash.py` — solid overlaps for any pair involving an asset (skipping `collides: false` and
+  load-bearing pairs) and intrusions into keep-out volumes; the stream rejects a clashing brick step
   immediately;
-- `assembly.py` — every port a brick needs beyond the base services must be provided by some brick
-  (a gas boiler needs a gas meter and a flue); room rules give warnings;
+- `assembly.py` — every connector kind an asset takes in must be supplied by some asset, or be one of
+  the host's base services; the issue suggests providers from the library;
 - `structure.py` — clear spans against the wall material's limit (timber 6 m, masonry 7, concrete 8,
-  glass 5), beams against their `max_span`, overhangs over 1 m.
+  glass 5), beams against their `max_span` property, overhangs over 1 m.
 
-Each issue carries suggested steps (found by `first_fit`, which tries candidate placements until one
-derives without a clash); errors join unmet requirements in the fix round. Requirements gain the kinds
-`asset` (brick, room, count) and `structure`.
+Each issue carries suggested steps (found by `first_fit`, which tries candidate placements by mount and
+tags until one derives without a clash); errors join unmet requirements in the fix round. Requirements gain
+the kinds `asset` (brick, room, count) and `structure`.
 
 ## 4.15 Troubleshooting
 
@@ -564,8 +586,9 @@ shows each reason (usually an edit request the model could not map onto existing
 
 ## 5. Tests
 
-`cd backend && python -m pytest` — 348 tests on the mock LLM, no network: every brick placing with
-its defaults and compiling to valid IFC, brick rules, clashes, ports and spans, the research loop and an
+`cd backend && python -m pytest` — 379 tests on the mock LLM, no network: the geometry kernel (every
+node kind and modifier, every solid kind tessellating in IFC to the kernel's extent), every brick placing with
+its defaults and compiling to valid IFC, model-written assets, clashes, connectors and spans, the research loop and an
 end-to-end prompt with a lift, solar, heat pump, boiler and trees · derivation (walls from shared
 and free edges, opening placement, stairs and wells, roofs over partial footprints, id stability when a
 room moves, basements) · polygons (L-shaped rooms and their wall ids, ambiguous sides, curved walls as one
