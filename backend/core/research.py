@@ -114,7 +114,7 @@ def _get_skill(call: ToolCall, design: Design, box: Toolbox) -> str:
 
 def _checked(report: Callable[[Design, Derived], list[Issue]]) -> Tool:
     def run(call: ToolCall, design: Design, box: Toolbox) -> str:
-        if not design.rooms:
+        if not design.has_geometry():
             return "the design is empty; nothing to check yet"
         try:
             derived = analyze(design)

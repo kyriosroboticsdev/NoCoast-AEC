@@ -565,6 +565,10 @@ class Design(BaseModel):
     def all_ids(self) -> set[str]:
         return {x.id for attr in ("levels", "rooms", "columns", "elements", "bricks", *ROOM_OWNED) for x in getattr(self, attr)}
 
+    def has_geometry(self) -> bool:
+        """Anything the compiler can turn into IFC: rooms, free structure, placed bricks, or a porch."""
+        return bool(self.rooms or self.elements or self.bricks or self.columns or self.porch)
+
     def find_brick(self, brick_id: str | None) -> Brick | None:
         """A brick definition: the design's own first, then the shared library."""
         if brick_id is None:

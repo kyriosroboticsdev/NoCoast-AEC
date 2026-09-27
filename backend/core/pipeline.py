@@ -142,7 +142,7 @@ def checklist_lines(reqs: list[Requirement]) -> list[str]:
 
 def _context(design: Design) -> str | None:
     """The current design as the model sees it; None for an empty one."""
-    if not design.rooms:
+    if not design.has_geometry():
         return None
     try:
         return describe_design(design, analyze(design))
@@ -307,7 +307,7 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
             accepted_total += len(stream.accepted)
             results, issues = _verify(design, reqs.requirements, emit)
 
-        rounds = look_rounds() if accepted_total and design.rooms else 0
+        rounds = look_rounds() if accepted_total and design.has_geometry() else 0
         if rounds and not getattr(llm, "vision", False):
             emit("look", f"{llm.name} is not set up to see images (LLM_VISION); skipping the visual check", {"skipped": True})
             rounds = 0
@@ -327,8 +327,8 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
 
         if accepted_total == 0:
             raise PipelineError("the model produced no applicable steps" + (": " + stream.rejected[0][2] if stream.rejected else ""))
-        if not design.rooms:
-            raise PipelineError("the design has no rooms")
+        if not design.has_geometry():
+            raise PipelineError("the design has nothing to build")
 
         emit("compile", "deriving geometry and compiling the final IFC")
         spec, derive_notes = derive(design)
