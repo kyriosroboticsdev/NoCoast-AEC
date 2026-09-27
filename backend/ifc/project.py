@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import get_args
 
 import numpy as np
 import ifcopenshell
@@ -20,8 +19,8 @@ import ifcopenshell.api.style
 import ifcopenshell.api.unit
 
 from core.guids import GuidMap, ensure_guids, key_for_element, key_for_level
+from ifc.solids import Styles
 from schemas.bim import BuildingSpec
-from schemas.brick_types import Finish
 
 SPEC_PSET = "NoCoast_Spec"      # carries the element's spec JSON so our own files can be lifted back losslessly
 DESIGN_PSET = "NoCoast_Design"  # on IfcBuilding: the semantic design the spec was derived from
@@ -66,28 +65,6 @@ MATERIALS = {"Wall": "Masonry", "Wall:masonry": "Masonry", "Wall:concrete": "Con
              "Pipe:water": "Copper", "Pipe:electrical": "Steel", "Outlet": "Plastic", "Light": "Plastic",
              "Panel": "Steel", "Wire": "Plastic"}
 
-# Library brick finishes: style "Asset:<finish>" -> (rgb, transparency, material).
-FINISHES: dict[Finish, tuple[tuple[float, float, float], float, str]] = {
-    "wood": ((0.62, 0.45, 0.30), 0.0, "Timber"),
-    "soft": ((0.52, 0.55, 0.62), 0.0, "Fabric"),
-    "sanitary": ((0.95, 0.95, 0.97), 0.0, "Ceramic"),
-    "appliance": ((0.82, 0.82, 0.84), 0.0, "Steel"),
-    "metal": ((0.58, 0.60, 0.63), 0.0, "Steel"),
-    "glass": ((0.55, 0.75, 0.90), 0.5, "Glass"),
-    "concrete": ((0.72, 0.72, 0.72), 0.0, "Concrete"),
-    "plant": ((0.30, 0.55, 0.28), 0.0, "Vegetation"),
-    "water": ((0.35, 0.62, 0.85), 0.35, "Water"),
-    "stone": ((0.60, 0.58, 0.55), 0.0, "Stone"),
-    "device": ((0.90, 0.90, 0.88), 0.0, "Plastic"),
-    "duct": ((0.70, 0.73, 0.76), 0.0, "Galvanised steel"),
-    "solar": ((0.12, 0.16, 0.30), 0.0, "Glass"),
-    "fire": ((0.80, 0.12, 0.12), 0.0, "Steel"),
-    "car": ((0.70, 0.15, 0.15), 0.0, "Steel"),
-}
-assert set(FINISHES) == set(get_args(Finish)), "every brick finish needs a style"
-STYLES |= {f"Asset:{name}": (rgb, alpha) for name, (rgb, alpha, _) in FINISHES.items()}
-MATERIALS |= {f"Asset:{name}": material for name, (_, _, material) in FINISHES.items()}
-
 
 @dataclass
 class BuildContext:
@@ -101,6 +78,10 @@ class BuildContext:
     products: dict[str, ifcopenshell.entity_instance] = field(default_factory=dict)  # element id -> product
     styles: dict[str, ifcopenshell.entity_instance] = field(default_factory=dict)
     materials: dict[str, ifcopenshell.entity_instance] = field(default_factory=dict)
+    brick_styles: Styles = field(init=False)
+
+    def __post_init__(self):
+        self.brick_styles = Styles(self.model)
 
     def level(self, level_id: str):
         return next(l for l in self.spec.levels if l.id == level_id)
