@@ -184,7 +184,7 @@ body.resizing * { cursor: var(--drag-cursor, col-resize) !important; }
 .view-grid button:hover, .view-icons button:hover { background: var(--sunken); }
 .view-grid .span2 { grid-column: span 2; }
 .view-sep { height: 1px; background: var(--line); margin: 6px 4px; }
-.view-icons { display: grid; grid-template-columns: 1fr 1fr; }
+.view-icons { display: grid; grid-template-columns: repeat(3, 1fr); }
 .view-icons button { height: 46px; border-radius: 8px; display: grid; place-items: center; color: var(--text-2); }
 .view-icons button.on { background: var(--accent-soft); color: var(--accent-text); }
 
@@ -396,3 +396,22 @@ pre.code { margin: 8px 0 0; max-height: 320px; overflow: auto; font-size: 12px; 
 .focus-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .focus-chip button { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: inherit; }
 .focus-chip button:hover { background: rgba(0, 0, 0, 0.06); }
+
+/* --- build replay (components/ReplayBar.tsx) --- */
+.replay-bar { left: 18px; right: 18px; bottom: 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 8px 12px; font-size: 12.5px; }
+.replay-bar .icon-btn { width: 30px; height: 30px; }
+.replay-bar .icon-btn:hover { background: var(--sunken); }
+.replay-play { background: var(--accent-soft); color: var(--accent-text) !important; }
+.replay-title { font-weight: 600; }
+.replay-scrub { flex: 1; min-width: 80px; margin: 0; accent-color: #f0a53a; }
+.replay-label { min-width: 15em; font-variant-numeric: tabular-nums; color: var(--text-2); white-space: nowrap; }
+.replay-progress { flex: 1; height: 4px; border-radius: 2px; background: var(--sunken); overflow: hidden; min-width: 80px; }
+.replay-progress span { display: block; height: 100%; background: #f0a53a; transform-origin: left; transition: transform .15s; }
+.replay-bar label { display: flex; align-items: center; gap: 5px; white-space: nowrap; color: var(--muted); cursor: pointer; }
+.replay-bar input[type="checkbox"] { margin: 0; accent-color: var(--accent); }
+.replay-bar select { font: inherit; border: 1px solid var(--line); border-radius: 7px; padding: 3px 4px; background: var(--surface); color: var(--text-2); }
+.seg-toggle { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg-toggle button { padding: 4px 9px; font-size: 12px; color: var(--muted); }
+.seg-toggle button.on { background: var(--accent-soft); color: var(--accent-text); }
+.replay-legend { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px 12px; padding-left: 2px; font-size: 11.5px; color: var(--muted); text-transform: capitalize; }
+.replay-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }

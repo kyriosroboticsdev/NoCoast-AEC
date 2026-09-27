@@ -1,4 +1,4 @@
-import { BedDouble, RotateCcw, X } from "lucide-react";
+import { BedDouble, Clapperboard, RotateCcw, X } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import type { Facts } from "../state/design";
@@ -16,9 +16,11 @@ interface ViewProps {
   width: number;
   onResize: (width: number) => void;
   onResetSize: () => void;
+  replaying: boolean;
+  onReplay: () => void;
 }
 
-export function ViewControls({ viewer, roomsVisible, onRooms, width, onResize, onResetSize }: ViewProps) {
+export function ViewControls({ viewer, roomsVisible, onRooms, width, onResize, onResetSize, replaying, onReplay }: ViewProps) {
   const views: [ViewName, string][] = [
     ["top", "Top"], ["bottom", "Bottom"], ["front", "Front"], ["back", "Back"], ["left", "Left"], ["right", "Right"],
   ];
@@ -37,6 +39,9 @@ export function ViewControls({ viewer, roomsVisible, onRooms, width, onResize, o
         <button title="Reset view" onClick={() => viewer.reset()}><RotateCcw size={17} /></button>
         <button title={roomsVisible ? "Hide room volumes" : "Show room volumes"} className={roomsVisible ? "on" : ""} onClick={onRooms}>
           <BedDouble size={17} />
+        </button>
+        <button title="Replay the build layer by layer (G-code preview)" className={replaying ? "on" : ""} onClick={onReplay}>
+          <Clapperboard size={17} />
         </button>
       </div>
     </div>

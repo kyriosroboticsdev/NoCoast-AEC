@@ -97,6 +97,7 @@ export class LegacyViewer {
     this.renderer.setAnimationLoop(() => {
       this.controls.update();
       this.tickFades();
+      for (const fn of this.frameHooks) fn();
       this.renderer.render(this.scene, this.camera3);
     });
   }
@@ -341,6 +342,38 @@ export class LegacyViewer {
   setLayerCutoff(z: number) {
     this.clipPlane.constant = z;
   }
+
+  layerCutoff() {
+    return this.clipPlane.constant;
+  }
+
+  // --- hooks for the build replay (viewer/replay.ts) -----------------------------
+
+  /** The loaded model's meshes, one or more per IFC product, in world coordinates via matrixWorld. */
+  modelMeshes(): THREE.Mesh[] {
+    return this.live();
+  }
+
+  /** IFC class of a mesh's product, upper case (e.g. "IFCWALL"). */
+  className(mesh: THREE.Mesh): string {
+    return this.ifc.GetNameFromTypeCode(mesh.userData.typeCode as number).toUpperCase();
+  }
+
+  addOverlay(object: THREE.Object3D) {
+    this.scene.add(object);
+  }
+
+  removeOverlay(object: THREE.Object3D) {
+    this.scene.remove(object);
+  }
+
+  /** Run `fn` before every rendered frame; returns the unsubscribe. */
+  onFrame(fn: () => void): () => void {
+    this.frameHooks.add(fn);
+    return () => this.frameHooks.delete(fn);
+  }
+
+  private frameHooks = new Set<() => void>();
 
   clear() {
     this.clipPlane.constant = 1e6;

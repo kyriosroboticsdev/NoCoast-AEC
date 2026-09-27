@@ -1,8 +1,9 @@
 import { Box, X } from "lucide-react";
-import type { RefObject } from "react";
+import { useEffect, useState, type RefObject } from "react";
 import type { Facts } from "../state/design";
 import type { LegacyViewer, Picked, PropertySet } from "../viewer/LegacyViewer";
 import type { SectionView } from "../viewer/section";
+import { ReplayBar } from "./ReplayBar";
 import { AxisGizmo, InfoCard, SectionBar, Showing, ViewControls } from "./ViewerOverlays";
 
 interface Props {
@@ -34,6 +35,9 @@ interface Props {
 
 export function Workspace(p: Props) {
   const hasModel = !!p.shown;
+  const [replaying, setReplaying] = useState(false);
+  // A different model (a new version, another file) ends the replay: its layers were sliced from the old one.
+  useEffect(() => setReplaying(false), [p.shown?.label, p.fileName]);
   return (
     <section className="workspace">
       <div className="file-tabs">
@@ -58,11 +62,14 @@ export function Workspace(p: Props) {
             <>
               <Showing label={p.shown!.label} preview={p.shown!.preview} />
               <ViewControls viewer={p.viewer} roomsVisible={p.roomsVisible} onRooms={p.onRooms}
-                width={p.viewTools} onResize={p.onResizeViewTools} onResetSize={p.onResetViewTools} />
+                width={p.viewTools} onResize={p.onResizeViewTools} onResetSize={p.onResetViewTools}
+                replaying={replaying} onReplay={() => setReplaying((on) => !on)} />
               <InfoCard fileName={p.fileName ?? ""} schema={p.schema} picked={p.picked} facts={p.facts} properties={p.properties}
                 onClear={p.onClearPick} width={p.inspector.width} height={p.inspector.height}
                 onResize={p.onResizeInspector} onResetSize={p.onResetInspector} />
-              {p.section && <SectionBar section={p.section} onValue={p.onSection} onFollow={p.onFollow} />}
+              {replaying
+                ? <ReplayBar viewer={p.viewer} fileName={p.fileName ?? "model.ifc"} onClose={() => setReplaying(false)} />
+                : p.section && <SectionBar section={p.section} onValue={p.onSection} onFollow={p.onFollow} />}
               <div className="gizmo-wrap"><AxisGizmo viewer={p.viewer} /></div>
             </>
           )}
