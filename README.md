@@ -31,8 +31,11 @@ roof from those and compiles them to IFC after every step.
                  rejected steps ─────────────────────────────── fix round (≤ N) ──────────────────┘
         ──► COORDINATE (clashes, connectors, structural spans) + CHECK against the checklist ──► errors/unmet → fix round
         ──► LOOK: screenshots from camera views the model picks, sent back to it ──► problems it sees → fix round
+        ──► CODE SCREEN: IBC/IRC 2021 + ADA clauses on the derived model ──► failing clauses + fix steps → fix round
         ──► derive BuildingSpec (IR) ─► IfcOpenShell compiler (stable GlobalIds) ─► version store ─► viewer
-        ──► export: IFC, or a bundle with the spec, design, checks, schedule and reasoning
+        ──► issue: code review, US NCS drawing set (SVG/PDF), area schedule, UniFormat cost plan,
+            upfront carbon (LETI band), BCF 2.1 issues
+        ──► export: IFC, drawings PDF, BCF, estimate CSV, review report, or a bundle of all of it
  edit:  the same, starting from the head version's DESIGN; the model emits only the steps that change it
 ```
 
@@ -150,6 +153,9 @@ switching provider, model or key takes effect without a restart — only paths a
 | `BIM_MAX_REPAIRS` | fix rounds for rejected steps per prompt (default 2) |
 | `BIM_VERIFY_ROUNDS` | fix rounds for unmet requirements per prompt (default 1; 0 = report only) |
 | `BIM_LOOK_ROUNDS`, `BIM_LOOK_TURNS` | visual reviews per prompt (default 1; 0 = off) and camera turns per review (default 3) |
+| `BIM_CODE_ROUNDS` | pre-issue code screens per prompt: failing IBC/IRC clauses and buildable fix steps go back to the model (default 1; 0 = report only) |
+| `LLM_EFFORT`, `LLM_THINKING` | `claude`: reasoning effort (`low`/`medium`/`high`, default `medium`) and whether its thinking streams into the trace (`summarized`, default, or `omitted`) |
+| `BIM_THINK_EVERY` | seconds between updates of the thinking paragraph still being written (default 0.25) |
 | `LLM_VISION` | `1`/`0`: whether the model is sent screenshots; default on for `claude`, Anthropic's endpoint and `mock` |
 | `BIM_OUTPUT_DIR`, `BIM_DB_PATH`, `BIM_PORT` | storage and port |
 | `BIM_BACKEND_URL` (Tauri) or `?backend=` (browser) | backend origin for the UI, default `http://127.0.0.1:8765` |
@@ -721,7 +727,25 @@ Every screenshot is stored under `output/projects/<id>/shots/` and linked from t
 reasoning trace shows them inline. `GET …/versions/{n}/render` takes the same view parameters for people.
 Text-only models skip the stage with a note (`LLM_VISION`).
 
-### 4.16 Troubleshooting
+### 4.16 Deliverables — what an architect gets back
+
+Every version is issued with the documents an office produces at concept stage, all derived from the
+same `BuildingSpec` the IFC is compiled from, so they never disagree with the model:
+
+| Deliverable | Module | Where |
+|---|---|---|
+| Code review against IBC 2021 / IRC 2021 and the 2010 ADA Standards: occupancy group, occupant load, exits, exit separation, travel distance, stair geometry and width by the storeys served, headroom, daylight, ventilation, escape openings, accessible entrance/doors/toilet/vertical route, WC counts. Every clause names its section, the measured value, the requirement, the elements and a fix | `core/review.py` | **Code review** tab, `code` event, `review.md` |
+| Pre-issue screen: failing clauses go back to the model as a fix round, with buildable suggested steps (`core/remedy.py` tries each candidate door, stair or WC against the design first) | `core/pipeline.py` | `precheck` event, trace |
+| US NCS drawing set: cover and area schedule, floor plans, roof plan, elevations, section, door/window schedules | `core/draw/` | **Drawings** tab, `/sheets/{A-101}.svg`, `drawings.pdf` |
+| Concept cost plan (UniFormat II, AACE Class 5 range) and upfront carbon with a LETI band and the best saving | `core/estimate.py` | **Cost & carbon** tab, `estimate.csv` |
+| BCF 2.1 issues for every failing or flagged clause, with IFC GlobalIds and a viewpoint | `core/bcf.py` | `issues.bcfzip` |
+
+`GET /projects/{id}/versions/{n}/analysis` returns the review, sheets, estimate and export links in one
+call; `…/export?format=` accepts `ifc`, `zip`, `drawings`, `review`, `bcf`, `estimate`, `spec`, `design`,
+`context`, `checks`, `schedule` and `summary`. "Show in model" on any clause highlights its elements in the
+3D viewer.
+
+### 4.17 Troubleshooting
 
 Both sides log verbosely so a failure can be diagnosed from two pastes:
 
