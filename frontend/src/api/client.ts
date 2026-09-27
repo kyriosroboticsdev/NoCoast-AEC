@@ -63,11 +63,15 @@ export interface Version {
   notes: string[];
   summary: { schema?: string; counts: Record<string, number>; elements: number; storeys: string[]; spaces: string[] };
   ifc_url: string;
+  /** Bundle download: IFC + spec + design + checks + schedule + README as one zip. */
+  export_url?: string;
   created: number;
   /** Requirement checks from the design layer (met | unmet | unsupported | skipped). */
   checks?: RequirementCheck[];
   /** Images attached to the prompt that produced this version, as the backend stored them. */
   images?: VersionImage[];
+  /** The design strategy the model wrote before it started building. */
+  approach?: string | null;
 }
 
 export interface VersionImage {
@@ -82,6 +86,37 @@ export interface PromptImage {
   name: string;
   media_type: string;
   data: string;
+}
+
+/** What a version can be exported as. `zip` is the whole bundle; the rest are single files. */
+export type ExportFormat = "zip" | "ifc" | "spec" | "design" | "context" | "checks" | "schedule" | "summary";
+
+export const EXPORTS: { format: ExportFormat; label: string; hint: string }[] = [
+  { format: "ifc", label: "IFC model", hint: "the building, IFC4" },
+  { format: "zip", label: "Full bundle (.zip)", hint: "IFC, JSON, schedule, checks, README" },
+  { format: "summary", label: "Design summary", hint: "brief, approach and checks, Markdown" },
+  { format: "schedule", label: "Schedule (.csv)", hint: "rooms, walls, openings, equipment" },
+  { format: "spec", label: "BIM spec (.json)", hint: "every element the IFC was compiled from" },
+  { format: "design", label: "Design record (.json)", hint: "rooms, doors and windows as authored" },
+];
+
+/** Download URL for one export artefact of a version. */
+export const exportUrl = (id: string, n: number, format: ExportFormat = "zip") =>
+  `${BACKEND}/projects/${id}/versions/${n}/export?format=${format}`;
+
+const EXPORT_EXTENSION: Record<ExportFormat, string> = {
+  zip: "zip", ifc: "ifc", spec: "spec.json", design: "design.json",
+  context: "context.txt", checks: "checks.json", schedule: "schedule.csv", summary: "summary.md",
+};
+
+export const exportName = (id: string, n: number, format: ExportFormat) =>
+  `${id}-v${n}.${EXPORT_EXTENSION[format]}`;
+
+/** Fetch one export artefact as bytes, ready to hand to the platform's save dialog. */
+export async function fetchExport(id: string, n: number, format: ExportFormat = "zip"): Promise<Uint8Array> {
+  const res = await fetch(exportUrl(id, n, format));
+  if (!res.ok) throw new Error(`export failed: ${res.status} ${await res.text()}`);
+  return new Uint8Array(await res.arrayBuffer());
 }
 
 export interface RequirementCheck {

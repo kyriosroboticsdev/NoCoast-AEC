@@ -1,3 +1,6 @@
+Link to Open-Source Documentation:
+https://docs.google.com/document/d/1tU3kCJchFRInzQXuF_GBEn_fQGtBhatj
+
 # NoCoast-AEC
 
 Text prompt → building model → **IFC**, with the language model kept swappable and the building built
@@ -21,12 +24,15 @@ roof from those and compiles them to IFC after every step.
 ```
  prompt ──► LLM: REQUIREMENTS checklist  (atomic, typed, "supported" flag)
         ──► LLM: RESEARCH turns — tool calls into the brick library and skills (search_bricks, get_brick, get_skill …)
-        ──► LLM: BUILD STEPS, streamed ──► each complete step ─► apply to DESIGN ─► derive ─► preview IFC ─► viewer
+        ──► LLM: APPROACH, then BUILD STEPS, streamed
+                ├─ half-written step ─► "drafting a window in the kitchen…"  (≈ 6×/s)
+                └─ each complete step ─► apply to DESIGN ─► derive ─► preview IFC ─► viewer
                                    (room, door, window, stair, brick, roof …)                     ▲     (≤ 1 s apart)
                  rejected steps ─────────────────────────────── fix round (≤ N) ──────────────────┘
         ──► COORDINATE (clashes, connectors, structural spans) + CHECK against the checklist ──► errors/unmet → fix round
         ──► LOOK: screenshots from camera views the model picks, sent back to it ──► problems it sees → fix round
         ──► derive BuildingSpec (IR) ─► IfcOpenShell compiler (stable GlobalIds) ─► version store ─► viewer
+        ──► export: IFC, or a bundle with the spec, design, checks, schedule and reasoning
  edit:  the same, starting from the head version's DESIGN; the model emits only the steps that change it
 ```
 
@@ -37,7 +43,8 @@ Why this shape:
 | STEP is a graph of `#123=` references; one wrong id breaks the file | The LLM emits JSON validated by Pydantic; the compiler owns every IFC reference |
 | A small house is 50–200k tokens of IFC, ~600 tokens of design | Context for edits is the design rendered as text: rooms with rectangles, exterior sides, neighbours (`core/context.py`) |
 | Geometry (placements, boolean openings, closed polygons) is where LLMs fail | LLMs place rectangles on a grid and name sides; `core/derive.py` turns that into walls, openings and roofs that always compile |
-| One-shot answers hide what went wrong and show nothing until the end | Every step is applied and rendered as it streams; a bad step is rejected with a message the model gets back |
+| One-shot answers hide what went wrong and show nothing until the end | Every step is applied and rendered as it streams; the step being written is narrated before it lands; a bad step is rejected with a message the model gets back |
+| A step log reads like a debug log, so nobody reads it | The model writes its strategy first and one clause of reasoning per move; the backend turns each step into a sentence about the building with the quantities behind it, grouped by the phase of the work (`core/narrate.py`) |
 | Detailed prompts lose detail | The checklist is extracted first, carried through the build prompt, checked deterministically at the end, and unmet items trigger a fix round; unsupported wishes are reported, not dropped |
 | Text-level diffs of IFC are meaningless (ids renumber) | Ids derive from room ids (`L1-wall-kitchen+hall`), so a room that moves keeps its walls' GlobalIds |
 | Swapping the model later | The model only implements `LLM.complete(request, on_text) -> dict` (`llm/base.py`) |
@@ -66,20 +73,23 @@ backend/
   render/               headless renderer: scene.py (IFC → triangles), raster.py (numpy z-buffer), caps.py (plan cuts),
                         font.py (labels), png.py; schemas/look.py is the View the model picks
   core/coordinate.py    coordination: clash.py (solid and keep-out clashes), assembly.py (connectors), structure.py (spans)
-  core/stream.py        apply steps as they stream; worker thread compiles previews (geometry-checks only what changed)
+  core/stream.py        apply steps as they stream; narrate the one being written; worker thread compiles previews
+  core/narrate.py       a step → a sentence about the building, its rationale and the quantities behind it
+  core/export.py        a version as a deliverable: IFC, summary, spec, design, context, checks, schedule, as a zip
   core/pipeline.py      the run: requirements → build stream → fix rounds → check → compile → version
   core/ops.py           apply raw ops to a spec (pure, cascading deletes, re-validates)
   core/construction.py  live-build job: writes a version's elements to disk one at a time in construction order
   slicer/               horizontal slices of a compiled IFC by construction phase + preview G-code
   core/guids.py         element id ↔ IFC GlobalId map, kept per project
   core/context.py       design / spec → compact text for the LLM
-  core/partial_json.py  close the JSON a model has produced so far (only complete array elements survive)
+  core/partial_json.py  close the JSON a model has produced so far (only complete array elements survive;
+                        peek_element reads the one still being written, for the live "drafting…" line)
   solver/layout.py      two-row packer for rooms that come without a rectangle (mock, fallback)
   llm/                  adapter protocol + mock / llamacpp / claude / ollama / openai-compatible implementations, prompts
-  ifc/                  IfcOpenShell compiler: project, walls, slabs, roofs (flat/gable/hip), openings, stairs (+ slab wells),
-                        fixtures/railings/beams, geometry helpers; lifter (IFC → spec + design)
-  store/db.py           SQLite projects/versions (spec + design + checks + attachments); IFC files, screenshots and
-                        attached images under backend/output/projects/<id>/
+  ifc/                  IfcOpenShell compiler: project, walls, slabs, roofs (flat/gable/hip/shed), openings, stairs (+ slab wells),
+                        fixtures/railings/beams (a ~60-kind catalogue), geometry helpers; lifter (IFC → spec + design)
+  store/db.py           SQLite projects/versions (spec + design + checks + approach + attachments); IFC files,
+                        screenshots and attached images under backend/output/projects/<id>/
   api/routes.py         HTTP API; api/sse.py streams pipeline progress as Server-Sent Events
   agents/               stateless planners for /plan and /generate (template regex → steps, llm)
   tests/                pytest; runs entirely on the mock LLM; tests/evals/prompts.json = accuracy set
@@ -88,8 +98,9 @@ frontend/
   src/viewer/BimViewer.ts  That Open wrapper: model tree, properties, class visibility, hide/isolate
   src/api/client.ts        backend client incl. SSE-over-POST parser
   src/App.tsx, main.tsx    React entry point and top-level layout
-  src/components/         Sidebar, TopBar, Workspace, Composer, LevelTree, DataViews, ViewerOverlays, …
+  src/components/         Sidebar, TopBar, ExportMenu, Workspace, Composer, Reasoning, ViewerOverlays, …
   src/state/attachments.ts images attached to a prompt: read, size/type checked, base64 for the backend
+  src/state/trace.ts      the backend's event stream → the reasoning trace, grouped by phase of the work
   src/turns.ts            version history cards, wiring `packages/ifc-viewer`
   src/platform.ts         the only frontend file that knows about Tauri
   src-tauri/              Tauri 2 shell; starts `backend/.venv` python on start, kills it on exit
@@ -108,7 +119,7 @@ cd backend
 pip install -r requirements.txt
 cp .env.example .env            # optional; defaults to the mock LLM
 python main.py                  # http://127.0.0.1:8765
-python -m pytest                # 413 tests, ~80 s
+python -m pytest                # 504 tests, ~120 s
 python tools/eval.py            # accuracy of the configured model on tests/evals/prompts.json
 
 # frontend (once)
@@ -251,15 +262,32 @@ ignored, `"north"`→`"N"`, `2`→`"L2"`, `{"x","y","w","d"}`→rect).
 | `door` | room, to (room id or `outside`), side *or* near, at, kind, width, height; or wall (a free wall id) | add / replace by id |
 | `window` | room, side *or* near (an exterior wall), at, kind, width, height, sill; or wall | add / replace by id |
 | `stair` | room, side *or* near, to_level, width | straight flight along that wall, well cut in the slab above |
-| `furniture` | room, kind, side (`N/S/E/W/center`) *or* near, at, rotation, sizes | fixture against a wall or centred |
+| `furniture` | kind, plus **either** room + side (`N/S/E/W/center`) / near / position, **or** position + level + elevation | a catalogue piece against a wall, at a point in the room, or free-standing anywhere (roof plant, yard racking, street furniture) |
+| `custom` | name, parts (1–12 box/round solids), placed like `furniture` | a piece the model designs itself when the catalogue has nothing close |
 | `balcony` | room, side *or* near, depth | slab + railing outside that wall |
-| `element` | kind (`wall/slab/roof/column/beam`), name, level, path / poly / position / start+end, height, thickness, width, depth | free-standing structure (garden wall, deck, pergola, pier); unchecked except by name |
+| `element` | kind (`wall/slab/roof/column/beam/railing/stair`), name, level, path / poly / position / start+end, height, thickness, width, depth, rotation, elevation | free-standing structure: garden or retaining wall, fence or parapet (railing), deck, canopy, pier, external flight of steps; unchecked except by name |
 | `porch` | side, depth | deck + columns + roof along that side of the ground floor |
-| `roof` | kind, pitch, overhang | flat / gable / hip (pitched needs a rectangular footprint; else flat + note) |
+| `roof` | kind, pitch, overhang | flat / gable / hip / shed (pitched needs a rectangular footprint; else flat + note) |
 | `material` | material | exterior wall material (colour + IfcMaterial) |
 | `column` | level, x, y, width | free-standing column |
 | `remove` | id | anything by id; rooms and levels cascade to their items |
 | `note` | text | shown to the user |
+
+Two fields exist only to be read by a person. `approach` (on the response, written before any step) is the
+model's design strategy in two or three sentences; `why` (on a step) is one clause of reasoning for that
+move — *"span held under 6 m so the floor needs no intermediate support"*. Neither affects geometry; both
+are streamed live, shown in the trace and stored with the version (§4.5).
+
+**What can be built.** Room kinds cover more than houses: `living · kitchen · dining · office · bedroom ·
+bathroom · hall · garage · utility · storage` for dwellings, `reception · meeting · classroom · lab ·
+clinic · ward` for workplaces, schools and health, `retail · cafe · gym · auditorium` for shops and
+assembly, `workshop · warehouse · plant · server · parking · barn · stable` for industry, infrastructure
+and agriculture, and `courtyard · terrace` (no roof) / `carport · pergola` (no walls, columns carry the
+roof). The fixture catalogue (`ifc/fixtures.py`) holds ~60 kinds across the same range — beds and sofas,
+conference tables and whiteboards, shelving and pallet racking, machines and workbenches, hospital beds,
+treadmills and seating rows, plus solar panels, water tanks, HVAC units, benches, planters, bollards,
+cycle racks, lamp posts and trees. Doors add `roller` (4 m industrial shutter) and `revolving`; windows
+add `ribbon` and `clerestory`.
 
 `apply_step` is pure (returns a new design) and raises `StepError` with a message written for the
 model: *"door: unknown room 'bedroom' (rooms: hall, kitchen, …)"*, *"levels must be added in order; the
@@ -331,8 +359,9 @@ each chunk). `core/stream.py::StepStream`:
 
 ```
 LLM stream thread ──feed(text)──► parse_partial → new complete steps → apply_step + analyze (ms)
-                                    ├─ ok:       SSE "step" {index, ok, message, elements}; design marked dirty
+                                    ├─ ok:       SSE "step" {headline, why, facts, phase, …}; design marked dirty
                                     └─ rejected: SSE "step" {index, ok:false, error}; design unchanged
+                   └──peek────────► the element still being written → SSE "draft" {"Cutting a window in the kitchen"}
 preview worker thread ──────────► latest dirty design → derive → compile IFC, geometry-check ONLY changed
                                     elements → output/partial/<id>.ifc → SSE "partial" {ifc_url, change, …}
 browser ────────────────────────► loads each preview (newest pending only); final version replaces it
@@ -341,29 +370,47 @@ browser ────────────────────────
 - steps land at the model's token rate: the family house above emitted 77 steps at a median 0.8 s
   apart; a preview compile of a 100-element house is ~0.3 s, so the coalescing worker keeps up;
 - `core/partial_json.py` closes the JSON produced so far and **drops any array element that is still
-  open**, so a half-generated step never appears;
+  open**, so a half-generated step never appears. `peek_element` looks at exactly that dropped element,
+  which is what the `draft` events narrate — the UI says what is being written a beat before it lands;
 - nothing is emitted unless the derived spec validates *and* the changed products tessellate; previews use
   the project's GlobalId map so ids are stable even between previews;
-- while the model is silent (queueing, thinking) a `stream` heartbeat says *"waiting for the model… 12 s"*
-  every 3 s; SSE `stream` events (every 0.4 s once text flows) drive the live model-output pane;
+- cadence: `stream` throughput every 0.12 s, `draft` every 0.15 s, previews debounced 0.15 s (backing off
+  to half the last compile time so a slow machine still coalesces bursts), and a heartbeat every 1 s
+  through any silence — before the first chunk (*"waiting for the model… 12 s"*) and during long pauses
+  mid-reply (*"still writing… 4 210 chars, 31 steps in 48 s"*). All four are tunable with
+  `BIM_STREAM_EVERY`, `BIM_DRAFT_EVERY`, `BIM_PREVIEW_DEBOUNCE` and `BIM_HEARTBEAT_EVERY`;
+- SSE flushes its response head immediately and sends a `: ping` comment every second, so no proxy or
+  buffer sits on the connection;
 - `close()` runs before the final compile, so IfcOpenShell is never used from two threads at once;
 - preview files are served by the `/models` static mount and pruned after 30 minutes.
 
-**Step log (transparency).** Every SSE event carries `seq` and `t`; stages: `requirements` (the checklist,
-unsupported items flagged), `focus` (what the viewer selection resolved to, when one was sent),
-`attachments` (the images sent with the prompt, and whether this provider can see them), `build`
-(which round and why: rejected steps / unmet requirements listed),
-`llm` (what was sent to which model; then chars, seconds, steps applied/rejected, previews), `stream`,
-`step` (one per step: applied with its effect, or rejected with the reason and the raw step), `partial`
-(diff against the previous preview, rooms per level, counts, compile time, how many elements were
-re-checked), `verify` (every requirement with met/unmet/unsupported and the detail), `compile`, `done`,
-`error`. The UI renders these on the right in one of two modes: **friendly** (default) reads like an assistant
-thinking aloud ("I understood 6 things to build", "Adding the Kitchen on the ground floor (4 × 5 m)",
-"Skipped: window on the north wall of the Kitchen — that side is shared with the Hall", "Checked the result:
-15 of 16 requirements met"); **verbose** shows every event with stage, timing, raw steps and preview rows
-(clickable to re-show any intermediate render). A second checkbox reveals the raw model output, an overlay says
-what the viewer is showing, and the notes under the prompt list unsupported / unmet requirements. The camera is
-framed once per project and then kept, so previews and versions grow in place.
+**Nothing built is thrown away.** A reply that breaks off (max_tokens, a dropped connection) after the
+model has laid out the plan keeps every step that streamed in — the checks and repair rounds then run on
+what exists. An empty completion on a build round means "no changes", not an error. A repair or
+gap-closing round that fails outright is recorded as a note and the version is produced anyway; only a
+first round that produces nothing at all is fatal. Unconstrained models that introduce themselves before
+the JSON are handled too: the live parser cuts to the first brace (`llm/base.body`) instead of waiting
+for the reply to end.
+
+**The trace (transparency).** Every SSE event carries `seq` and `t`. Stages: `requirements` (the
+checklist, unsupported items flagged), `focus` (what the viewer selection resolved to), `attachments`
+(the images sent with the prompt, and whether this provider can see them), `research` and `tool` (the
+model's lookups into the brick library and the skills), `approach` (the design strategy, as soon as it
+parses), `build` (which round and why: rejected steps, unmet requirements, coordination issues or what
+the screenshots showed), `llm` (what was sent to which model; then seconds, moves applied/rejected,
+previews), `stream` (throughput and heartbeat), `draft` (the step being written), `step`, `partial`,
+`coordinate` (clashes, services and spans), `look` (each screenshot the model was shown and what it saw),
+`verify` (every requirement with met/unmet/unsupported and the detail), `compile`, `done`, `error`.
+
+A `step` event carries three things beyond the raw step: `headline`, a sentence about the building
+(*"Straight flight in the hall along the west wall, rising 3 m"*) written by `core/narrate.py`; `why`,
+the model's own reasoning for the move; and `facts`, the quantities behind it (area, dimensions, storey,
+running gross floor area) plus the `phase` of the work it belongs to. The frontend groups the trace under
+those phases — brief, research, massing, floor plates, circulation, envelope, structure, fit-out,
+review, issue —
+shows the approach above it, the rationale under each line, and in the header the step being written this
+instant rather than the last one finished. The camera is framed once per project and then kept, so
+previews and versions grow in place.
 
 ### 4.6 BuildingSpec — the geometric IR
 
@@ -476,8 +523,9 @@ edited with the same ids. A geometric lifter for *foreign* IFC files is the desi
 ### 4.12 Version store and API
 
 `backend/store/db.py`, SQLite: `versions(project_id, number, parent, prompt, mode, llm, spec, design,
-checks, images, guids, ops, notes, summary, ifc_path)`. Modes: `design`, `edit`, `ops`, `revert`, `import`.
-History is linear; `revert/{n}` appends a copy of *n*; `base_version` gives optimistic concurrency (409).
+checks, images, approach, guids, ops, notes, summary, ifc_path)`. Modes: `design`, `edit`, `ops`,
+`revert`, `import`. History is linear; `revert/{n}` appends a copy of *n*; `base_version` gives
+optimistic concurrency (409).
 
 | method / path | body | result |
 |---|---|---|
@@ -489,6 +537,9 @@ History is linear; `revert/{n}` appends a copy of *n*; `base_version` gives opti
 | `POST /projects/{id}/revert/{n}` | | **SSE** |
 | `POST /projects/{id}/import` | multipart `file` (.ifc) | **SSE** |
 | `GET /projects/{id}/versions/{n}/ifc` | | the IFC file |
+| `GET /projects/{id}/versions/{n}/export` | `?format=zip` (default) | the whole version as one zip — see below |
+| `GET /projects/{id}/versions/{n}/export` | `?format=ifc\|summary\|spec\|design\|context\|checks\|schedule` | one artefact on its own |
+| `GET /projects/{id}/export` | | the head version as a bundle |
 | `GET /projects/{id}/versions/{n}/spec` | | `{version, spec, design, guids}` |
 | `GET /projects/{id}/versions/{n}/context` | | text — exactly what the LLM sees when editing |
 | `GET /projects/{id}/versions/{n}/render` | `?target=&azimuth=&elevation=&level=&cut=&hide=&position=&look_at=&distance=&ortho=&fov=&width=&height=` | a PNG from any view — the renderer the model looks through; `X-Visible` lists the elements in frame |
@@ -502,7 +553,16 @@ History is linear; `revert/{n}` appends a copy of *n*; `base_version` gives opti
 | `GET /skills`, `GET /skills/{name}` | | skill index; one skill's markdown |
 
 SSE events: `event: <stage>` + `data: {"seq", "t", "stage", "message", "data"}`, stages as in §4.5.
-`done.data` is the version record incl. `ifc_url` and `checks`.
+`done.data` is the version record incl. `ifc_url`, `export_url` and `checks`.
+
+**Export** (`backend/core/export.py`). An IFC on its own loses everything around it, so `…/export`
+returns a zip holding the whole version: the IFC, a Markdown summary (the brief, the model's design
+approach, element counts and the requirement checklist), the spec and design JSON, the editing context,
+the checks, a room/wall/opening/equipment schedule as CSV for take-off, the element-id → GlobalId map,
+and a README explaining each file. Re-importing the IFC from a bundle recovers the design layer, so an
+export round-trips. In the UI the Export button downloads the IFC and its caret offers the rest; every
+version card also has its own IFC and Bundle buttons, so an older version can be downloaded without
+first putting it in the workspace.
 
 ### 4.13 Frontend
 
@@ -683,7 +743,7 @@ shows each reason (usually an edit request the model could not map onto existing
 
 ## 5. Tests
 
-`cd backend && python -m pytest` — 413 tests on the mock LLM, no network: the look loop (screenshots sent to
+`cd backend && python -m pytest` — 504 tests on the mock LLM, no network: the look loop (screenshots sent to
 the model, the views it asks for, what it sees driving a fix round, text-only models skipping it, each
 adapter's image format) and the renderer (plan cuts with solid caps, x-rayed targets, bad views explained,
 the render and screenshot routes) · the geometry kernel (every
@@ -699,8 +759,12 @@ semantics · partial-JSON parsing of every prefix · compile→lift round trip i
 survival across edits, ops, revert · the SSE project API end to end (design with streamed steps and
 previews, edits keeping GlobalIds, overrides replayed, conflict 409, import) · prompt attachments (sniffing
 and the size cap, the bytes reaching a vision model and staying behind for one without, a prompt whose images
-are recorded on the version and served back) · every element kind
-compiling. `python tools/eval.py` measures accuracy on the real model.
+are recorded on the version and served back) · every element kind compiling · every room kind, fixture kind
+and roof shape building and compiling, free-standing equipment and site objects, industrial openings, and
+each non-domestic typology end to end (`test_assets.py`) · export artefacts and the bundle, including an IFC
+round trip out of a zip (`test_export.py`) · misbehaving models: prose around the JSON, a reply that breaks
+off mid-building, an empty completion, a repair round that never returns (`test_resilience.py`).
+`python tools/eval.py` measures accuracy on the real model.
 
 ## 6. Decisions and their reasons
 

@@ -1,0 +1,2547 @@
+{
+ "bricks": [
+  {
+   "id": "conference_table",
+   "name": "Conference table",
+   "description": "Boardroom table; seats about w/0.7 either side.",
+   "tags": [
+    "boardroom",
+    "conference",
+    "meeting",
+    "office",
+    "table"
+   ],
+   "ifc_class": "IfcFurniture",
+   "predefined_type": "TABLE",
+   "params": {
+    "w": [
+     3.0,
+     1.5,
+     6.0
+    ],
+    "d": [
+     1.2,
+     0.6,
+     2.4
+    ],
+    "h": [
+     0.75,
+     0.45,
+     1.35
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "at": [
+      "0.08 + i * (w - 0.24)",
+      "0.08",
+      0
+     ],
+     "size": [
+      0.08,
+      "d - 0.16",
+      "h - 0.06"
+     ],
+     "repeat": {
+      "count": 2,
+      "var": "i"
+     }
+    },
+    {
+     "shape": "box",
+     "at": [
+      "0.08 + i * (w - 0.24)",
+      "d - 0.16",
+      0
+     ],
+     "size": [
+      0.08,
+      0.08,
+      "h - 0.06"
+     ],
+     "repeat": {
+      "count": 2,
+      "var": "i"
+     }
+    },
+    {
+     "shape": "box",
+     "at": [
+      0,
+      0,
+      "h - 0.06"
+     ],
+     "size": [
+      "w",
+      "d",
+      0.06
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.62,
+      0.48,
+      0.34
+     ],
+     "name": "Timber"
+    }
+   },
+   "properties": {
+    "fixture": "conference_table"
+   }
+  },
+  {
+   "id": "locker",
+   "name": "Locker bank",
+   "description": "Bank of full-height lockers, one door per 0.35 m.",
+   "tags": [
+    "changing",
+    "gym",
+    "locker",
+    "school",
+    "staff"
+   ],
+   "ifc_class": "IfcFurniture",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     0.9,
+     0.45,
+     1.8
+    ],
+    "d": [
+     0.5,
+     0.25,
+     1.0
+    ],
+    "h": [
+     1.8,
+     1.08,
+     3.24
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "size": [
+      "w",
+      "d",
+      "h"
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      "0.02 + i * w / 3",
+      "-0.005",
+      0.05
+     ],
+     "size": [
+      "w / 3 - 0.04",
+      0.02,
+      "h - 0.1"
+     ],
+     "repeat": {
+      "count": 3,
+      "var": "i"
+     }
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.78,
+      0.79,
+      0.81
+     ],
+     "name": "Enamelled steel"
+    }
+   },
+   "properties": {
+    "fixture": "locker"
+   }
+  },
+  {
+   "id": "whiteboard",
+   "name": "Whiteboard",
+   "description": "Wall-mounted writing board; fixes to a wall at about 0.9 m.",
+   "tags": [
+    "board",
+    "classroom",
+    "meeting",
+    "teaching",
+    "whiteboard"
+   ],
+   "ifc_class": "IfcFurniture",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     2.0,
+     1.0,
+     4.0
+    ],
+    "d": [
+     0.08,
+     0.04,
+     0.16
+    ],
+    "h": [
+     1.2,
+     0.72,
+     2.16
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "size": [
+      "w",
+      "d",
+      "h"
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "fix",
+   "materials": {
+    "default": {
+     "color": [
+      0.52,
+      0.55,
+      0.62
+     ],
+     "name": "Fabric"
+    }
+   },
+   "properties": {
+    "fixture": "whiteboard"
+   },
+   "elevation": 1.0
+  },
+  {
+   "id": "lectern",
+   "name": "Lectern",
+   "description": "Standing lectern with a sloped top.",
+   "tags": [
+    "auditorium",
+    "classroom",
+    "lectern",
+    "podium",
+    "speaking"
+   ],
+   "ifc_class": "IfcFurniture",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     0.6,
+     0.3,
+     1.2
+    ],
+    "d": [
+     0.5,
+     0.25,
+     1.0
+    ],
+    "h": [
+     1.15,
+     0.69,
+     2.07
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "at": [
+      "w * 0.3",
+      "d * 0.3",
+      0
+     ],
+     "size": [
+      "w * 0.4",
+      "d * 0.4",
+      "h - 0.1"
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      0,
+      0,
+      "h - 0.1"
+     ],
+     "size": [
+      "w",
+      "d",
+      0.1
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.62,
+      0.48,
+      0.34
+     ],
+     "name": "Timber"
+    }
+   },
+   "properties": {
+    "fixture": "lectern"
+   }
+  },
+  {
+   "id": "server_rack",
+   "name": "Server rack",
+   "description": "19-inch rack; front faces out.",
+   "tags": [
+    "comms",
+    "data",
+    "it",
+    "rack",
+    "server"
+   ],
+   "ifc_class": "IfcElectricAppliance",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     0.6,
+     0.3,
+     1.2
+    ],
+    "d": [
+     1.0,
+     0.5,
+     2.0
+    ],
+    "h": [
+     2.0,
+     1.2,
+     3.6
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "size": [
+      "w",
+      "d",
+      "h"
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      0.03,
+      "-0.005",
+      "0.1 + i * 0.22"
+     ],
+     "size": [
+      "w - 0.06",
+      0.02,
+      0.16
+     ],
+     "repeat": {
+      "count": 8,
+      "var": "i"
+     }
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.78,
+      0.79,
+      0.81
+     ],
+     "name": "Enamelled steel"
+    }
+   },
+   "properties": {
+    "fixture": "server_rack"
+   }
+  },
+  {
+   "id": "school_desk",
+   "name": "School desk",
+   "description": "Two-place classroom desk.",
+   "tags": [
+    "classroom",
+    "desk",
+    "school",
+    "teaching"
+   ],
+   "ifc_class": "IfcFurniture",
+   "predefined_type": "DESK",
+   "params": {
+    "w": [
+     1.2,
+     0.6,
+     2.4
+    ],
+    "d": [
+     0.55,
+     0.275,
+     1.1
+    ],
+    "h": [
+     0.75,
+     0.45,
+     1.35
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "at": [
+      "0.08 + i * (w - 0.24)",
+      "0.08",
+      0
+     ],
+     "size": [
+      0.08,
+      "d - 0.16",
+      "h - 0.06"
+     ],
+     "repeat": {
+      "count": 2,
+      "var": "i"
+     }
+    },
+    {
+     "shape": "box",
+     "at": [
+      "0.08 + i * (w - 0.24)",
+      "d - 0.16",
+      0
+     ],
+     "size": [
+      0.08,
+      0.08,
+      "h - 0.06"
+     ],
+     "repeat": {
+      "count": 2,
+      "var": "i"
+     }
+    },
+    {
+     "shape": "box",
+     "at": [
+      0,
+      0,
+      "h - 0.06"
+     ],
+     "size": [
+      "w",
+      "d",
+      0.06
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.62,
+      0.48,
+      0.34
+     ],
+     "name": "Timber"
+    }
+   },
+   "properties": {
+    "fixture": "school_desk"
+   }
+  },
+  {
+   "id": "shelving_unit",
+   "name": "Shelving unit",
+   "description": "Retail gondola or store-room shelving.",
+   "tags": [
+    "gondola",
+    "retail",
+    "shelving",
+    "shop",
+    "storage"
+   ],
+   "ifc_class": "IfcFurniture",
+   "predefined_type": "SHELF",
+   "params": {
+    "w": [
+     1.2,
+     0.6,
+     2.4
+    ],
+    "d": [
+     0.5,
+     0.25,
+     1.0
+    ],
+    "h": [
+     2.0,
+     1.2,
+     3.6
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "at": [
+      "i * (w - 0.06)",
+      0,
+      0
+     ],
+     "size": [
+      0.06,
+      "d",
+      "h"
+     ],
+     "repeat": {
+      "count": 2,
+      "var": "i"
+     }
+    },
+    {
+     "shape": "box",
+     "at": [
+      0,
+      0,
+      "i * (h - 0.06) / 3"
+     ],
+     "size": [
+      "w",
+      "d",
+      0.06
+     ],
+     "repeat": {
+      "count": 4,
+      "var": "i"
+     }
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.78,
+      0.79,
+      0.81
+     ],
+     "name": "Enamelled steel"
+    }
+   },
+   "properties": {
+    "fixture": "shelving_unit"
+   }
+  },
+  {
+   "id": "display_case",
+   "name": "Display case",
+   "description": "Glazed display counter.",
+   "tags": [
+    "case",
+    "display",
+    "retail",
+    "shop",
+    "vitrine"
+   ],
+   "ifc_class": "IfcFurniture",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     1.5,
+     0.75,
+     3.0
+    ],
+    "d": [
+     0.7,
+     0.35,
+     1.4
+    ],
+    "h": [
+     1.1,
+     0.66,
+     1.98
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "size": [
+      "w",
+      "d * 0.7",
+      "h - 0.1"
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      0,
+      0,
+      "h - 0.1"
+     ],
+     "size": [
+      "w",
+      "d",
+      0.1
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.52,
+      0.55,
+      0.62
+     ],
+     "name": "Fabric"
+    }
+   },
+   "properties": {
+    "fixture": "display_case"
+   }
+  },
+  {
+   "id": "checkout_counter",
+   "name": "Checkout counter",
+   "description": "Till point with an overhanging top.",
+   "tags": [
+    "checkout",
+    "counter",
+    "retail",
+    "shop",
+    "till"
+   ],
+   "ifc_class": "IfcFurniture",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     1.8,
+     0.9,
+     3.6
+    ],
+    "d": [
+     0.8,
+     0.4,
+     1.6
+    ],
+    "h": [
+     1.05,
+     0.63,
+     1.89
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "size": [
+      "w",
+      "d * 0.7",
+      "h - 0.1"
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      0,
+      0,
+      "h - 0.1"
+     ],
+     "size": [
+      "w",
+      "d",
+      0.1
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.62,
+      0.48,
+      0.34
+     ],
+     "name": "Timber"
+    }
+   },
+   "properties": {
+    "fixture": "checkout_counter"
+   }
+  },
+  {
+   "id": "cafe_table",
+   "name": "Caf\u00e9 table",
+   "description": "Small square caf\u00e9 table.",
+   "tags": [
+    "bistro",
+    "cafe",
+    "restaurant",
+    "seating",
+    "table"
+   ],
+   "ifc_class": "IfcFurniture",
+   "predefined_type": "TABLE",
+   "params": {
+    "w": [
+     0.8,
+     0.4,
+     1.6
+    ],
+    "d": [
+     0.8,
+     0.4,
+     1.6
+    ],
+    "h": [
+     0.75,
+     0.45,
+     1.35
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "at": [
+      "0.08 + i * (w - 0.24)",
+      "0.08",
+      0
+     ],
+     "size": [
+      0.08,
+      "d - 0.16",
+      "h - 0.06"
+     ],
+     "repeat": {
+      "count": 2,
+      "var": "i"
+     }
+    },
+    {
+     "shape": "box",
+     "at": [
+      "0.08 + i * (w - 0.24)",
+      "d - 0.16",
+      0
+     ],
+     "size": [
+      0.08,
+      0.08,
+      "h - 0.06"
+     ],
+     "repeat": {
+      "count": 2,
+      "var": "i"
+     }
+    },
+    {
+     "shape": "box",
+     "at": [
+      0,
+      0,
+      "h - 0.06"
+     ],
+     "size": [
+      "w",
+      "d",
+      0.06
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.62,
+      0.48,
+      0.34
+     ],
+     "name": "Timber"
+    }
+   },
+   "properties": {
+    "fixture": "cafe_table"
+   }
+  },
+  {
+   "id": "stool",
+   "name": "Stool",
+   "description": "Backless stool for a counter or caf\u00e9 table.",
+   "tags": [
+    "bar",
+    "cafe",
+    "seat",
+    "stool"
+   ],
+   "ifc_class": "IfcFurniture",
+   "predefined_type": "CHAIR",
+   "params": {
+    "w": [
+     0.4,
+     0.2,
+     0.8
+    ],
+    "d": [
+     0.4,
+     0.2,
+     0.8
+    ],
+    "h": [
+     0.75,
+     0.45,
+     1.35
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "at": [
+      "w * 0.15",
+      "d * 0.15",
+      0
+     ],
+     "size": [
+      "w * 0.7",
+      "d * 0.7",
+      "h - 0.05"
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      0,
+      0,
+      "h - 0.05"
+     ],
+     "size": [
+      "w",
+      "d",
+      0.05
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.62,
+      0.48,
+      0.34
+     ],
+     "name": "Timber"
+    }
+   },
+   "properties": {
+    "fixture": "stool"
+   }
+  },
+  {
+   "id": "bar_counter",
+   "name": "Bar counter",
+   "description": "Serving counter with an overhanging top.",
+   "tags": [
+    "bar",
+    "cafe",
+    "counter",
+    "restaurant",
+    "servery"
+   ],
+   "ifc_class": "IfcFurniture",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     3.0,
+     1.5,
+     6.0
+    ],
+    "d": [
+     0.7,
+     0.35,
+     1.4
+    ],
+    "h": [
+     1.1,
+     0.66,
+     1.98
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "size": [
+      "w",
+      "d * 0.7",
+      "h - 0.1"
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      0,
+      0,
+      "h - 0.1"
+     ],
+     "size": [
+      "w",
+      "d",
+      0.1
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.62,
+      0.48,
+      0.34
+     ],
+     "name": "Timber"
+    }
+   },
+   "properties": {
+    "fixture": "bar_counter"
+   }
+  },
+  {
+   "id": "hospital_bed",
+   "name": "Hospital bed",
+   "description": "Adjustable patient bed.",
+   "tags": [
+    "bed",
+    "health",
+    "hospital",
+    "patient",
+    "ward"
+   ],
+   "ifc_class": "IfcFurniture",
+   "predefined_type": "BED",
+   "params": {
+    "w": [
+     1.0,
+     0.5,
+     2.0
+    ],
+    "d": [
+     2.2,
+     1.1,
+     4.4
+    ],
+    "h": [
+     0.9,
+     0.54,
+     1.62
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "at": [
+      0.05,
+      0.05,
+      0
+     ],
+     "size": [
+      "w - 0.1",
+      "d - 0.1",
+      "h - 0.2"
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      0,
+      0,
+      "h - 0.2"
+     ],
+     "size": [
+      "w",
+      "d",
+      0.2
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.94,
+      0.95,
+      0.96
+     ],
+     "name": "Vitreous china"
+    }
+   },
+   "properties": {
+    "fixture": "hospital_bed"
+   }
+  },
+  {
+   "id": "exam_table",
+   "name": "Examination couch",
+   "description": "Consulting-room examination couch.",
+   "tags": [
+    "clinic",
+    "consulting",
+    "couch",
+    "exam",
+    "health"
+   ],
+   "ifc_class": "IfcFurniture",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     0.7,
+     0.35,
+     1.4
+    ],
+    "d": [
+     1.9,
+     0.95,
+     3.8
+    ],
+    "h": [
+     0.8,
+     0.48,
+     1.44
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "at": [
+      0.05,
+      0.05,
+      0
+     ],
+     "size": [
+      "w - 0.1",
+      "d - 0.1",
+      "h - 0.2"
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      0,
+      0,
+      "h - 0.2"
+     ],
+     "size": [
+      "w",
+      "d",
+      0.2
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.94,
+      0.95,
+      0.96
+     ],
+     "name": "Vitreous china"
+    }
+   },
+   "properties": {
+    "fixture": "exam_table"
+   }
+  },
+  {
+   "id": "pallet_rack",
+   "name": "Pallet racking",
+   "description": "Warehouse pallet racking, four beam levels.",
+   "tags": [
+    "logistics",
+    "pallet",
+    "racking",
+    "storage",
+    "warehouse"
+   ],
+   "ifc_class": "IfcBuildingElementProxy",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     2.7,
+     1.35,
+     5.4
+    ],
+    "d": [
+     1.1,
+     0.55,
+     2.2
+    ],
+    "h": [
+     2.7,
+     1.8,
+     6.0
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "at": [
+      "i * (w - 0.06)",
+      0,
+      0
+     ],
+     "size": [
+      0.06,
+      "d",
+      "h"
+     ],
+     "repeat": {
+      "count": 2,
+      "var": "i"
+     }
+    },
+    {
+     "shape": "box",
+     "at": [
+      0,
+      0,
+      "i * (h - 0.06) / 3"
+     ],
+     "size": [
+      "w",
+      "d",
+      0.06
+     ],
+     "repeat": {
+      "count": 4,
+      "var": "i"
+     }
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.78,
+      0.79,
+      0.81
+     ],
+     "name": "Enamelled steel"
+    }
+   },
+   "properties": {
+    "fixture": "pallet_rack"
+   }
+  },
+  {
+   "id": "workbench",
+   "name": "Workbench",
+   "description": "Heavy workshop bench.",
+   "tags": [
+    "bench",
+    "making",
+    "workbench",
+    "workshop"
+   ],
+   "ifc_class": "IfcFurniture",
+   "predefined_type": "TABLE",
+   "params": {
+    "w": [
+     2.0,
+     1.0,
+     4.0
+    ],
+    "d": [
+     0.8,
+     0.4,
+     1.6
+    ],
+    "h": [
+     0.9,
+     0.54,
+     1.62
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "at": [
+      "0.08 + i * (w - 0.24)",
+      "0.08",
+      0
+     ],
+     "size": [
+      0.08,
+      "d - 0.16",
+      "h - 0.06"
+     ],
+     "repeat": {
+      "count": 2,
+      "var": "i"
+     }
+    },
+    {
+     "shape": "box",
+     "at": [
+      "0.08 + i * (w - 0.24)",
+      "d - 0.16",
+      0
+     ],
+     "size": [
+      0.08,
+      0.08,
+      "h - 0.06"
+     ],
+     "repeat": {
+      "count": 2,
+      "var": "i"
+     }
+    },
+    {
+     "shape": "box",
+     "at": [
+      0,
+      0,
+      "h - 0.06"
+     ],
+     "size": [
+      "w",
+      "d",
+      0.06
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.62,
+      0.48,
+      0.34
+     ],
+     "name": "Timber"
+    }
+   },
+   "properties": {
+    "fixture": "workbench"
+   }
+  },
+  {
+   "id": "machine",
+   "name": "Machine",
+   "description": "Generic floor-standing production machine.",
+   "tags": [
+    "industrial",
+    "machine",
+    "plant",
+    "production",
+    "workshop"
+   ],
+   "ifc_class": "IfcBuildingElementProxy",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     2.0,
+     1.0,
+     4.0
+    ],
+    "d": [
+     1.5,
+     0.75,
+     3.0
+    ],
+    "h": [
+     1.8,
+     1.08,
+     3.24
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "size": [
+      "w",
+      "d",
+      "h"
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      "w * 0.2",
+      "d * 0.2",
+      "h"
+     ],
+     "size": [
+      "w * 0.3",
+      "d * 0.3",
+      0.25
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.78,
+      0.79,
+      0.81
+     ],
+     "name": "Enamelled steel"
+    }
+   },
+   "properties": {
+    "fixture": "machine"
+   }
+  },
+  {
+   "id": "crate",
+   "name": "Crate",
+   "description": "Stackable crate or pallet load.",
+   "tags": [
+    "box",
+    "crate",
+    "pallet",
+    "storage",
+    "warehouse"
+   ],
+   "ifc_class": "IfcBuildingElementProxy",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     1.2,
+     0.6,
+     2.4
+    ],
+    "d": [
+     0.8,
+     0.4,
+     1.6
+    ],
+    "h": [
+     1.0,
+     0.6,
+     1.8
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "size": [
+      "w",
+      "d",
+      "h"
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.62,
+      0.48,
+      0.34
+     ],
+     "name": "Timber"
+    }
+   },
+   "properties": {
+    "fixture": "crate"
+   }
+  },
+  {
+   "id": "conveyor",
+   "name": "Conveyor",
+   "description": "Straight belt conveyor on legs.",
+   "tags": [
+    "belt",
+    "conveyor",
+    "handling",
+    "industrial",
+    "warehouse"
+   ],
+   "ifc_class": "IfcBuildingElementProxy",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     6.0,
+     3.0,
+     12.0
+    ],
+    "d": [
+     0.8,
+     0.4,
+     1.6
+    ],
+    "h": [
+     0.9,
+     0.54,
+     1.62
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "at": [
+      "0.2 + i * (w - 0.48) / 2",
+      "d / 2 - 0.04",
+      0
+     ],
+     "size": [
+      0.08,
+      0.08,
+      "h - 0.12"
+     ],
+     "repeat": {
+      "count": 3,
+      "var": "i"
+     }
+    },
+    {
+     "shape": "box",
+     "at": [
+      0,
+      0,
+      "h - 0.12"
+     ],
+     "size": [
+      "w",
+      "d",
+      0.12
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.78,
+      0.79,
+      0.81
+     ],
+     "name": "Enamelled steel"
+    }
+   },
+   "properties": {
+    "fixture": "conveyor"
+   }
+  },
+  {
+   "id": "treadmill",
+   "name": "Treadmill",
+   "description": "Running machine with a console.",
+   "tags": [
+    "equipment",
+    "fitness",
+    "gym",
+    "running",
+    "treadmill"
+   ],
+   "ifc_class": "IfcBuildingElementProxy",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     1.0,
+     0.5,
+     2.0
+    ],
+    "d": [
+     2.0,
+     1.0,
+     4.0
+    ],
+    "h": [
+     1.4,
+     0.84,
+     2.52
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "size": [
+      "w",
+      "d",
+      0.25
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      0,
+      "d - 0.1",
+      0.25
+     ],
+     "size": [
+      0.08,
+      0.1,
+      "h - 0.25"
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      "w - 0.08",
+      "d - 0.1",
+      0.25
+     ],
+     "size": [
+      0.08,
+      0.1,
+      "h - 0.25"
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      0,
+      "d - 0.12",
+      "h - 0.1"
+     ],
+     "size": [
+      "w",
+      0.12,
+      0.1
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.78,
+      0.79,
+      0.81
+     ],
+     "name": "Enamelled steel"
+    }
+   },
+   "properties": {
+    "fixture": "treadmill"
+   }
+  },
+  {
+   "id": "weight_bench",
+   "name": "Weight bench",
+   "description": "Flat weights bench.",
+   "tags": [
+    "bench",
+    "equipment",
+    "fitness",
+    "gym",
+    "weights"
+   ],
+   "ifc_class": "IfcFurniture",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     1.3,
+     0.65,
+     2.6
+    ],
+    "d": [
+     0.6,
+     0.3,
+     1.2
+    ],
+    "h": [
+     0.5,
+     0.3,
+     0.9
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "at": [
+      0,
+      "d * 0.2",
+      "h - 0.1"
+     ],
+     "size": [
+      "w",
+      "d * 0.6",
+      0.1
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      "w * 0.1",
+      "d * 0.3",
+      0
+     ],
+     "size": [
+      "w * 0.1",
+      "d * 0.4",
+      "h - 0.1"
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      "w * 0.8",
+      "d * 0.3",
+      0
+     ],
+     "size": [
+      "w * 0.1",
+      "d * 0.4",
+      "h - 0.1"
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.52,
+      0.55,
+      0.62
+     ],
+     "name": "Fabric"
+    }
+   },
+   "properties": {
+    "fixture": "weight_bench"
+   }
+  },
+  {
+   "id": "seating_row",
+   "name": "Seating row",
+   "description": "Fixed row of auditorium seats.",
+   "tags": [
+    "auditorium",
+    "row",
+    "seating",
+    "seats",
+    "theatre"
+   ],
+   "ifc_class": "IfcFurniture",
+   "predefined_type": "CHAIR",
+   "params": {
+    "w": [
+     4.0,
+     2.0,
+     8.0
+    ],
+    "d": [
+     0.6,
+     0.3,
+     1.2
+    ],
+    "h": [
+     0.9,
+     0.54,
+     1.62
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "at": [
+      0,
+      0,
+      0.35
+     ],
+     "size": [
+      "w",
+      "d",
+      0.06
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      0,
+      0,
+      0.35
+     ],
+     "size": [
+      "w",
+      0.08,
+      "h - 0.35"
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      "0.02 + i * w / 7",
+      0.1,
+      0
+     ],
+     "size": [
+      0.06,
+      "d - 0.2",
+      0.35
+     ],
+     "repeat": {
+      "count": 8,
+      "var": "i"
+     }
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.52,
+      0.55,
+      0.62
+     ],
+     "name": "Fabric"
+    }
+   },
+   "properties": {
+    "fixture": "seating_row"
+   }
+  },
+  {
+   "id": "solar_panel",
+   "name": "Solar panel",
+   "description": "One tilted PV panel on a frame; array them on a roof.",
+   "tags": [
+    "outdoor",
+    "photovoltaic",
+    "pv",
+    "renewable",
+    "roof",
+    "solar"
+   ],
+   "ifc_class": "IfcBuildingElementProxy",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     1.7,
+     0.85,
+     3.4
+    ],
+    "d": [
+     1.0,
+     0.5,
+     2.0
+    ],
+    "h": [
+     0.45,
+     0.27,
+     0.81
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "at": [
+      0,
+      0,
+      0.05
+     ],
+     "size": [
+      0.08,
+      "d",
+      0.1
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      "w - 0.08",
+      0,
+      0.05
+     ],
+     "size": [
+      0.08,
+      "d",
+      "h - 0.1"
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      0,
+      0,
+      "h - 0.12"
+     ],
+     "size": [
+      "w",
+      "d",
+      0.06
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.78,
+      0.79,
+      0.81
+     ],
+     "name": "Enamelled steel"
+    }
+   },
+   "properties": {
+    "fixture": "solar_panel"
+   }
+  },
+  {
+   "id": "water_tank",
+   "name": "Water tank",
+   "description": "Cold-water storage or rainwater tank.",
+   "tags": [
+    "cistern",
+    "rainwater",
+    "storage",
+    "tank",
+    "water"
+   ],
+   "ifc_class": "IfcBuildingElementProxy",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     1.6,
+     0.8,
+     3.2
+    ],
+    "d": [
+     1.6,
+     0.8,
+     3.2
+    ],
+    "h": [
+     2.2,
+     1.32,
+     3.96
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "size": [
+      "w",
+      "d",
+      "h"
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.78,
+      0.79,
+      0.81
+     ],
+     "name": "Enamelled steel"
+    }
+   },
+   "properties": {
+    "fixture": "water_tank"
+   }
+  },
+  {
+   "id": "hvac_unit",
+   "name": "HVAC unit",
+   "description": "Packaged air-handling or condenser unit.",
+   "tags": [
+    "air",
+    "condenser",
+    "hvac",
+    "plant",
+    "ventilation"
+   ],
+   "ifc_class": "IfcBuildingElementProxy",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     1.6,
+     0.8,
+     3.2
+    ],
+    "d": [
+     1.0,
+     0.5,
+     2.0
+    ],
+    "h": [
+     1.2,
+     0.72,
+     2.16
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "size": [
+      "w",
+      "d",
+      "h - 0.15"
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      "w * 0.15",
+      "d * 0.15",
+      "h - 0.15"
+     ],
+     "size": [
+      "w * 0.7",
+      "d * 0.7",
+      0.15
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.78,
+      0.79,
+      0.81
+     ],
+     "name": "Enamelled steel"
+    }
+   },
+   "properties": {
+    "fixture": "hvac_unit"
+   }
+  },
+  {
+   "id": "boiler",
+   "name": "Boiler",
+   "description": "Floor-standing boiler.",
+   "tags": [
+    "boiler",
+    "heating",
+    "hot water",
+    "plant"
+   ],
+   "ifc_class": "IfcBuildingElementProxy",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     0.7,
+     0.35,
+     1.4
+    ],
+    "d": [
+     0.7,
+     0.35,
+     1.4
+    ],
+    "h": [
+     1.6,
+     0.96,
+     2.88
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "size": [
+      "w",
+      "d",
+      "h"
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.78,
+      0.79,
+      0.81
+     ],
+     "name": "Enamelled steel"
+    }
+   },
+   "properties": {
+    "fixture": "boiler"
+   }
+  },
+  {
+   "id": "bench",
+   "name": "Outdoor bench",
+   "description": "Slatted bench with a back.",
+   "tags": [
+    "bench",
+    "landscape",
+    "outdoor",
+    "seat",
+    "site"
+   ],
+   "ifc_class": "IfcFurniture",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     1.8,
+     0.9,
+     3.6
+    ],
+    "d": [
+     0.6,
+     0.3,
+     1.2
+    ],
+    "h": [
+     0.85,
+     0.51,
+     1.53
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "at": [
+      0,
+      0,
+      0.42
+     ],
+     "size": [
+      "w",
+      "d",
+      0.06
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      0,
+      "d - 0.08",
+      0.48
+     ],
+     "size": [
+      "w",
+      0.08,
+      "h - 0.48"
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      0.1,
+      0.05,
+      0
+     ],
+     "size": [
+      0.08,
+      "d - 0.1",
+      0.42
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      "w - 0.18",
+      0.05,
+      0
+     ],
+     "size": [
+      0.08,
+      "d - 0.1",
+      0.42
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.62,
+      0.48,
+      0.34
+     ],
+     "name": "Timber"
+    }
+   },
+   "properties": {
+    "fixture": "bench"
+   }
+  },
+  {
+   "id": "planter",
+   "name": "Planter",
+   "description": "Raised planter with shrub planting.",
+   "tags": [
+    "greenery",
+    "landscape",
+    "outdoor",
+    "planter",
+    "planting",
+    "site"
+   ],
+   "ifc_class": "IfcBuildingElementProxy",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     1.2,
+     0.6,
+     2.4
+    ],
+    "d": [
+     0.6,
+     0.3,
+     1.2
+    ],
+    "h": [
+     0.7,
+     0.42,
+     1.26
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "size": [
+      "w",
+      "d",
+      "h * 0.7"
+     ]
+    },
+    {
+     "shape": "box",
+     "at": [
+      "w * 0.25",
+      "d * 0.25",
+      "h * 0.7"
+     ],
+     "size": [
+      "w * 0.5",
+      "d * 0.5",
+      "h * 0.3"
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.62,
+      0.48,
+      0.34
+     ],
+     "name": "Timber"
+    }
+   },
+   "properties": {
+    "fixture": "planter"
+   }
+  },
+  {
+   "id": "bollard",
+   "name": "Bollard",
+   "description": "Traffic bollard.",
+   "tags": [
+    "bollard",
+    "landscape",
+    "outdoor",
+    "protection",
+    "site",
+    "traffic"
+   ],
+   "ifc_class": "IfcBuildingElementProxy",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     0.25,
+     0.125,
+     0.5
+    ],
+    "d": [
+     0.25,
+     0.125,
+     0.5
+    ],
+    "h": [
+     1.0,
+     0.6,
+     1.8
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "cylinder",
+     "at": [
+      "w / 2",
+      "d / 2",
+      0
+     ],
+     "radius": "w * 0.2",
+     "height": "h"
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.78,
+      0.79,
+      0.81
+     ],
+     "name": "Enamelled steel"
+    }
+   },
+   "properties": {
+    "fixture": "bollard"
+   }
+  },
+  {
+   "id": "bicycle_rack",
+   "name": "Cycle rack",
+   "description": "Sheffield-style cycle stands.",
+   "tags": [
+    "bicycle",
+    "bike",
+    "cycle",
+    "outdoor",
+    "rack",
+    "site"
+   ],
+   "ifc_class": "IfcBuildingElementProxy",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     2.0,
+     1.0,
+     4.0
+    ],
+    "d": [
+     0.8,
+     0.4,
+     1.6
+    ],
+    "h": [
+     0.9,
+     0.54,
+     1.62
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "at": [
+      "i * (w - 0.06) / 2",
+      0,
+      0
+     ],
+     "size": [
+      0.06,
+      "d",
+      "h"
+     ],
+     "repeat": {
+      "count": 3,
+      "var": "i"
+     }
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.78,
+      0.79,
+      0.81
+     ],
+     "name": "Enamelled steel"
+    }
+   },
+   "properties": {
+    "fixture": "bicycle_rack"
+   }
+  },
+  {
+   "id": "lamp_post",
+   "name": "Lamp post",
+   "description": "Column-mounted external light.",
+   "tags": [
+    "lamp",
+    "light",
+    "lighting",
+    "outdoor",
+    "site",
+    "street"
+   ],
+   "ifc_class": "IfcBuildingElementProxy",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     0.3,
+     0.15,
+     0.6
+    ],
+    "d": [
+     0.3,
+     0.15,
+     0.6
+    ],
+    "h": [
+     5.0,
+     3.0,
+     9.0
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "cylinder",
+     "at": [
+      "w / 2",
+      "d / 2",
+      0
+     ],
+     "radius": "w * 0.2",
+     "height": "h"
+    },
+    {
+     "shape": "box",
+     "at": [
+      0,
+      0,
+      "h - 0.15"
+     ],
+     "size": [
+      "w",
+      "d",
+      0.15
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.78,
+      0.79,
+      0.81
+     ],
+     "name": "Enamelled steel"
+    }
+   },
+   "properties": {
+    "fixture": "lamp_post"
+   }
+  },
+  {
+   "id": "dumpster",
+   "name": "Refuse container",
+   "description": "Wheeled bulk refuse container.",
+   "tags": [
+    "bin",
+    "dumpster",
+    "outdoor",
+    "refuse",
+    "site",
+    "waste"
+   ],
+   "ifc_class": "IfcBuildingElementProxy",
+   "predefined_type": null,
+   "params": {
+    "w": [
+     1.8,
+     0.9,
+     3.6
+    ],
+    "d": [
+     1.0,
+     0.5,
+     2.0
+    ],
+    "h": [
+     1.3,
+     0.78,
+     2.34
+    ]
+   },
+   "geometry": [
+    {
+     "shape": "box",
+     "size": [
+      "w",
+      "d",
+      "h"
+     ]
+    }
+   ],
+   "origin": [
+    "w / 2",
+    "d / 2",
+    0
+   ],
+   "mount": "rest",
+   "materials": {
+    "default": {
+     "color": [
+      0.78,
+      0.79,
+      0.81
+     ],
+     "name": "Enamelled steel"
+    }
+   },
+   "properties": {
+    "fixture": "dumpster"
+   }
+  }
+ ]
+}

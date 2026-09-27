@@ -36,8 +36,10 @@ from solver.layout import place_rooms
 EXT_T, INT_T = 0.3, 0.12
 MARGIN = 0.15          # openings keep this far from wall ends
 COLUMN_EVERY = 4.0     # open edges get a column at least this often
-DOOR_SIZES = {"single": (0.9, 2.1), "double": (1.6, 2.1), "sliding": (1.8, 2.1), "french": (1.6, 2.1), "garage": (2.4, 2.2)}
-WINDOW_SIZES = {"standard": (1.2, 1.2, 0.9), "large": (2.0, 1.6, 0.6), "floor": (2.0, 2.2, 0.1), "small": (0.6, 0.6, 1.5)}
+DOOR_SIZES = {"single": (0.9, 2.1), "double": (1.6, 2.1), "sliding": (1.8, 2.1), "french": (1.6, 2.1),
+              "garage": (2.4, 2.2), "revolving": (2.2, 2.4), "roller": (4.0, 4.2)}
+WINDOW_SIZES = {"standard": (1.2, 1.2, 0.9), "large": (2.0, 1.6, 0.6), "floor": (2.0, 2.2, 0.1), "small": (0.6, 0.6, 1.5),
+                "ribbon": (6.0, 1.4, 1.0), "clerestory": (3.0, 0.9, 2.6)}
 ROUGH_IN = ("water_cold", "drain", "power")   # connector kinds the derived services supply once there are rooms
 
 
@@ -415,23 +417,28 @@ def _stair(s: StairDef, design: Design, infos: dict[str, RoomInfo], level: Level
 
 def _fixture(f: FixtureDef, design: Design, infos: dict[str, RoomInfo], level: Level) -> Fixture:
     what = f"{f.kind} '{f.id}'"
+    w, d, h = default_size(f.kind)
+    w, d, h = f.width or w, f.depth or d, f.height or h
+    if not f.room:  # free-standing: plant on a roof, a bench on the site, a rack in an open yard
+        lid = f.level or level.id
+        if design.level(lid) is None:
+            raise DesignError(f"{what}: unknown level '{lid}' (levels: {', '.join(l.id for l in design.levels)})")
+        return Fixture(id=f.id, name=f.kind.replace("_", " "), level=lid, kind=f.kind,
+                       position=f.position, rotation=f.rotation or 0.0, width=w, depth=d, height=h,
+                       elevation=f.elevation)
     room = design.room(f.room)
     if room is None:
         raise DesignError(f"{what}: unknown room '{f.room}'")
-    w, d, h = default_size(f.kind)
-    w, d, h = f.width or w, f.depth or d, f.height or h
-    pos, rot = place_piece(what, room, infos[room.id], f.side, f.near, f.at, w, d)
+    pos, rot = place_piece(what, room, infos[room.id], f.side, f.near, f.at, w, d, f.position)
     return Fixture(id=f.id, name=f"{f.kind.replace('_', ' ')} in {room.name}", level=room.level, kind=f.kind,
-                   position=pos, rotation=f.rotation if f.rotation is not None else rot, width=w, depth=d, height=h)
+                   position=pos, rotation=f.rotation if f.rotation is not None else rot, width=w, depth=d, height=h,
+                   elevation=f.elevation)
 
 
 def _custom_shape(cs: CustomShapeDef, design: Design, infos: dict[str, RoomInfo], level: Level) -> CustomFixture:
     """A shape the model composed itself out of parts (box/round), instead of the fixed
     FixtureKind catalog — placed the same way a catalog fixture would be."""
     what = f"custom shape '{cs.id}'"
-    room = design.room(cs.room)
-    if room is None:
-        raise DesignError(f"{what}: unknown room '{cs.room}'")
     x0 = min(p.x for p in cs.parts)
     y0 = min(p.y for p in cs.parts)
     x1 = max(p.x + p.w for p in cs.parts)
@@ -439,14 +446,24 @@ def _custom_shape(cs: CustomShapeDef, design: Design, infos: dict[str, RoomInfo]
     w, d = x1 - x0, y1 - y0
     if w <= 0 or d <= 0:
         raise DesignError(f"{what}: parts have no footprint")
-    pos, rot = place_piece(what, room, infos[room.id], cs.side, cs.near, cs.at, w, d)
     # Parts are given relative to their own min-corner bbox; re-centre them on the origin so
     # `pos` (the bbox centre) is where the whole assembly's local frame actually sits, matching
     # how catalog fixtures are centred (ifc/fixtures.py::_parts).
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
     parts = [ShapePart(shape=p.shape, x=r2(p.x - cx), y=r2(p.y - cy), z=p.z, w=p.w, d=p.d, h=p.h) for p in cs.parts]
+    if not cs.room:  # free-standing: a sculpture on the forecourt, a tank on a plinth
+        lid = cs.level or level.id
+        if design.level(lid) is None:
+            raise DesignError(f"{what}: unknown level '{lid}' (levels: {', '.join(l.id for l in design.levels)})")
+        return CustomFixture(id=cs.id, name=cs.name, level=lid, position=cs.position,
+                             rotation=cs.rotation or 0.0, parts=parts, elevation=cs.elevation)
+    room = design.room(cs.room)
+    if room is None:
+        raise DesignError(f"{what}: unknown room '{cs.room}'")
+    pos, rot = place_piece(what, room, infos[room.id], cs.side, cs.near, cs.at, w, d, cs.position)
     return CustomFixture(id=cs.id, name=f"{cs.name} in {room.name}", level=room.level, position=pos,
-                         rotation=cs.rotation if cs.rotation is not None else rot, parts=parts)
+                         rotation=cs.rotation if cs.rotation is not None else rot, parts=parts,
+                         elevation=cs.elevation)
 
 
 
@@ -507,6 +524,17 @@ def _free(e: FreeDef, design: Design, levels: dict[str, Level], els: list, free_
         els.append(Column(id=e.id, name=name, level=e.level, position=e.at, width=size, depth=e.depth or size, height=e.height, elevation=e.elevation))
     elif e.kind == "beam":
         els.append(Beam(id=e.id, name=name, level=e.level, start=e.start, end=e.end, width=e.width or 0.2, depth=e.depth or 0.3, elevation=e.elevation))
+    elif e.kind == "railing":
+        segs = e.path_segments()
+        pts = _dedupe([segs[0].a] + [s.b for s in segs]) if segs else []
+        if len(pts) < 2:
+            raise DesignError(f"{what}: path has no length")
+        els.append(Railing(id=e.id, name=name, level=e.level, path=pts, height=e.height or 1.05,
+                           thickness=e.thickness or 0.05, elevation=e.elevation))
+    elif e.kind == "stair":
+        rise = e.height or levels[e.level].height
+        els.append(Stair(id=e.id, name=name, level=e.level, position=e.at, direction=e.rotation if e.rotation is not None else 90.0,
+                         width=e.width or 1.2, rise=rise, to_level=e.to_level))
 
 
 def _mep(design: Design, levels: list[Level], infos: dict[str, RoomInfo], els: list) -> None:

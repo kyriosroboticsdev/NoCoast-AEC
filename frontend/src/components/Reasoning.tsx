@@ -1,9 +1,27 @@
-import { Box, Check, ChevronDown, ChevronRight, Hammer, Layers, LoaderCircle, ShieldCheck, Sparkles, X } from "lucide-react";
+import {
+  BookOpen, Box, Check, ChevronDown, ChevronRight, ClipboardList, DoorOpen, FileDown, Frame, Hammer, Layers,
+  LayoutGrid, LoaderCircle, Ruler, ShieldCheck, Sofa, Sparkles, X,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { backendUrl } from "../api/client";
-import type { Run, TraceStep } from "../state/sessions";
+import type { Run, TracePhase, TraceStep } from "../state/sessions";
 
-const PHASE_ICON = { plan: Sparkles, validate: ShieldCheck, build: Hammer, load: Box } as const;
+const PHASE_ICON: Partial<Record<TracePhase, typeof Sparkles>> = {
+  brief: ClipboardList,
+  research: BookOpen,
+  massing: Ruler,
+  plan: LayoutGrid,
+  circulation: DoorOpen,
+  envelope: Frame,
+  structure: Hammer,
+  fitout: Sofa,
+  review: ShieldCheck,
+  output: FileDown,
+  // older sessions, persisted before the trace was grouped by phase
+  validate: ShieldCheck,
+  build: Hammer,
+  load: Box,
+};
 
 /** Live, nested trace of what the agent is doing — streamed from the backend step by step. */
 export function Reasoning({ run }: { run: Run }) {
@@ -28,9 +46,13 @@ export function Reasoning({ run }: { run: Run }) {
   const elapsed = ((run.endedAt ?? now) - (run.startedAt ?? now)) / 1000;
   const current = [...steps].reverse().find((s) => s.status === "running");
   const failed = run.stage === "error";
+  // What the model is writing this instant beats the last finished step as the "now" line.
+  const nowLine = running
+    ? run.drafting ?? (current ? `${current.title}${current.detail ? ` — ${current.detail}` : ""}` : null)
+    : null;
 
-  // Layer stack: one block per storey step, when the trace reports them.
-  const layerSteps = steps.filter((s) => s.layer && !s.parent);
+  // Layer stack: one block per storey plate, wherever it sits in the trace.
+  const layerSteps = steps.filter((s) => s.layer);
   const totalLayers = layerSteps.length;
 
   if (!steps.length && !running) return null;
@@ -44,10 +66,10 @@ export function Reasoning({ run }: { run: Run }) {
         <span className="reasoning-title">
           <b>{running ? "Working" : failed ? "Stopped" : "Reasoned"}</b>
           <span className="muted"> {running ? "·" : failed ? "after" : "for"} {fmtSeconds(elapsed)}{!running && ` · ${steps.length} steps`}</span>
-          {running && current && <small className="reasoning-now">{current.title}{current.detail ? ` — ${current.detail}` : ""}</small>}
+          {nowLine && <small className="reasoning-now">{nowLine}</small>}
         </span>
         {totalLayers > 0 && (
-          <span className="layer-stack" title="Storeys built so far">
+          <span className="layer-stack" title="Storeys laid out so far">
             {Array.from({ length: totalLayers }, (_, i) => {
               const s = layerSteps[i];
               return <i key={i} className={s ? s.status : ""} />;
@@ -59,7 +81,7 @@ export function Reasoning({ run }: { run: Run }) {
 
       {open && (
         <ol className="trace">
-          {top.map((s) => <StepRow key={s.id} step={s} kids={children} depth={0} layerIndex={layerSteps.indexOf(s)} layerTotal={totalLayers} />)}
+          {top.map((s) => <StepRow key={s.id} step={s} kids={children} depth={0} layers={layerSteps} />)}
           {running && !steps.length && <li className="trace-row running"><span className="trace-dot"><LoaderCircle size={14} className="spin" /></span><span className="trace-main">Connecting…</span></li>}
         </ol>
       )}
@@ -67,8 +89,8 @@ export function Reasoning({ run }: { run: Run }) {
   );
 }
 
-function StepRow({ step, kids, depth, layerIndex, layerTotal }: {
-  step: TraceStep; kids: Map<string | null, TraceStep[]>; depth: number; layerIndex: number; layerTotal: number;
+function StepRow({ step, kids, depth, layers }: {
+  step: TraceStep; kids: Map<string | null, TraceStep[]>; depth: number; layers: TraceStep[];
 }) {
   const children = kids.get(step.id) ?? [];
   const [open, setOpen] = useState(true);
@@ -76,7 +98,8 @@ function StepRow({ step, kids, depth, layerIndex, layerTotal }: {
   const icon =
     step.status === "running" ? <LoaderCircle size={14} className="spin" /> :
     step.status === "error" ? <X size={14} /> :
-    depth === 0 ? <Icon size={14} /> : <Check size={12} />;
+    depth === 0 || step.layer ? <Icon size={14} /> : <Check size={12} />;
+  const layerIndex = step.layer ? layers.findIndex((l) => l.id === step.id) : -1;
 
   return (
     <li className={`trace-row ${step.status} ${depth ? "child" : ""} ${step.layer ? "layer" : ""}`}>
@@ -84,10 +107,12 @@ function StepRow({ step, kids, depth, layerIndex, layerTotal }: {
       <div className="trace-main">
         <div className="trace-line" onClick={() => children.length && setOpen(!open)} style={{ cursor: children.length ? "pointer" : undefined }}>
           <span className="trace-title">{step.title}</span>
-          {step.layer && layerIndex >= 0 && <span className="layer-badge">layer {layerIndex + 1}/{layerTotal}</span>}
+          {layerIndex >= 0 && <span className="layer-badge">storey {layerIndex + 1}/{layers.length}</span>}
+          {step.metric && <span className="trace-metric">{step.metric}</span>}
           <span className="grow" />
           {step.ms !== undefined && step.ms > 0 && <span className="trace-ms">{fmtMs(step.ms)}</span>}
         </div>
+        {step.why && <div className="trace-why">{step.why}</div>}
         {(step.error || step.detail) && <div className={`trace-detail ${step.error ? "err" : ""}`}>{step.error ?? step.detail}</div>}
         {step.image && (
           <a className="trace-shot" href={backendUrl(step.image)} target="_blank" rel="noreferrer">
@@ -96,7 +121,7 @@ function StepRow({ step, kids, depth, layerIndex, layerTotal }: {
         )}
         {open && children.length > 0 && (
           <ol className="trace nested">
-            {children.map((c) => <StepRow key={c.id} step={c} kids={kids} depth={depth + 1} layerIndex={-1} layerTotal={layerTotal} />)}
+            {children.map((c) => <StepRow key={c.id} step={c} kids={kids} depth={depth + 1} layers={layers} />)}
           </ol>
         )}
       </div>

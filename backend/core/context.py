@@ -130,8 +130,12 @@ def _free_line(e) -> str:
         return head + f" path={_edges(e.path or [])}" + (f" h={e.height:g}" if e.height else "")
     if e.kind in ("slab", "roof"):
         return head + f" poly={_edges(e.poly or [])}"
+    if e.kind == "railing":
+        return head + f" path={_edges(e.path or [])}" + (f" h={e.height:g}" if e.height else "")
     if e.kind == "column":
         return head + f" at {_pt(e.at)}"
+    if e.kind == "stair":
+        return head + f" at {_pt(e.at)} dir={e.rotation if e.rotation is not None else 90:g}" + (f" rise={e.height:g}" if e.height else "")
     return head + f" {_pt(e.start)}->{_pt(e.end)}"
 
 
@@ -185,7 +189,8 @@ def describe_focus(design: Design, focus: str) -> str:
             return f"the stair {fid} in {room_name(st.room)}"
     for f in design.fixtures:
         if f.id == fid:
-            return f"the {f.kind.replace('_', ' ')} {fid} in {room_name(f.room)}"
+            where = f"in {room_name(f.room)}" if f.room else f"standing free on {f.level or 'L1'} at {_pt(f.position)}"
+            return f"the {f.kind.replace('_', ' ')} {fid} {where}"
     for b in design.balconies:
         if b.id == fid:
             return f"the balcony {fid} of {room_name(b.room)}"
@@ -239,7 +244,15 @@ def describe_design(design: Design, derived: Derived | None = None) -> str:
     if design.stairs:
         lines.append("stairs: " + "; ".join(f"{s.id} in {s.room}{_where(s)} to={s.to_level or 'level above'}" for s in design.stairs))
     if design.fixtures:
-        lines.append("furniture: " + "; ".join(f"{f.id} {f.kind} in {f.room}" + (_where(f) if f.near is not None or f.side != "center" else "") for f in design.fixtures))
+        lines.append("furniture: " + "; ".join(
+            f"{f.id} {f.kind} " + (f"in {f.room}" + (_where(f) if f.near is not None or f.side != "center" else "")
+                                   if f.room else f"free on {f.level or 'L1'} at {_pt(f.position)}"
+                                                   + (f" z+{f.elevation:g}" if f.elevation else ""))
+            for f in design.fixtures))
+    if design.custom_shapes:
+        lines.append("custom shapes: " + "; ".join(
+            f'{c.id} "{c.name}" ' + (f"in {c.room}" if c.room else f"free on {c.level or 'L1'} at {_pt(c.position)}")
+            for c in design.custom_shapes))
     if design.balconies:
         lines.append("balconies: " + "; ".join(f"{b.id} {b.room}{_where(b)} depth={b.depth:g}" for b in design.balconies))
     if design.columns:

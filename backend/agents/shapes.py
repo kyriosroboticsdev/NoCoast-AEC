@@ -137,6 +137,27 @@ def bridge_steps(design: Design, level: str = "L1", span: float = 24.0, width: f
     return steps
 
 
+def fence_steps(design: Design, level: str = "L1", offset: float = 4.0, height: float = 1.2) -> list[dict]:
+    """A railing along the front and one side of the plot — a fence, a parapet, a site boundary."""
+    b = footprint_bounds(design, level)
+    minx, miny, maxx, maxy = b if b else (0, 0, 10, 8)
+    x0, x1 = round(minx - offset, 2), round(maxx + offset, 2)
+    y0, y1 = round(miny - offset, 2), round(maxy + offset, 2)
+    return [{"step": "element", "kind": "railing", "name": "Site fence", "level": level, "height": height,
+             "path": [[x0, y1], [x0, y0], [x1, y0], [x1, y1]],
+             "why": "the fence wraps the front and both flanks, leaving the back of the plot open"}]
+
+
+def external_steps(design: Design, level: str = "L1", rise: float = 1.2, width: float = 1.6) -> list[dict]:
+    """A free-standing flight up to the entrance, in front of the south elevation."""
+    b = footprint_bounds(design, level)
+    minx, miny, maxx, maxy = b if b else (0, 0, 10, 8)
+    x = round((minx + maxx) / 2 - width / 2, 2)
+    return [{"step": "element", "kind": "stair", "name": "Entrance steps", "level": level,
+             "position": [x, round(miny - 3.0, 2)], "rotation": 90, "height": rise, "width": width,
+             "why": "the flight runs straight at the entrance so the approach needs no turn"}]
+
+
 def deck_steps(design: Design, level: str = "L1", depth: float = 3.0) -> list[dict]:
     b = footprint_bounds(design, level)
     minx, miny, maxx, maxy = b if b else (0, 0, 10, 8)
