@@ -282,6 +282,8 @@ pre.code { margin: 8px 0 0; max-height: 320px; overflow: auto; font-size: 12px; 
 .trace-ms { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .trace-detail { font-size: 12.5px; color: var(--muted); line-height: 1.45; margin-top: 1px; word-break: break-word; }
 .trace-detail.err { color: var(--danger); }
+.trace-shot { display: block; margin-top: 6px; max-width: 320px; }
+.trace-shot img { display: block; width: 100%; border-radius: 6px; border: 1px solid var(--line); }
 .layer-badge { font-size: 11px; font-weight: 600; color: var(--accent-text); background: var(--accent-soft); border-radius: 999px; padding: 1px 7px; white-space: nowrap; }
 
 /* --- Version turn cards (@nocoast/ifc-viewer) inside assistant results --- */

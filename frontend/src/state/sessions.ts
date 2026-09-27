@@ -15,6 +15,8 @@ export interface TraceStep {
   detail: string | null;
   status: "running" | "done" | "error";
   ms?: number;
+  /** Backend path of a screenshot the model was shown at this step. */
+  image?: string | null;
   layer?: boolean;
   error?: string;
 }

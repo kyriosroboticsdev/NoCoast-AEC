@@ -1,5 +1,6 @@
 import { Box, Check, ChevronDown, ChevronRight, Hammer, Layers, LoaderCircle, ShieldCheck, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { backendUrl } from "../api/client";
 import type { Run, TraceStep } from "../state/sessions";
 
 const PHASE_ICON = { plan: Sparkles, validate: ShieldCheck, build: Hammer, load: Box } as const;
@@ -88,6 +89,11 @@ function StepRow({ step, kids, depth, layerIndex, layerTotal }: {
           {step.ms !== undefined && step.ms > 0 && <span className="trace-ms">{fmtMs(step.ms)}</span>}
         </div>
         {(step.error || step.detail) && <div className={`trace-detail ${step.error ? "err" : ""}`}>{step.error ?? step.detail}</div>}
+        {step.image && (
+          <a className="trace-shot" href={backendUrl(step.image)} target="_blank" rel="noreferrer">
+            <img src={backendUrl(step.image)} alt={step.title} loading="lazy" />
+          </a>
+        )}
         {open && children.length > 0 && (
           <ol className="trace nested">
             {children.map((c) => <StepRow key={c.id} step={c} kids={kids} depth={depth + 1} layerIndex={-1} layerTotal={layerTotal} />)}

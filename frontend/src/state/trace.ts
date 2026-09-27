@@ -1,4 +1,4 @@
-// Turns the pipeline's flat stage events (requirements | research | tool | build | step | coordinate | verify | compile | done …)
+// Turns the pipeline's flat stage events (requirements | research | tool | build | step | coordinate | verify | look | compile | done …)
 // into reasoning-trace steps. A stage that repeats is a repair attempt after validation
 // failed; those nest under the stage with the errors being fixed as their detail.
 import type { StageEvent } from "../api/client";
@@ -16,6 +16,7 @@ const STAGES: Record<string, { phase: TraceStep["phase"]; title: string }> = {
   build: { phase: "build", title: "Building step by step" },
   coordinate: { phase: "validate", title: "Coordinating clashes, services and structure" },
   verify: { phase: "validate", title: "Checking the requirements" },
+  look: { phase: "validate", title: "Looking at the model" },
 };
 
 interface Open {
@@ -46,17 +47,18 @@ export function stageTracer(push: (step: TraceStep) => void) {
       if (e.stage === "done") return closeAll();
       if (e.stage === "error") return; // the stream throws right after; fail() reports it once
       const errors = (e.data?.errors as string[] | undefined) ?? [];
+      const image = typeof e.data?.image === "string" ? e.data.image : null;
       if (top && top.stage === e.stage) {
         finish(child, "done");
         const fixing = errors.length ? `fixing: ${errors[0]}${errors.length > 1 ? ` (+${errors.length - 1} more)` : ""}` : null;
         const title = e.message.charAt(0).toUpperCase() + e.message.slice(1);
-        child = open({ id: uid(), parent: top.step.id, phase: top.step.phase, title, detail: fixing, status: "running" }, e.stage);
+        child = open({ id: uid(), parent: top.step.id, phase: top.step.phase, title, detail: fixing, status: "running", image }, e.stage);
         return;
       }
       closeAll();
       const info = STAGES[e.stage] ?? { phase: "build" as const, title: e.message };
       const detail = e.message.toLowerCase() === info.title.toLowerCase() ? null : e.message;
-      top = open({ id: uid(), parent: null, phase: info.phase, title: info.title, detail, status: "running" }, e.stage);
+      top = open({ id: uid(), parent: null, phase: info.phase, title: info.title, detail, status: "running", image }, e.stage);
     },
     /** Mark the step that was running as failed (the error shows on the innermost one). */
     fail(message: string) {
