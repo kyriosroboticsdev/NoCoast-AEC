@@ -1,8 +1,7 @@
 """Coordination: every check on how the placed pieces work together, in one call.
 
-    clashes      core/clash.py      bricks overlapping other pieces; clear zones in front of them
-    services     core/assembly.py   needs (hot water, air, data …) nothing in the design provides
-    rules        core/assembly.py   bricks in rooms they do not belong in, or too small for them
+    clashes      core/clash.py      bricks overlapping other pieces; things standing in keep-out volumes
+    services     core/assembly.py   connector needs (hot water, air, data …) nothing in the design supplies
     structure    core/structure.py  unsupported spans and overhangs
 
 Errors go back to the model as a fix round with their suggested steps; warnings are reported.
@@ -22,8 +21,7 @@ from schemas.design import Design
 def coordinate(design: Design, derived: Derived) -> list[Issue]:
     if not design.rooms:
         return []
-    return (clashes(derived.spec) + assembly.services(design, derived) + assembly.rules(design, derived)
-            + structure.report(design, derived))
+    return clashes(derived.spec) + assembly.services(design, derived) + structure.report(design, derived)
 
 
 def errors(issues: list[Issue]) -> list[Issue]:

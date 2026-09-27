@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-IssueKind = Literal["clash", "clearance", "service", "rule", "structure"]
+IssueKind = Literal["clash", "clearance", "service", "structure"]
 
 
 @dataclass

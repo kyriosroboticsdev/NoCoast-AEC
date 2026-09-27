@@ -12,7 +12,6 @@ import re
 
 from shapely.ops import unary_union
 
-from bricks import library
 from core.derive import Derived
 from schemas.bim import BuildingSpec
 from schemas.design import Design
@@ -60,7 +59,8 @@ def describe_element(el) -> str:
         ifc = el.ifc_class + (f".{el.predefined_type}" if el.predefined_type else "")
         w, d, h = el.size
         return (f"{head} brick={el.brick} {ifc} at {_pt(el.position)} rot={el.rotation:g} z={el.elevation:g} "
-                f"{w:g}x{d:g}x{h:g}" + (f" ports={','.join(p.label for p in el.ports)}" if el.ports else ""))
+                f"{w:g}x{d:g}x{h:g}" + (f" on={el.ref}" if el.ref else "")
+                + (f" connectors={','.join(c.label for c in el.connectors)}" if el.connectors else ""))
     if el.type == "railing":
         return f"{head} path={_outline(el.path)} h={el.height:g}"
     if el.type == "pipe":
@@ -142,9 +142,9 @@ def _brick_line(b) -> str:
         where = f" at {_pt(b.position)}"
     else:
         where = _where(b) if b.near is not None or b.side != "center" else ""
-    host = f" in {b.room}" if b.room else f" {b.level}" if b.level else ""
+    ref = f" on {b.ref}" if b.ref else f" {b.level}" if b.level else ""
     params = " " + ",".join(f"{k}={v:g}" for k, v in b.params.items()) if b.params else ""
-    return f"{b.id} {b.brick}{host}{where}{params}"
+    return f"{b.id} {b.brick}{ref}{where}{params}"
 
 
 def describe_focus(design: Design, focus: str) -> str:
@@ -196,9 +196,9 @@ def describe_focus(design: Design, focus: str) -> str:
             return f"the column {fid} on {c.level}"
     for b in design.bricks:
         if b.id == fid:
-            brick = library().get(b.brick)
+            brick = design.find_brick(b.brick)
             what = brick.name.lower() if brick else b.brick
-            where = f"in {room_name(b.room)}" if b.room else f"on {b.level or 'L1'}"
+            where = f"in {room_name(b.ref)}" if design.room(b.ref) else f"on {b.ref}" if b.ref else f"on {b.level or 'L1'}"
             return f"the {what} {fid} (brick {b.brick}) {where}"
     return f"the element {fid}"
 
@@ -244,6 +244,8 @@ def describe_design(design: Design, derived: Derived | None = None) -> str:
         lines.append("balconies: " + "; ".join(f"{b.id} {b.room}{_where(b)} depth={b.depth:g}" for b in design.balconies))
     if design.columns:
         lines.append("columns: " + "; ".join(f"{c.id} {c.level} ({c.x:g},{c.y:g})" for c in design.columns))
+    if design.library:
+        lines.append("assets defined in this design: " + "; ".join(f"{b.id} \"{b.name}\" {b.ifc_class} mount={b.mount} {b.size_text()}" for b in design.library))
     if design.bricks:
         lines.append("bricks: " + "; ".join(_brick_line(b) for b in design.bricks))
     if derived:
@@ -253,7 +255,7 @@ def describe_design(design: Design, derived: Derived | None = None) -> str:
                 x0, y0, x1, y1 = unary_union(polys).bounds
                 bounds.append(f"{level_id} x {x0:g}..{x1:g} y {y0:g}..{y1:g}")
         if bounds:
-            lines.append("footprint: " + "; ".join(bounds) + " (site bricks go outside it)")
+            lines.append("footprint: " + "; ".join(bounds) + " (bricks with ref \"site\" go outside it)")
     if design.porch:
         lines.append(f"porch: side={design.porch.side} depth={design.porch.depth:g}")
     lines.append(f"roof: {design.roof.kind}" + (f" pitch={design.roof.pitch:g}" if design.roof.kind != "flat" else ""))
