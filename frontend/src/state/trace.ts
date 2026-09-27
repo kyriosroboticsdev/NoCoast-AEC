@@ -48,6 +48,8 @@ interface Finding {
 
 const money = (v: number) => (v >= 1e6 ? `$${(v / 1e6).toFixed(2)}M` : `$${Math.round(v / 1e3).toLocaleString()}k`);
 const PHASE_ORDER = Object.keys(PHASE_TITLES);
+/** Phases whose groups collect the build's moves, and so carry its running tally. */
+const BUILDING = new Set<string>(["massing", "plan", "circulation", "envelope", "structure", "fitout"]);
 
 export function levelName(id: unknown): string {
   if (typeof id !== "string") return "the ground floor";
@@ -104,6 +106,7 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
   const groups: Record<string, Open> = {}; // phase → its group step
   const layerOf: Record<string, Open> = {}; // storey id → its floor-plate step inside the plan group
   let lastGroup: Open | null = null;
+  const tally: Record<string, { applied: number; skipped: number }> = {}; // phase → its moves
   let applied = 0;
   let skipped = 0;
   let previews = 0;
@@ -242,7 +245,8 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
     hooks.onStep?.(step, ok);
     hooks.onLive?.(null);
     const what = typeof d.headline === "string" && d.headline ? d.headline : describe(step, e.message);
-    const phase = String(d.phase ?? facts?.phase ?? phaseOf(kind));
+    // A note is the model's own commentary on the design, not part of reading the brief.
+    const phase = kind === "note" ? "concept" : String(d.phase ?? facts?.phase ?? phaseOf(kind));
     const why = typeof d.why === "string" ? d.why : null;
     if (typeof facts?.gfa === "number") gfa = facts.gfa;
 
@@ -258,6 +262,7 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
         layerOf[step.level] = open("plan", what, null, { layer: true, parent: plan.step.id, why, metric: metricOf(kind, facts) });
       }
       applied++;
+      (tally.plan ??= { applied: 0, skipped: 0 }).applied++;
       return;
     }
     if (ok && kind !== "room") for (const l of Object.values(layerOf)) finish(l);
@@ -266,6 +271,9 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
     const level = typeof step.level === "string" ? step.level
       : typeof step.room === "string" ? roomLevel[step.room] : undefined;
     const parent = (kind === "room" && level && layerOf[level]) || group(phase);
+    const count = (tally[parent.step.phase] ??= { applied: 0, skipped: 0 });
+    if (ok) count.applied++;
+    else count.skipped++;
 
     if (ok) {
       applied++;
@@ -308,7 +316,7 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
             const bricks = (d.bricks as string[] | undefined) ?? [];
             const skills = (d.skills as string[] | undefined) ?? [];
             if (d.chars !== undefined) {
-              finish(g, { title: `Read ${plural(bricks.length, "part")} and ${plural(skills.length, "playbook")}` });
+              finish(g, { title: `Read ${plural(bricks.length, "part")} and ${plural(skills.length, "playbook")}`, detail: null });
               return;
             }
           }
@@ -366,12 +374,18 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
             : purpose === "build" && !applied ? "concept" : "review";
           const g = group(phase);
           const text = typeof d.text === "string" ? d.text : "";
-          const title = typeof d.title === "string" && d.title ? d.title : e.message;
-          child(g, title, null, "done", { why: text && text !== title ? text : null, tone: null, badge: null });
+          const heading = typeof d.title === "string" && d.title ? d.title : null;
+          const title = heading ?? e.message;
+          // Without a heading the title is the paragraph's first sentence; don't say it twice.
+          const flat = text.replace(/\s+/g, " ").trim();
+          const body = !heading && !title.endsWith("…") && flat.startsWith(title) ? flat.slice(title.length).trim() : text;
+          child(g, title, null, "done", { why: body && body !== title ? body : null, tone: null, badge: null });
           return;
         }
         case "llm":
-          if (d.provider && lastGroup) setDetail(lastGroup, `${d.provider}${d.model ? ` ${d.model}` : ""} is drawing…`);
+          if (d.provider && lastGroup && BUILDING.has(lastGroup.step.phase)) {
+            setDetail(lastGroup, `${d.provider}${d.model ? ` ${d.model}` : ""} is drawing…`);
+          }
           return;
         case "stream":
           if (d.waiting) hooks.onLive?.(e.message);
@@ -381,8 +395,9 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
           return;
         case "step":
           onStep(e);
-          if (lastGroup) {
-            setDetail(lastGroup, [plural(applied, "move"), skipped ? `${skipped} skipped` : "",
+          if (lastGroup && BUILDING.has(lastGroup.step.phase)) {
+            const t = tally[lastGroup.step.phase] ?? { applied: 0, skipped: 0 };
+            setDetail(lastGroup, [plural(t.applied, "move"), t.skipped ? `${t.skipped} skipped` : "",
               gfa ? `${Math.round(gfa)} m² so far` : "", previews ? `preview ${previews}` : ""].filter(Boolean).join(" · "));
           }
           return;

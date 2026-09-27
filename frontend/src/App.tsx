@@ -387,6 +387,7 @@ export default function App() {
 
       const version = await call(project, (e) => {
         tracer.event(e);
+        if (e.stage === "done" && typeof e.t === "number") update(sid, patchRun(aid, { seconds: e.t }));
         if (e.stage === "build" || e.stage === "step" || e.stage === "compile" || e.stage === "apply" || e.stage === "solve") {
           update(sid, patchRun(aid, { stage: "building" }));
         }

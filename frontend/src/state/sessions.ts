@@ -61,6 +61,8 @@ export interface Run {
   drafting?: string | null;
   startedAt?: number;
   endedAt?: number;
+  /** Seconds the backend spent on the run, from its own clock (a replay keeps the live run's time). */
+  seconds?: number;
 }
 
 /** An image the user attached to a prompt. `dataUrl` lives only in memory; `url` is the backend's copy. */
