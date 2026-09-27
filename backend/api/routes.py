@@ -8,6 +8,8 @@ Stateful (what the UI uses):
     POST /projects/{id}/revert/{n}    (SSE)        undo: new version equal to version n
     POST /projects/{id}/import        (SSE)        lift a NoCoast-generated IFC file into the project
     GET  /projects/{id}/versions/{n}/{ifc|spec|context|slices|gcode}
+    GET  /projects/{id}/versions/{n}/render?azimuth=&elevation=&target=&level=…   a screenshot (PNG) from any view
+    GET  /projects/{id}/shots/{name}                                 a screenshot the model was shown while checking its work
     POST /projects/{id}/versions/{n}/construction                     start a live-build simulation job
     GET  /projects/{id}/versions/{n}/construction/{job_id}            poll it
 
@@ -21,6 +23,7 @@ Stateless (kept for scripts and tests): POST /plan, /build, /generate.
 
 from __future__ import annotations
 
+import re
 import shutil
 import tempfile
 import time
@@ -29,19 +32,21 @@ from pathlib import Path
 
 import ifcopenshell
 from fastapi import APIRouter, HTTPException, UploadFile
-from fastapi.responses import FileResponse, PlainTextResponse
-from pydantic import BaseModel
+from fastapi.responses import FileResponse, PlainTextResponse, Response
+from pydantic import BaseModel, ValidationError
 
 import config
 from agents import PLANNERS, PlanResult, get_planner
 from bricks import library
 from core import construction, pipeline
 from core.context import describe_design, describe_spec
-from core.derive import DesignError, analyze
+from core.derive import DesignError, analyze, space_id
 from ifc.builder import write_ifc
 from ifc.lifter import LiftError, lift
 from llm import PROVIDERS, get_llm
+from render import ViewError, render, scene_of
 from schemas.bim import BuildingSpec
+from schemas.look import View
 from schemas.ops import Op
 from slicer.gcode import to_gcode
 from skills import skillbook
@@ -51,6 +56,8 @@ from store.db import Project, Store, Version
 from api.sse import sse_response
 
 OUTPUT_DIR = config.OUTPUT_DIR
+SHOT_NAME = re.compile(r"^[0-9a-f]{12}\.png$")
+MAX_RENDER = 2048
 router = APIRouter()
 store = Store(config.DB_PATH, OUTPUT_DIR / "projects")
 
@@ -253,6 +260,46 @@ def version_gcode(project_id: str, number: int, layer_height: float = 0.2) -> st
     v = _version(project_id, number)
     model = ifcopenshell.open(v.ifc_path)
     return to_gcode(slice_model(model, layer_height))
+
+
+def _numbers(text: str | None) -> list[float] | None:
+    if not text:
+        return None
+    try:
+        return [float(n) for n in text.split(",")]
+    except ValueError as exc:
+        raise HTTPException(400, f"expected comma-separated numbers, got {text!r}") from exc
+
+
+@router.get("/projects/{project_id}/versions/{number}/render")
+def version_render(project_id: str, number: int, target: str | None = None, look_at: str | None = None, position: str | None = None,
+                   azimuth: float = 225, elevation: float = 30, distance: float | None = None, level: str | None = None,
+                   cut: float | None = None, hide: str | None = None, ortho: bool | None = None, fov: float = 50,
+                   width: int = 1024, height: int = 768) -> Response:
+    """The same screenshots the model takes when it checks its work (render/), from any view."""
+    v = _version(project_id, number)
+    if not (16 <= width <= MAX_RENDER and 16 <= height <= MAX_RENDER):
+        raise HTTPException(400, f"width and height must be 16..{MAX_RENDER}")
+    try:
+        view = View(target=target, look_at=_numbers(look_at), position=_numbers(position), azimuth=azimuth, elevation=elevation,
+                    distance=distance, level=level, cut=cut, hide=[h for h in (hide or "").split(",") if h], ortho=ortho, fov=fov)
+    except ValidationError as exc:
+        raise HTTPException(400, "; ".join(e["msg"] for e in exc.errors())) from exc
+    rename = {space_id(r.level, r.id): r.id for r in v.design.rooms} if v.design else {}
+    try:
+        shot = render(scene_of(ifcopenshell.open(v.ifc_path), v.guids, rename), view, width, height)
+    except ViewError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return Response(shot.png, media_type="image/png", headers={"X-Visible": ",".join(i for i, _ in shot.visible)})
+
+
+@router.get("/projects/{project_id}/shots/{name}")
+def project_shot(project_id: str, name: str):
+    _project(project_id)
+    path = store.shot_path(project_id, name)
+    if not SHOT_NAME.match(name) or not path.is_file():
+        raise HTTPException(404, f"no screenshot '{name}'")
+    return FileResponse(path, media_type="image/png")
 
 
 @router.post("/projects/{project_id}/versions/{number}/construction")

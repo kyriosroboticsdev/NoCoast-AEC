@@ -39,6 +39,7 @@ def _custom_parts(item: str) -> list[dict]:
 
 class MockLLM:
     name = "mock"
+    vision = True
 
     def complete(self, request: LLMRequest, on_text: OnText | None = None, on_note: OnNote | None = None) -> dict:
         prompt: str = request.meta.get("prompt", request.user)
@@ -46,8 +47,10 @@ class MockLLM:
             reply = {"summary": prompt[:80], "requirements": [r.model_dump(exclude_none=True) for r in parse_requirements(prompt)]}
         elif request.schema_name == "research":
             reply = self._research(prompt, request.meta)
+        elif request.schema_name == "look":
+            reply = self._look(request.meta)
         elif request.schema_name == "build":
-            if request.meta.get("problems") or request.meta.get("unmet") or request.meta.get("issues"):
+            if any(request.meta.get(k) for k in ("problems", "unmet", "issues", "seen")):
                 reply = {"steps": self._fix(prompt, request.meta)}
             elif request.meta.get("editing"):
                 reply = {"steps": self._edit(prompt, Design.model_validate(request.meta["design"]), request.meta.get("focus"))}
@@ -73,6 +76,15 @@ class MockLLM:
         calls += [{"tool": "search_bricks", "query": m.phrase} for m in mentions]
         todo = calls[len(meta.get("log") or []):]
         return {"calls": todo[:MAX_CALLS], "done": len(todo) <= MAX_CALLS}
+
+    # --- look ----------------------------------------------------------------
+
+    def _look(self, meta: dict) -> dict:
+        """Take one closer look at the first placed brick, then call it done; the mock cannot judge an image."""
+        bricks = [b["id"] for b in (meta.get("design") or {}).get("bricks", [])]
+        if meta.get("turn", 1) == 1 and bricks:
+            return {"views": [{"target": bricks[0], "azimuth": 200, "elevation": 35, "note": f"a closer look at {bricks[0]}"}]}
+        return {"done": True}
 
     # --- fix rounds ----------------------------------------------------------
 

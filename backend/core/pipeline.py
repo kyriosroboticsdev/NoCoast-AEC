@@ -7,6 +7,8 @@
            ─► deterministic check of the design against the checklist, plus coordination
               (clashes, missing services, unsupported spans — core/coordinate.py)
            ─► unmet requirements or coordination errors? ─► LLM: fix round (≤ BIM_VERIFY_ROUNDS)
+           ─► LLM: look — screenshots from views it picks (core/look.py); problems it sees ─► fix round
+              (≤ BIM_LOOK_ROUNDS; vision models only)
            ─► derive spec ─► compile IFC ─► version (GlobalIds kept)
 
 A new project starts from an empty Design; an edit starts from the head version's
@@ -32,16 +34,20 @@ from core.coordinate import coordinate, errors, fix_lines
 from core.derive import DesignError, analyze, derive
 from core.guids import GuidMap, prune_guids
 from core.issues import Issue
+from core.look import Review, look_rounds, look_turns, review_design
 from core.research import Toolbox, research, tool_rounds
 from core.ops import OpError, apply_ops
 from core.stream import StepStream
 from ifc.builder import GeometryError, compile_ifc, summarize
 from llm import LLM, LLMError, LLMRequest
-from llm.prompts import (build_system, build_user_message, requirements_system, requirements_user_message, research_system,
-                         research_user_message)
+from llm.base import Image
+from llm.prompts import (build_system, build_user_message, look_system, look_user_message, requirements_system,
+                         requirements_user_message, research_system, research_user_message)
+from render import Shot
 from logsetup import log
 from schemas.bim import BuildingSpec
 from schemas.design import Design
+from schemas.look import LookTurn
 from schemas.requirements import Requirement, RequirementsResponse
 from schemas.research import ResearchTurn
 from schemas.steps import StepsResponse
@@ -52,6 +58,7 @@ Emit = Callable[[str, str, dict | None], None]
 REQUIREMENTS_SCHEMA = RequirementsResponse.model_json_schema()
 STEPS_SCHEMA = StepsResponse.model_json_schema()
 RESEARCH_SCHEMA = ResearchTurn.model_json_schema()
+LOOK_SCHEMA = LookTurn.model_json_schema()
 
 
 def verify_rounds() -> int:
@@ -77,7 +84,8 @@ def _noop(stage: str, message: str, data: dict | None = None) -> None:
 def _call(llm: LLM, request: LLMRequest, emit: Emit = _noop, stream: StepStream | None = None) -> dict:
     """One streamed LLM call with timing and (at DEBUG) the full prompt and reply."""
     model = getattr(llm, "model", None)
-    log.info("LLM %s: %s request, system %d chars, user %d chars", llm.name, request.schema_name, len(request.system), len(request.user))
+    log.info("LLM %s: %s request, system %d chars, user %d chars, %d image(s)", llm.name, request.schema_name, len(request.system),
+             len(request.user), len(request.images))
     log.debug("LLM user message:\n%s", request.user)
     emit("llm", f"sending {request.schema_name} request to {llm.name}{' ' + model if model else ''}",
          {"provider": llm.name, "model": model, "schema": request.schema_name, "system_chars": len(request.system),
@@ -91,7 +99,6 @@ def _call(llm: LLM, request: LLMRequest, emit: Emit = _noop, stream: StepStream 
     finally:
         if stream:
             stream.close()
-    import json
     text = json.dumps(raw)
     log.info("LLM %s replied in %.1fs (%d chars)", llm.name, time.perf_counter() - t, len(text))
     log.debug("LLM reply:\n%s", json.dumps(raw, indent=1)[:20000])
@@ -165,10 +172,12 @@ class Feedback:
     problems: list[str] = field(default_factory=list)   # rejected steps
     unmet: list[str] = field(default_factory=list)      # unmet requirements
     issues: list[Issue] = field(default_factory=list)   # coordination issues; the errors are sent, with suggested steps
+    seen: list[str] = field(default_factory=list)       # problems the model saw in screenshots
 
     def label(self, editing: bool) -> str:
         fixing = [what for what, items in (("rejected steps", self.problems), ("unmet requirements", self.unmet),
-                                           ("coordination issues", errors(self.issues))) if items]
+                                           ("coordination issues", errors(self.issues)), ("what the screenshots showed", self.seen))
+                  if items]
         if fixing:
             return "fixing " + " and ".join(fixing)
         return "editing the design" if editing else "building the design"
@@ -180,13 +189,13 @@ def build_round(llm: LLM, prompt: str, design: Design, checklist: list[str], emi
     context = _context(design)
     fixes = fix_lines(feedback.issues)
     emit("build", f"{feedback.label(editing)}: asking the model for steps",
-         {"problems": feedback.problems, "unmet": feedback.unmet, "issues": fixes})
+         {"problems": feedback.problems, "unmet": feedback.unmet, "issues": fixes, "seen": feedback.seen})
     stream = StepStream(emit, design, guids, first_index)
     meta = {"prompt": prompt, "design": design.model_dump(mode="json"), "problems": feedback.problems, "unmet": feedback.unmet,
-            "editing": editing, "focus": focus, "issues": [i.as_dict() for i in errors(feedback.issues)],
+            "editing": editing, "focus": focus, "issues": [i.as_dict() for i in errors(feedback.issues)], "seen": feedback.seen,
             "bricks": toolbox.bricks if toolbox else []}
     user = build_user_message(prompt, checklist, context, focus=focus, toolbox=toolbox.text() if toolbox else None,
-                              problems=feedback.problems, unmet=feedback.unmet, issues=fixes)
+                              problems=feedback.problems, unmet=feedback.unmet, issues=fixes, seen=feedback.seen)
     raw = _call(llm, LLMRequest(system=build_system(), user=user,
                                 schema=STEPS_SCHEMA, schema_name="build", meta=meta), emit, stream)
     # Anything the streaming parser did not see (non-streaming adapters, or a reply that only parsed whole).
@@ -199,6 +208,24 @@ def build_round(llm: LLM, prompt: str, design: Design, checklist: list[str], emi
         stream.applied += 1
         stream.apply(steps[stream.applied - 1].model_dump(exclude_none=True))
     return stream
+
+
+# --- look rounds ------------------------------------------------------------------
+
+def look_round(llm: LLM, prompt: str, design: Design, checklist: list[str], guids: GuidMap, emit: Emit,
+               save: Callable[[Shot], str | None] | None = None) -> Review:
+    context = _context(design)
+    turns = look_turns()
+    asked = [0]
+
+    def complete(log: list[str], shots: list[Shot]) -> dict:
+        asked[0] += 1
+        return _call(llm, LLMRequest(system=look_system(), user=look_user_message(prompt, checklist, context, log, turns - asked[0]),
+                                     schema=LOOK_SCHEMA, schema_name="look", images=[Image(s.png, s.caption()) for s in shots],
+                                     meta={"prompt": prompt, "design": design.model_dump(mode="json"), "log": log, "turn": asked[0],
+                                           "visible": [s.visible for s in shots]}), emit)
+
+    return review_design(complete, design, guids, emit, save)
 
 
 def _problem_lines(stream: StepStream) -> list[str]:
@@ -275,6 +302,24 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
                 break
             stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=steps_total,
                                  feedback=Feedback(unmet=unmet, issues=issues), editing=editing, toolbox=toolbox)
+            design, guids = stream.design, stream.guids
+            steps_total += stream.applied
+            accepted_total += len(stream.accepted)
+            results, issues = _verify(design, reqs.requirements, emit)
+
+        rounds = look_rounds() if accepted_total and design.rooms else 0
+        if rounds and not getattr(llm, "vision", False):
+            emit("look", f"{llm.name} is not set up to see images (LLM_VISION); skipping the visual check", {"skipped": True})
+            rounds = 0
+        def save(shot: Shot) -> str:
+            return f"/projects/{project_id}/shots/{store.save_shot(project_id, shot.png)}"
+
+        for _ in range(rounds):
+            review = look_round(llm, prompt, design, checklist, guids, emit, save)
+            if not review.problems:
+                break
+            stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=steps_total,
+                                 feedback=Feedback(seen=review.problems), editing=editing, toolbox=toolbox)
             design, guids = stream.design, stream.guids
             steps_total += stream.applied
             accepted_total += len(stream.accepted)

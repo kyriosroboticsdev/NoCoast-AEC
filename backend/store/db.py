@@ -127,6 +127,17 @@ class Store:
     def ifc_path(self, project_id: str, number: int) -> Path:
         return self.ifc_dir / project_id / f"v{number}.ifc"
 
+    def shot_path(self, project_id: str, name: str) -> Path:
+        return self.ifc_dir / project_id / "shots" / name
+
+    def save_shot(self, project_id: str, png: bytes) -> str:
+        """Store a screenshot the model was shown; returns its file name."""
+        name = f"{uuid.uuid4().hex[:12]}.png"
+        path = self.shot_path(project_id, name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(png)
+        return name
+
     def add_version(self, project_id: str, *, spec: BuildingSpec, guids: GuidMap, mode: str, summary: dict,
                     ifc_path: Path, prompt: str | None = None, llm: str | None = None, ops: list[dict] | None = None,
                     notes: list[str] | None = None, design: Design | None = None, checks: list[dict] | None = None) -> VersionData:

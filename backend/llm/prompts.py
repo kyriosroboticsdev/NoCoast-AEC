@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from functools import lru_cache
 
 from bricks import MOUNT_HINTS, library
+from schemas.look import MAX_VIEWS, View
 from schemas.research import TOOL_HELP
 from skills import skillbook
 
@@ -176,6 +177,34 @@ def research_system() -> str:
             + library().index_text())
 
 
+_LOOK = """You are checking a 3D model you just built by looking at rendered screenshots of it. Coordinates are
+metres: x east, y north, z up; each level's floor is at its elevation. In a screenshot, element ids are written
+where the element is seen, room ids on their floors, and a red arrow points north; a plan cut draws what it cuts
+through as dark solid shapes, and a targeted element is highlighted in orange and drawn through anything in front
+of it. Each screenshot's caption lists the elements it shows with their share of the frame.
+
+Look for what the numbers cannot tell you: parts floating above or sunk into what they should stand on, things
+facing the wrong way or backed onto the wrong side, overlaps, blocked doors and paths, gaps, assets that do not
+look like what they should (proportions, missing or misplaced parts), anything the request asked for that you
+cannot see. Only report what you can see; the checklist is checked separately.
+
+Reply with ONE JSON object: {"views": [ … ], "problems": [ … ], "done": true|false}
+- views: up to %d more screenshots when you need a closer or different look. A view is an object with:
+%s
+  e.g. {"target": "fridge-kitchen", "azimuth": 180, "elevation": 20} or {"level": "L1", "elevation": 90} (a plan) or
+  {"position": [2, 1, 1.6], "look_at": [5, 3, 1]} (standing in a room).
+- problems: what is wrong, each naming the element ids and the fix in terms of build steps, e.g. "fridge-kitchen
+  blocks door-kitchen-hall: move it to side E". Set done=true with them.
+- done: true when the model looks right (no problems) or when you have listed the problems.
+Return only the JSON object."""
+
+
+def look_system() -> str:
+    fields = "".join(textwrap.fill(f"{name}: {f.description}", 116, initial_indent="    ", subsequent_indent="      ") + "\n"
+                     for name, f in View.model_fields.items())
+    return _LOOK % (MAX_VIEWS, fields.rstrip("\n"))
+
+
 @lru_cache(maxsize=1)
 def build_system() -> str:
     mounts = "".join(textwrap.fill(f"{name} = {hint}", 116, initial_indent="          ", subsequent_indent="            ") + "\n"
@@ -186,6 +215,9 @@ FIX_INTRO = "SOME STEPS WERE REJECTED. The current design is shown above; emit O
 UNMET_INTRO = "The design does not yet satisfy every requirement. The current design is shown above; emit ONLY steps that fix these:"
 ISSUES_INTRO = ("COORDINATION ISSUES (clashes, missing services, unsupported spans). Emit ONLY steps that resolve them; the "
                 "suggested steps work, adjust them if you know better:")
+
+
+SEEN_INTRO = "WHAT YOU SAW IN THE SCREENSHOTS of the model. Emit ONLY steps that fix these:"
 
 
 FOCUS_INTRO = "SELECTED IN THE VIEWER: "
@@ -212,8 +244,19 @@ def research_user_message(prompt: str, checklist: list[str], context: str | None
     return "\n\n".join(parts)
 
 
+def look_user_message(prompt: str, checklist: list[str], context: str | None, log: list[str], turns_left: int) -> str:
+    parts = ["CURRENT DESIGN:\n" + context if context else "CURRENT DESIGN: empty", "REQUEST:\n" + prompt.strip()]
+    if checklist:
+        parts.append("CHECKLIST:\n- " + "\n- ".join(checklist))
+    parts.append("SCREENSHOTS SO FAR:\n" + ("\n".join(log) if log else "none"))
+    parts.append("The latest screenshots are attached below, in order. "
+                 + (f"You can ask for more views {turns_left} more time(s)." if turns_left else "This is your last look: report problems or say done."))
+    return "\n\n".join(parts)
+
+
 def build_user_message(prompt: str, checklist: list[str], context: str | None, *, focus: str | None = None,
-                       toolbox: str | None = None, problems: Sequence[str] = (), unmet: Sequence[str] = (), issues: Sequence[str] = ()) -> str:
+                       toolbox: str | None = None, problems: Sequence[str] = (), unmet: Sequence[str] = (), issues: Sequence[str] = (),
+                       seen: Sequence[str] = ()) -> str:
     parts = []
     if toolbox:
         parts.append("LIBRARY (bricks and skills from your research):\n" + toolbox)
@@ -232,4 +275,6 @@ def build_user_message(prompt: str, checklist: list[str], context: str | None, *
         parts.append(UNMET_INTRO + "\n- " + "\n- ".join(unmet))
     if issues:
         parts.append(ISSUES_INTRO + "\n- " + "\n- ".join(issues))
+    if seen:
+        parts.append(SEEN_INTRO + "\n- " + "\n- ".join(seen))
     return "\n\n".join(parts)
