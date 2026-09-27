@@ -17,6 +17,7 @@ from shapely.geometry import Polygon
 
 from core.issues import Issue
 from schemas.bim import Asset, BuildingSpec, CustomFixture, Fixture, Stair
+from schemas.design import Design
 
 MIN_AREA = 0.01     # m² of footprint overlap that counts
 MIN_Z = 0.02        # m of height overlap that counts
@@ -79,6 +80,12 @@ def _skip(a: Solid, b: Solid) -> bool:
     if (a.asset and a.asset.overlap_ok) or (b.asset and b.asset.overlap_ok):
         return True
     return bool(a.asset and b.asset and a.asset.structural and b.asset.structural)
+
+
+def new_brick_clashes(before: Design, after: Design, spec: BuildingSpec) -> list[Issue]:
+    """Hard clashes of the bricks `after` adds or changes compared to `before` (`spec` derived from `after`)."""
+    changed = {b.id for b in after.bricks if b not in before.bricks}
+    return [i for i in clashes(spec, changed) if i.severity == "error"] if changed else []
 
 
 def clashes(spec: BuildingSpec, only: set[str] | None = None) -> list[Issue]:

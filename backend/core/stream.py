@@ -21,7 +21,7 @@ from collections import Counter
 from typing import Callable
 
 import config
-from core.clash import clashes
+from core.clash import new_brick_clashes
 from core.derive import DesignError, Derived, analyze
 from core.partial_json import parse_partial
 from ifc.builder import GeometryError, compile_ifc
@@ -165,10 +165,9 @@ class StepStream:
             if derived.pruned:  # a structural change made some openings/fixtures impossible: drop them, say so
                 candidate = derived.design
                 message += "; " + "; ".join(derived.pruned)
-            if step.step == "brick":
-                hits = [i for i in clashes(derived.spec, {candidate.bricks[-1].id}) if i.severity == "error"]
-                if hits:
-                    raise StepError(hits[0].message)
+            hits = new_brick_clashes(self.design, candidate, derived.spec)
+            if hits:
+                raise StepError(hits[0].message)
         except (StepError, DesignError, ValidationError, ValueError) as exc:
             msg = _fmt_validation(exc) if isinstance(exc, ValidationError) else str(exc)
             if isinstance(exc, DesignError):

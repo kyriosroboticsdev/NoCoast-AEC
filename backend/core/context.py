@@ -60,7 +60,7 @@ def describe_element(el) -> str:
         ifc = el.ifc_class + (f".{el.predefined_type}" if el.predefined_type else "")
         w, d, h = el.size
         return (f"{head} brick={el.brick} {ifc} at {_pt(el.position)} rot={el.rotation:g} z={el.elevation:g} "
-                f"{w:g}x{d:g}x{h:g}" + (f" ports={','.join(el.ports)}" if el.ports else ""))
+                f"{w:g}x{d:g}x{h:g}" + (f" ports={','.join(p.label for p in el.ports)}" if el.ports else ""))
     if el.type == "railing":
         return f"{head} path={_outline(el.path)} h={el.height:g}"
     if el.type == "pipe":

@@ -21,9 +21,9 @@
      "params": {"w": [0.45, 0.3, 0.7], "d": [0.2, 0.12, 0.3], "h": [0.55, 0.3, 0.8]},
      "ports": [{"kind": "power"}], "rules": {"rooms": ["garage", "utility", "storage", "other"], "overlap_ok": true}},
     {"id": "small_wind_turbine", "name": "Small wind turbine", "category": "renewables", "ifc_class": "IfcElectricGenerator", "predefined_type": "STANDALONE",
-     "host": "free", "phase": "site", "finish": "metal", "tags": ["wind", "turbine", "renewable"],
+     "host": "site", "phase": "site", "finish": "metal", "tags": ["wind", "turbine", "renewable"],
      "params": {"w": [2.5, 1.5, 5.0], "d": [0.4, 0.3, 1.0], "h": [9.0, 6.0, 18.0]},
      "parts": [["round", "w / 2 - 0.1", "d / 2 - 0.1", 0, 0.2, 0.2, "h - 0.3"], [0, "d / 2 - 0.05", "h - 0.3", "w", 0.1, 0.3]],
-     "ports": [{"kind": "power", "direction": "out"}], "rules": {"exterior": true}}
+     "ports": [{"kind": "power", "direction": "out"}]}
   ]
 }

@@ -31,11 +31,13 @@ def _assets(design: Design) -> dict[str, Asset]:
 
 def _placement(brick) -> dict:
     """Arguments that place `brick` with its defaults in a roomy single-storey building."""
+    if brick.host == "site_span":
+        return {"start": [-12, 2], "end": [-12, 8]}
     if brick.host == "span":
-        return {"start": [-12, 2], "end": [-12, 8]} if brick.rules.exterior else {"start": [1, 6], "end": [7, 6]}
+        return {"start": [1, 6], "end": [7, 6]}
     if brick.host == "roof":
         return {}
-    if brick.rules.exterior:
+    if brick.host == "site":
         return {"position": [-12, 6]}
     if brick.host == "free":
         return {"room": "hall", "position": [6, 6]}
@@ -70,7 +72,7 @@ def test_floor_brick_goes_against_the_named_wall_facing_into_the_room():
     a = _assets(_house(dict(step="brick", brick="fridge", room="kitchen", side="N")))["fridge-kitchen"]
     assert a.ifc_class == "IfcElectricAppliance" and a.predefined_type == "FRIDGE_FREEZER"
     assert a.rotation == 180 and a.position[1] > 3 and a.elevation == 0
-    assert "power:in" in a.ports
+    assert "power:in" in [p.label for p in a.ports]
 
 
 def test_wall_brick_is_lifted_to_its_mount_height():
@@ -118,8 +120,9 @@ def test_exterior_brick_must_stand_clear_of_the_building():
 @pytest.mark.parametrize("step, match", [
     (dict(step="brick", brick="toaster_9000", room="kitchen"), "no brick 'toaster_9000'"),
     (dict(step="brick", brick="fridge"), "give `room`"),
-    (dict(step="brick", brick="tree", room="kitchen"), "outside the rooms"),
-    (dict(step="brick", brick="steel_beam", start=[0, 0]), "give `start`"),
+    (dict(step="brick", brick="tree", room="kitchen"), "outside the building.*drop `room`"),
+    (dict(step="brick", brick="steel_beam", start=[0, 0]), "give `end`"),
+        (dict(step="brick", brick="hedge"), "give `start` and `end`"),
     (dict(step="brick", brick="fridge", room="kitchen", params={"w": 9}), "outside"),
     (dict(step="brick", brick="fridge", room="kitchen", params={"colour": 1}), "no param 'colour'"),
     (dict(step="brick", brick="air_source_heat_pump"), "give `position`"),
@@ -142,7 +145,7 @@ def test_one_per_building_and_ground_only_rules():
 
 
 def _placement_for(brick) -> dict:
-    if brick.rules.exterior:
+    if brick.host == "site":
         return {"position": [-6, 2]}
     if brick.host == "roof":
         return {}

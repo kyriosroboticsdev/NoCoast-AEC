@@ -523,6 +523,10 @@ class RoofDef(BaseModel):
     overhang: float = Field(0.3, ge=0, le=1.5)
 
 
+# Collections whose items stand in a room (`.room`) and go when the room does.
+ROOM_OWNED = ("doors", "windows", "stairs", "fixtures", "custom_shapes", "balconies", "bricks")
+
+
 class Design(BaseModel):
     name: str = "Generated Building"
     description: Optional[str] = None
@@ -569,11 +573,7 @@ class Design(BaseModel):
         return [r for r in self.rooms if r.level == level_id]
 
     def all_ids(self) -> set[str]:
-        ids = {r.id for r in self.rooms} | {d.id for d in self.doors} | {w.id for w in self.windows}
-        ids |= {s.id for s in self.stairs} | {f.id for f in self.fixtures} | {b.id for b in self.balconies}
-        ids |= {c.id for c in self.columns} | {l.id for l in self.levels} | {e.id for e in self.elements}
-        ids |= {cs.id for cs in self.custom_shapes} | {b.id for b in self.bricks}
-        return ids
+        return {x.id for attr in ("levels", "rooms", "columns", "elements", *ROOM_OWNED) for x in getattr(self, attr)}
 
     def unique_id(self, base: str) -> str:
         ids = self.all_ids()
@@ -593,6 +593,10 @@ class Design(BaseModel):
 
     def ordered_levels(self) -> list[LevelDef]:
         return sorted(self.levels, key=lambda l: l.index)
+
+    def ground_level(self) -> LevelDef:
+        """The lowest storey above ground (L1), or the first level when there are only basements."""
+        return next((l for l in self.ordered_levels() if l.index >= 0), self.levels[0])
 
     def level_above(self, level_id: str) -> LevelDef | None:
         cur = self.level(level_id)

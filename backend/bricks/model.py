@@ -1,8 +1,8 @@
 """What a brick is: one reusable, parametric building asset the model can search for and place.
 
 A brick knows its IFC identity (class + predefined type), its size parameters and their
-limits, how it is hosted (standing on the floor, fixed to a wall, hung from the ceiling,
-on the roof, free on the site, or spanning between two points), the service ports it
+limits, how it is hosted (`HOSTS`: standing on the floor, fixed to a wall, hung from the
+ceiling, on the roof, free-standing, spanning two points, or outside on the site), the service ports it
 needs or provides (water, drain, power, air …), placement rules, and the solids it is
 drawn with. The solids are expressions over the parameters, so one brick covers every
 size of the thing it describes.
@@ -15,25 +15,51 @@ footprint on the placement point, the same way catalog fixtures are placed.
 
 from __future__ import annotations
 
-from typing import Literal, Optional, Union
+from dataclasses import dataclass
+from typing import Literal, Optional, Union, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from bricks.expr import ExprError, evaluate, names_in
+from schemas.brick_types import Discipline, Finish, Host, Phase, Port, PortKind
 
-Discipline = Literal["architecture", "interior", "plumbing", "electrical", "hvac", "fire", "structure", "site",
-                     "transport", "energy", "data"]
-Host = Literal["floor", "wall", "ceiling", "roof", "free", "span"]
-Phase = Literal["site", "foundation", "structure", "roof", "plumbing", "mechanical", "electrical", "details"]
-Finish = Literal["wood", "soft", "sanitary", "appliance", "metal", "glass", "concrete", "plant", "water", "stone", "device",
-                 "duct", "solar", "fire", "car"]
-PortKind = Literal["water_cold", "water_hot", "drain", "power", "data", "air_supply", "air_return", "gas", "fire_water",
-                   "flue", "refrigerant", "heating"]
 Number = Union[float, str]
 
 # Port kinds every building already has once it has rooms: the derived rough-in brings them to
 # any room that needs them (core/derive.py::_mep).
 BASE_SERVICES: tuple[PortKind, ...] = ("water_cold", "drain", "power")
+
+
+@dataclass(frozen=True)
+class HostRule:
+    """How a brick with this host is placed: which step fields it needs and what that means."""
+
+    hint: str
+    needs: tuple[tuple[str, ...], ...] = ()   # each group: at least one of these step fields
+    outside: bool = False                     # stands outside every room; a `room` is refused
+    spans: bool = False                       # placed from `start` to `end`; its length replaces `d`
+
+
+PLACEMENT_FIELDS = ("room", "position", "start", "end")
+
+
+def given_fields(placed) -> set[str]:
+    """Which of PLACEMENT_FIELDS a brick step or placed BrickDef sets."""
+    return {f for f in PLACEMENT_FIELDS if getattr(placed, f) is not None}
+
+
+_LINE = (("start",), ("end",))
+HOSTS: dict[Host, HostRule] = {
+    "floor": HostRule("stands on the floor of `room`, against `side`/`near` or at `position`", (("room",),)),
+    "wall": HostRule("fixed to a wall of `room` (`side`/`near`) at its mount height", (("room",),)),
+    "ceiling": HostRule("hangs under the ceiling of `room`", (("room",),)),
+    "roof": HostRule("on the top roof at `position` (null = centred)"),
+    "free": HostRule("free-standing at `position` on `level`, or in `room`", (("room", "position"),)),
+    "span": HostRule("spans from `start` to `end` inside the building (beams)", _LINE, spans=True),
+    "site": HostRule("outside the building at `position` [x, y], clear of every room", (("position",),), outside=True),
+    "site_span": HostRule("runs outside the building from `start` to `end` (hedges, fences)", _LINE, outside=True, spans=True),
+}
+assert set(HOSTS) == set(get_args(Host)), "every host needs a HostRule"
 
 
 class Param(BaseModel):
@@ -77,16 +103,9 @@ class PartSpec(BaseModel):
         return v
 
 
-class Port(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    kind: PortKind
-    direction: Literal["in", "out"] = "in"
-
-
 class Rules(BaseModel):
     model_config = ConfigDict(extra="forbid")
     rooms: Optional[list[str]] = Field(None, description="Room kinds it belongs in; null = any room")
-    exterior: bool = Field(False, description="Stands outside the rooms (site, garden)")
     not_below_ground: bool = False
     ground_only: bool = False
     min_room_area: Optional[float] = None
@@ -154,7 +173,7 @@ class Brick(BaseModel):
         names = [p.name for p in self.params]
         if len(set(names)) != len(names):
             raise ValueError(f"{self.id}: duplicate params")
-        required = {"w", "h"} if self.host == "span" else {"w", "d", "h"}
+        required = {"w", "h"} if self.spans else {"w", "d", "h"}
         missing = required - set(names)
         if missing:
             raise ValueError(f"{self.id}: needs size params {sorted(missing)}")
@@ -171,6 +190,28 @@ class Brick(BaseModel):
         return self
 
     # --- evaluation ---------------------------------------------------------
+
+    @property
+    def placement(self) -> HostRule:
+        return HOSTS[self.host]
+
+    @property
+    def spans(self) -> bool:
+        return self.placement.spans
+
+    @property
+    def outside(self) -> bool:
+        return self.placement.outside
+
+    def placement_error(self, given: set[str]) -> str | None:
+        """Why a placement giving these fields (room, position, start, end) cannot work for this host."""
+        rule = self.placement
+        if rule.outside and "room" in given:
+            return f"brick {self.id} ({rule.hint}): drop `room`"
+        missing = [" or ".join(f"`{f}`" for f in group) for group in rule.needs if not given & set(group)]
+        if missing:
+            return f"brick {self.id} ({rule.hint}): give " + " and ".join(missing)
+        return None
 
     def param(self, name: str) -> Param | None:
         return next((p for p in self.params if p.name == name), None)
@@ -192,7 +233,7 @@ class Brick(BaseModel):
 
     def solids(self, values: dict[str, float]) -> list[tuple[str, float, float, float, float, float, float]]:
         """(shape, x, y, z, w, d, h) per part in the bounding-box frame."""
-        parts = self.parts or [PartSpec(w="length", d="w") if self.host == "span" else PartSpec()]
+        parts = self.parts or [PartSpec(w="length", d="w") if self.spans else PartSpec()]
         out = []
         for i, part in enumerate(parts):
             try:
@@ -214,18 +255,18 @@ class Brick(BaseModel):
         return _num(self.mount, values)
 
     @property
-    def provides(self) -> list[str]:
+    def provides(self) -> list[PortKind]:
         return [p.kind for p in self.ports if p.direction == "out"]
 
     @property
-    def needs(self) -> list[str]:
+    def needs(self) -> list[PortKind]:
         return [p.kind for p in self.ports if p.direction == "in"]
 
     # --- text for the model ------------------------------------------------
 
     def size_text(self) -> str:
         v = {p.name: p.default for p in self.params}
-        if self.host == "span":
+        if self.spans:
             return f"{v['w']:g}x{v['h']:g} section"
         return f"{v['w']:g}x{v['d']:g}x{v['h']:g} m"
 
@@ -246,10 +287,9 @@ class Brick(BaseModel):
             rng = f" {p.min:g}..{p.max:g}" if p.min is not None and p.max is not None else ""
             params.append(f"{p.name}={p.default:g}{p.unit if p.unit != '-' else ''}{rng}" + (f" ({p.description})" if p.description else ""))
         lines.append("  params: " + "; ".join(params))
+        lines.append(f"  host {self.host}: {self.placement.hint}")
         r = self.rules
         rule_bits = []
-        if r.exterior:
-            rule_bits.append("outside the rooms, give position [x,y]")
         if r.not_below_ground:
             rule_bits.append("not below ground")
         if r.ground_only:
@@ -264,8 +304,8 @@ class Brick(BaseModel):
             rule_bits.append("needs " + ", ".join(self.needs))
         if self.provides:
             rule_bits.append("provides " + ", ".join(self.provides))
-        if self.host == "span":
-            rule_bits.append("give start [x,y] and end [x,y]" + (f"; spans ≤ {self.max_span:g} m unsupported" if self.max_span else ""))
+        if self.max_span:
+            rule_bits.append(f"spans ≤ {self.max_span:g} m unsupported")
         if rule_bits:
             lines.append("  rules: " + "; ".join(rule_bits))
         return "\n".join(l for l in lines if l)

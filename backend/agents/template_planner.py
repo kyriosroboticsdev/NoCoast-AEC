@@ -12,8 +12,9 @@ from agents import shapes
 from agents.base import PlanResult
 from agents.brick_words import mentioned_bricks
 from bricks import library
-from core.assembly import candidates, first_fit
-from core.derive import DesignError, Derived, analyze
+from core.derive import DesignError, analyze
+from core.placement import candidates, first_fit
+from core.rooms import compass
 from schemas.design import Design, Edge, LevelDef, RoomDef, slug
 from schemas.requirements import Requirement
 from schemas.steps import Step, StepError, apply_step
@@ -244,41 +245,24 @@ def template_steps(prompt: str) -> list[dict]:
 
 def brick_steps(mentions, design: Design) -> list[dict]:
     """A brick step for every brick the prompt names, at the first spot its rules allow that clashes with
-    nothing already there (see core/assembly.py)."""
+    nothing already there (core/placement.py)."""
     steps: list[dict] = []
+    derived = analyze(design)
     slot = 0
     for m in mentions:
         brick = library().get(m.brick)
         targets = [r.id for r in design.rooms if r.kind == m.room_kind] if m.each else []
         for i in range(len(targets) or m.count):
-            derived = analyze(design)
-            if brick.host == "span" and not brick.rules.exterior:
-                options = [a for a in [_across_largest_room(design, derived)] if a]
-            else:
-                options = candidates(brick, design, derived, targets[i] if targets else None, slot, m.room_kind)
+            options = candidates(brick, design, derived, targets[i] if targets else None, slot, m.room_kind)
             slot += 1
             fit = first_fit(brick, design, options)
             if fit is not None:
-                steps.append({"step": "brick", "brick": brick.id, **fit[0]})
-                design = fit[1]
+                args, design, derived = fit
+                steps.append({"step": "brick", "brick": brick.id, **args})
     return steps
 
 
-def _across_largest_room(design: Design, derived: Derived) -> dict | None:
-    rooms = [r for r in design.rooms if r.id in derived.rooms and r.enclosed]
-    if not rooms:
-        return None
-    room = max(rooms, key=lambda r: derived.rooms[r.id].polygon.area)
-    x0, y0, x1, y1 = derived.rooms[room.id].polygon.bounds
-    if x1 - x0 >= y1 - y0:
-        mid = round((y0 + y1) / 2, 2)
-        return {"level": room.level, "start": [round(x0 + 0.1, 2), mid], "end": [round(x1 - 0.1, 2), mid]}
-    mid = round((x0 + x1) / 2, 2)
-    return {"level": room.level, "start": [mid, round(y0 + 0.1, 2)], "end": [mid, round(y1 - 0.1, 2)]}
-
-
 def _facing(wall, poly) -> str:
-    from core.derive import compass
     ix, iy = wall.inward(poly)
     return compass(-ix, -iy)
 

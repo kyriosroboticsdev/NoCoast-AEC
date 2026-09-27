@@ -17,11 +17,12 @@ import math
 from shapely.geometry import LineString, Point as ShpPoint, Polygon
 from shapely.ops import unary_union
 
-from bricks import library
+from bricks import HOSTS, library
 from core.derive import Derived
+from core.rooms import r2
 from core.issues import Issue
 from schemas.bim import Asset, Beam, Column
-from schemas.design import Design
+from schemas.design import Design, Pt
 
 SPAN_LIMITS = {"timber": 6.0, "masonry": 7.0, "plaster": 7.0, "stone": 7.0, "concrete": 8.0, "glass": 5.0}
 DEFAULT_SPAN = 7.0
@@ -46,7 +47,7 @@ def _supports(derived: Derived, level: str) -> tuple[list[tuple[float, float]], 
         elif isinstance(e, Beam):
             lines.append(LineString([e.start, e.end]))
         elif isinstance(e, Asset) and e.structural and e.elevation >= -0.01:
-            if e.host == "span":
+            if HOSTS[e.host].spans:
                 lines.append(_asset_line(e))
             else:
                 points.append(e.position)
@@ -57,10 +58,6 @@ def _asset_line(a: Asset) -> LineString:
     half = a.size[0] / 2
     c, s = math.cos(math.radians(a.rotation)), math.sin(math.radians(a.rotation))
     return LineString([(a.position[0] - c * half, a.position[1] - s * half), (a.position[0] + c * half, a.position[1] + s * half)])
-
-
-def _r(v: float) -> float:
-    return round(v, 2)
 
 
 def room_spans(design: Design, derived: Derived) -> list[Issue]:
@@ -94,33 +91,42 @@ def room_spans(design: Design, derived: Derived) -> list[Issue]:
         issues.append(Issue("structure", "error",
                             f"{room.name} ({room.id}) spans {gap:.1f} m unsupported; {design.wall_material or 'masonry'} walls "
                             f"carry about {limit:g} m — add a beam along its long side",
-                            [room.id], _beam_steps(room.id, along_x, lo, hi, (x0, y0, x1, y1), limit)))
+                            [room.id], _beam_steps(room.id, (x0, y0, x1, y1), limit)))
     return issues
 
 
-def _beam_steps(room_id: str, along_x: bool, lo: float, hi: float, box, limit: float) -> list[dict]:
+def beam_line(box: tuple[float, float, float, float], at: float = 0.5) -> tuple[Pt, Pt]:
+    """A beam along the long direction of a room's bounding box, 0.1 m clear of its walls, `at` of the way across."""
+    x0, y0, x1, y1 = box
+    if x1 - x0 >= y1 - y0:
+        y = r2(y0 + (y1 - y0) * at)
+        return (r2(x0 + 0.1), y), (r2(x1 - 0.1), y)
+    x = r2(x0 + (x1 - x0) * at)
+    return (x, r2(y0 + 0.1)), (x, r2(y1 - 0.1))
+
+
+def _beam_steps(room_id: str, box: tuple[float, float, float, float], limit: float) -> list[dict]:
     x0, y0, x1, y1 = box
     beam = library().get(BEAM_BRICK)
-    n = math.ceil((hi - lo) / limit) - 1
+    n = math.ceil(min(x1 - x0, y1 - y0) / limit) - 1
     steps: list[dict] = []
     for i in range(1, n + 1):
-        at = _r(lo + (hi - lo) * i / (n + 1))
-        a, b = ((x0 + 0.1, at), (x1 - 0.1, at)) if along_x else ((at, y0 + 0.1), (at, y1 - 0.1))
+        a, b = beam_line(box, i / (n + 1))
         length = math.dist(a, b)
         steps.append({"step": "brick", "brick": BEAM_BRICK, "id": f"beam-{room_id}" + (f"-{i}" if n > 1 else ""),
-                      "start": [_r(a[0]), _r(a[1])], "end": [_r(b[0]), _r(b[1])]})
+                      "start": list(a), "end": list(b)})
         if beam.max_span and length > beam.max_span:
             k = math.ceil(length / beam.max_span) - 1
             for j in range(1, k + 1):
                 t = j / (k + 1)
                 steps.append({"step": "brick", "brick": COLUMN_BRICK, "room": room_id,
-                              "position": [_r(a[0] + (b[0] - a[0]) * t), _r(a[1] + (b[1] - a[1]) * t)]})
+                              "position": [r2(a[0] + (b[0] - a[0]) * t), r2(a[1] + (b[1] - a[1]) * t)]})
     return steps
 
 
 def beam_spans(design: Design, derived: Derived) -> list[Issue]:
     issues = []
-    for a in (e for e in derived.spec.elements if isinstance(e, Asset) and e.host == "span"):
+    for a in (e for e in derived.spec.elements if isinstance(e, Asset) and HOSTS[e.host].spans):
         brick = library().get(a.brick)
         if brick is None or not brick.max_span or a.size[0] <= brick.max_span:
             continue
@@ -135,7 +141,7 @@ def beam_spans(design: Design, derived: Derived) -> list[Issue]:
                 k = math.ceil((t1 - t0) / brick.max_span) - 1
                 for j in range(1, k + 1):
                     p = line.interpolate(t0 + (t1 - t0) * j / (k + 1))
-                    steps.append({"step": "brick", "brick": COLUMN_BRICK, "level": a.level, "position": [_r(p.x), _r(p.y)]})
+                    steps.append({"step": "brick", "brick": COLUMN_BRICK, "level": a.level, "position": [r2(p.x), r2(p.y)]})
         if steps:
             issues.append(Issue("structure", "error", f"{a.brick} '{a.id}' spans {worst:.1f} m between supports; it carries at most "
                                                       f"{brick.max_span:g} m — add a column under it", [a.id], steps))
@@ -165,7 +171,7 @@ def overhangs(design: Design, derived: Derived) -> list[Issue]:
                 dx, dy = c.x - x, c.y - y
                 n = math.hypot(dx, dy) or 1.0
                 steps.append({"step": "brick", "brick": COLUMN_BRICK, "level": below.id,
-                              "position": [_r(x + dx / n * 0.25), _r(y + dy / n * 0.25)]})
+                              "position": [r2(x + dx / n * 0.25), r2(y + dy / n * 0.25)]})
             issues.append(Issue("structure", "error", f"{above.id} overhangs {below.id} by {depth:.1f} m with nothing under it; "
                                                       f"add columns on {below.id} under the overhang", [above.id], steps))
     return issues

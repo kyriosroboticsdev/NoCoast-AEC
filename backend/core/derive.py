@@ -23,114 +23,22 @@ from dataclasses import dataclass, field
 from shapely.geometry import LineString, MultiLineString, Point as ShpPoint, Polygon
 from shapely.ops import unary_union
 
-from bricks import library
+from core.derive_bricks import ROOF_T, SLAB_T, Site, derive_brick, needs_water
+from core.rooms import (CLEAR, DesignError, RoomInfo, WallSeg, compass, exterior_walls, fits, pick_wall, place_piece,
+                        r2, rect_at, side_name)
 from ifc.fixtures import default_size
-from schemas.bim import (Asset, Beam, BuildingSpec, Column, CustomFixture, Door, Fixture, Level, LightFixture, Outlet, Panel,
+from schemas.bim import (Beam, BuildingSpec, Column, CustomFixture, Door, Fixture, Level, LightFixture, Outlet, Panel,
                          Pipe, Railing, Roof, ShapePart, Slab, Space, Stair, Wall, Window, Wire, is_axis_rectangle)
-from schemas.design import (BrickDef, CustomShapeDef, Design, DoorDef, FixtureDef, FreeDef, LevelDef, Pt, RoomDef, Segment, Side,
-                            StairDef, WindowDef, arc_points)
+from schemas.design import (CustomShapeDef, Design, DoorDef, FixtureDef, FreeDef, LevelDef, Pt, RoomDef, Segment, Side,
+                            StairDef, WindowDef)
 from solver.layout import place_rooms
 
 EXT_T, INT_T = 0.3, 0.12
 MARGIN = 0.15          # openings keep this far from wall ends
-CLEAR = 0.15           # fixtures and stairs keep this far from wall centre lines
-NEAR_MAX = 3.0         # `near` points further than this from every candidate wall are rejected (a bulging arc wall sits ~2 m from a point inside the room)
 COLUMN_EVERY = 4.0     # open edges get a column at least this often
 DOOR_SIZES = {"single": (0.9, 2.1), "double": (1.6, 2.1), "sliding": (1.8, 2.1), "french": (1.6, 2.1), "garage": (2.4, 2.2)}
 WINDOW_SIZES = {"standard": (1.2, 1.2, 0.9), "large": (2.0, 1.6, 0.6), "floor": (2.0, 2.2, 0.1), "small": (0.6, 0.6, 1.5)}
-SIDE_ORDER: tuple[Side, ...] = ("S", "E", "W", "N")
-EPS = 1e-6
 
-
-class DesignError(ValueError):
-    """The design cannot be built; the message is meant for the model."""
-
-
-@dataclass
-class WallSeg:
-    """A derived wall: straight (`path` has two points) or faceted along an arc."""
-
-    id: str
-    level: str
-    path: list[Pt]
-    external: bool
-    rooms: tuple[str, ...]           # one room (exterior), two (partition), none (free-standing)
-    side: Side | None                # exterior: compass direction the outside faces
-    arc: bool = False
-    radius: float | None = None
-    height: float | None = None      # free-standing walls may be lower than the storey
-    openings: list[tuple[float, float, str]] = field(default_factory=list)  # (offset, width, id)
-    line: LineString = field(default=None, repr=False)
-
-    def __post_init__(self):
-        self.line = LineString(self.path)
-
-    @property
-    def start(self) -> Pt:
-        return self.path[0]
-
-    @property
-    def end(self) -> Pt:
-        return self.path[-1]
-
-    @property
-    def length(self) -> float:
-        return self.line.length
-
-    @property
-    def straight(self) -> bool:
-        return not self.arc and len(self.path) == 2
-
-    @property
-    def horizontal(self) -> bool:
-        return abs(self.end[1] - self.start[1]) <= abs(self.end[0] - self.start[0])
-
-    @property
-    def mid(self) -> Pt:
-        p = self.line.interpolate(0.5, normalized=True)
-        return (_r(p.x), _r(p.y))
-
-    def unit(self) -> Pt:
-        (ax, ay), (bx, by) = self.start, self.end
-        d = math.dist(self.start, self.end) or 1.0
-        return ((bx - ax) / d, (by - ay) / d)
-
-    def inward(self, poly: Polygon) -> Pt:
-        """Unit normal pointing into `poly` (the room this wall is looked at from)."""
-        ux, uy = self.unit()
-        mx, my = self.mid
-        for nx, ny in ((-uy, ux), (uy, -ux)):
-            if poly.contains(ShpPoint(mx + nx * 0.05, my + ny * 0.05)):
-                return (nx, ny)
-        return (-uy, ux)
-
-
-@dataclass
-class RoomInfo:
-    room: RoomDef
-    polygon: Polygon
-    exterior: dict[Side, list[WallSeg]]
-    partitions: dict[str, list[WallSeg]]  # neighbour id -> walls shared with it
-    open_sides: list[Side] = field(default_factory=list)
-
-    @property
-    def sides(self) -> list[Side]:
-        return [s for s in SIDE_ORDER if self.exterior.get(s)]
-
-    @property
-    def neighbours(self) -> list[str]:
-        return sorted(self.partitions)
-
-    @property
-    def walls(self) -> list[WallSeg]:
-        out = [w for ws in self.exterior.values() for w in ws]
-        seen = set()
-        for ws in self.partitions.values():
-            for w in ws:
-                if w.id not in seen:
-                    out.append(w)
-                    seen.add(w.id)
-        return out
 
 
 @dataclass
@@ -143,25 +51,6 @@ class Derived:
     pruned: list[str] = field(default_factory=list)
     sides: dict[str, Side] = field(default_factory=dict)  # opening/balcony id -> compass side of its wall
 
-
-def _r(v: float) -> float:
-    return round(v, 2)
-
-
-def _side_name(side: Side) -> str:
-    return {"N": "north", "S": "south", "E": "east", "W": "west"}[side]
-
-
-def compass(nx: float, ny: float) -> Side:
-    """Nearest compass direction of a (normal) vector."""
-    ang = math.degrees(math.atan2(ny, nx)) % 360
-    if 45 <= ang < 135:
-        return "N"
-    if 135 <= ang < 225:
-        return "W"
-    if 225 <= ang < 315:
-        return "S"
-    return "E"
 
 
 # --- walls ------------------------------------------------------------------
@@ -189,7 +78,7 @@ def _room_pieces(room: RoomDef, others: list[RoomDef], noded: list[LineString]) 
                     ta, tb = line.project(ShpPoint(a)), line.project(ShpPoint(b))
                     if ta > tb:
                         a, b, ta, tb = b, a, tb, ta
-                    on.append((ta, (_r(a[0]), _r(a[1])), (_r(b[0]), _r(b[1]))))
+                    on.append((ta, (r2(a[0]), r2(a[1])), (r2(b[0]), r2(b[1]))))
         on.sort()
         for _, a, b in on:
             mid = ShpPoint((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
@@ -278,7 +167,7 @@ def _walls_for_level(level_id: str, rooms: list[RoomDef], polys: dict[str, Polyg
                 walls.append(WallSeg(wid, level_id, path, False, pair, None, seg.arc, radius))
             elif kind == "rail":
                 rid = wall_id(f"{level_id}-rail-{room.id}-{side}")
-                els.append(Railing(id=rid, name=f"{room.name} railing", level=level_id, path=[(_r(x), _r(y)) for x, y in path], height=1.05))
+                els.append(Railing(id=rid, name=f"{room.name} railing", level=level_id, path=[(r2(x), r2(y)) for x, y in path], height=1.05))
             elif kind == "open":
                 # Columns along the open edge, and a beam over it carrying the roof.
                 open_sides.setdefault(room.id, set()).add(side)
@@ -287,7 +176,7 @@ def _walls_for_level(level_id: str, rooms: list[RoomDef], polys: dict[str, Polyg
                 for i in range(n):
                     p = line.interpolate(i / (n - 1), normalized=True)
                     cid = wall_id(f"{level_id}-col-{room.id}-{side}")
-                    els.append(Column(id=cid, name=f"{room.name} column", level=level_id, position=(_r(p.x), _r(p.y)), width=0.25, depth=0.25))
+                    els.append(Column(id=cid, name=f"{room.name} column", level=level_id, position=(r2(p.x), r2(p.y)), width=0.25, depth=0.25))
                 if room.roofed:
                     for a, b in zip(path, path[1:]):
                         bid = wall_id(f"{level_id}-beam-{room.id}-{side}")
@@ -295,21 +184,6 @@ def _walls_for_level(level_id: str, rooms: list[RoomDef], polys: dict[str, Polyg
     return walls
 
 
-def _same_line(walls: list[WallSeg]) -> bool:
-    """All straight walls lie on one line (within 1 cm)."""
-    base = walls[0]
-    line = LineString([base.start, base.end])
-    ux, uy = base.unit()
-    for w in walls[1:]:
-        if w.arc:
-            return False
-        vx, vy = w.unit()
-        if abs(ux * vy - uy * vx) > 1e-6:
-            return False
-        # Perpendicular distance of w's start from the base line.
-        if abs((w.start[0] - base.start[0]) * uy - (w.start[1] - base.start[1]) * ux) > 0.01:
-            return False
-    return True
 
 
 def _dedupe(path: list[Pt]) -> list[Pt]:
@@ -331,10 +205,10 @@ def _extend(path: list[Pt], corners: set[Pt], by: float) -> list[Pt]:
     d = math.dist(path[0], path[-1]) or 1.0
     ux, uy = (bx - ax) / d, (by_ - ay) / d
     a, b = path[0], path[-1]
-    if (_r(ax), _r(ay)) in corners:
-        a = (_r(ax - ux * by), _r(ay - uy * by))
-    if (_r(bx), _r(by_)) in corners:
-        b = (_r(bx + ux * by), _r(by_ + uy * by))
+    if (r2(ax), r2(ay)) in corners:
+        a = (r2(ax - ux * by), r2(ay - uy * by))
+    if (r2(bx), r2(by_)) in corners:
+        b = (r2(bx + ux * by), r2(by_ + uy * by))
     return [a, b]
 
 
@@ -349,14 +223,14 @@ def _arc_radius(room: RoomDef, edge: int) -> float | None:
         return None
     ux = ((a[0] ** 2 + a[1] ** 2) * (m[1] - b[1]) + (m[0] ** 2 + m[1] ** 2) * (b[1] - a[1]) + (b[0] ** 2 + b[1] ** 2) * (a[1] - m[1])) / d
     uy = ((a[0] ** 2 + a[1] ** 2) * (b[0] - m[0]) + (m[0] ** 2 + m[1] ** 2) * (a[0] - b[0]) + (b[0] ** 2 + b[1] ** 2) * (m[0] - a[0])) / d
-    return _r(math.hypot(a[0] - ux, a[1] - uy))
+    return r2(math.hypot(a[0] - ux, a[1] - uy))
 
 
 def _wall_element(w: WallSeg, names: dict[str, str], material) -> Wall:
     if not w.rooms:
         name = w.id
     elif w.external:
-        name = f"{names[w.rooms[0]]} {_side_name(w.side)} wall"
+        name = f"{names[w.rooms[0]]} {side_name(w.side)} wall"
     else:
         name = f"{names[w.rooms[0]]} / {names[w.rooms[1]]} partition"
     return Wall(id=w.id, name=name, level=w.level, start=w.start, end=w.end, path=w.path if len(w.path) > 2 else None,
@@ -364,47 +238,6 @@ def _wall_element(w: WallSeg, names: dict[str, str], material) -> Wall:
                 radius=w.radius)
 
 
-# --- picking a wall ---------------------------------------------------------
-
-def _pick(candidates: list[WallSeg], near: Pt | None, side: Side | None, what: str, room: RoomDef | None,
-          sides_available: list[Side] | None = None, poly: Polygon | None = None) -> tuple[WallSeg, float | None]:
-    """The wall an item goes on: by a nearby point, by compass side, or the longest. Returns the wall
-    and, for `near`, the fraction along it (else None = use the item's own `at`). With `poly` (the room
-    looked at from), a wall's side is the direction its far face points seen from that room, so partitions
-    have a side too."""
-    label = f"room '{room.id}'" if room else "the design"
-    if not candidates:
-        raise DesignError(f"{what}: {label} has no wall to put it on")
-
-    def side_of(w: WallSeg) -> Side | None:
-        if poly is None:
-            return w.side
-        ix, iy = w.inward(poly)
-        return compass(-ix, -iy)
-    if near is not None:
-        pt = ShpPoint(near)
-        best = min(candidates, key=lambda w: w.line.distance(pt))
-        dist = best.line.distance(pt)
-        if dist > NEAR_MAX:
-            opts = "; ".join(f"{w.id} (near {w.mid})" for w in candidates[:8])
-            raise DesignError(f"{what}: near={list(near)} is {dist:.1f} m from every wall of {label}; walls: {opts}")
-        at = best.line.project(pt, normalized=True)
-        return best, min(max(at, 0.02), 0.98)
-    if side is not None:
-        on_side = [w for w in candidates if side_of(w) == side]
-        if not on_side:
-            have = sides_available if sides_available is not None else sorted({s for s in (side_of(w) for w in candidates) if s})
-            if poly is None:
-                raise DesignError(f"{what}: {label} has no exterior wall on side {side}; "
-                                  f"its exterior sides are {', '.join(have) or 'none'}")
-            raise DesignError(f"{what}: {label} has no wall on side {side}; its walls face {', '.join(have) or 'none'}")
-        # Several pieces of one straight edge (a side split by different neighbours) are not ambiguous;
-        # two separate edges facing the same way (an L-shape) are.
-        if len(on_side) > 1 and not all(w.arc for w in on_side) and not _same_line(on_side):
-            pts = " or ".join(f"near {list(w.mid)}" for w in on_side)
-            raise DesignError(f"{what}: {label} has {len(on_side)} walls facing {side}; say which with near:[x, y] ({pts})")
-        return max(on_side, key=lambda w: w.length), None
-    return max(candidates, key=lambda w: w.length), None
 
 
 # --- openings ---------------------------------------------------------------
@@ -428,11 +261,9 @@ def _place(wall: WallSeg, width: float, at: float, what: str) -> float:
     if not free:
         raise DesignError(f"{what}: no room left on wall {wall.id} ({wall.length:.2f} m, {len(wall.openings)} opening(s) already there)")
     lo, hi = min(free, key=lambda iv: 0 if iv[0] <= wanted <= iv[1] else min(abs(wanted - iv[0]), abs(wanted - iv[1])))
-    return _r(min(max(wanted, lo), hi))
+    return r2(min(max(wanted, lo), hi))
 
 
-def _exterior_candidates(info: RoomInfo) -> list[WallSeg]:
-    return [w for s in SIDE_ORDER for w in info.exterior.get(s, [])]
 
 
 def _host(item, design: Design, infos: dict[str, RoomInfo], free_walls: dict[str, WallSeg], what: str,
@@ -453,13 +284,13 @@ def _host(item, design: Design, infos: dict[str, RoomInfo], free_walls: dict[str
         raise DesignError(f"{what}: unknown room '{item.room}' (rooms: {', '.join(r.id for r in design.rooms)})")
     info = infos[room.id]
     if exterior_only:
-        cands = _exterior_candidates(info)
+        cands = exterior_walls(info)
         if not cands:
             extra = f" (its open sides: {', '.join(info.open_sides)})" if info.open_sides else ""
             raise DesignError(f"{what}: room '{room.id}' has no exterior wall at all{extra}")
-        wall, at = _pick(cands, item.near, item.side, what, room, info.sides)
+        wall, at = pick_wall(cands, item.near, item.side, what, room, info.sides)
     else:
-        wall, at = _pick(info.walls, item.near, item.side, what, room, info.sides)
+        wall, at = pick_wall(info.walls, item.near, item.side, what, room, info.sides)
     return wall, item.at if at is None else at, room
 
 
@@ -485,12 +316,12 @@ def _door(d: DoorDef, design: Design, infos: dict[str, RoomInfo], free_walls: di
         if not shared:
             raise DesignError(f"{what}: '{room.id}' and '{other.id}' do not share a wall "
                               f"('{room.id}' touches: {', '.join(infos[room.id].neighbours) or 'nothing'})")
-        wall, at = _pick(shared, d.near, None, what, room)
+        wall, at = pick_wall(shared, d.near, None, what, room)
         at = d.at if at is None else at
     level = levels[wall.level]
     wall_h = wall.height or level.height
     if height > wall_h - 0.05:
-        height = _r(wall_h - 0.1)
+        height = r2(wall_h - 0.1)
     offset = _place(wall, width, at, what)
     wall.openings.append((offset, width, d.id))
     if wall.side:
@@ -519,30 +350,21 @@ def _window(w: WindowDef, design: Design, infos: dict[str, RoomInfo], free_walls
     width, height, sill = WINDOW_SIZES[w.kind]
     width, height, sill = w.width or width, w.height or height, w.sill if w.sill is not None else sill
     if sill + height > wall_h - 0.1:
-        height = _r(max(0.4, wall_h - 0.1 - sill))
+        height = r2(max(0.4, wall_h - 0.1 - sill))
     if sill + height > wall_h:
         raise DesignError(f"{what}: wall {wall.id} is only {wall_h:.2f} m high")
     offset = _place(wall, width, at, what)
     wall.openings.append((offset, width, w.id))
     if wall.side:
         sides[w.id] = wall.side
-    name = f"{room.name} {_side_name(wall.side)} window" if room and wall.side else f"Window in {wall.id}"
+    name = f"{room.name} {side_name(wall.side)} window" if room and wall.side else f"Window in {wall.id}"
     return Window(id=w.id, name=name, wall=wall.id, offset=offset, width=width, height=height, sill_height=sill)
 
 
 # --- things inside rooms ----------------------------------------------------
 
-def _fits(poly: Polygon, footprint: list[Pt]) -> bool:
-    return poly.buffer(0.02).contains(Polygon(footprint))
 
 
-def _rect_at(cx: float, cy: float, w: float, d: float, angle: float) -> list[Pt]:
-    """Corners of a w×d rectangle centred at (cx, cy), its depth axis along `angle` (radians)."""
-    c, s = math.cos(angle), math.sin(angle)
-    out = []
-    for px, py in ((-w / 2, -d / 2), (w / 2, -d / 2), (w / 2, d / 2), (-w / 2, d / 2)):
-        out.append((cx + px * c - py * s, cy + px * s + py * c))
-    return out
 
 
 def _stair(s: StairDef, design: Design, infos: dict[str, RoomInfo], level: Level) -> Stair:
@@ -564,7 +386,7 @@ def _stair(s: StairDef, design: Design, infos: dict[str, RoomInfo], level: Level
     if s.near is None and s.side is None:
         wall = max(straight, key=lambda w: w.length)
     else:
-        wall, _ = _pick(straight, s.near, s.side, what, room, None, info.polygon)
+        wall, _ = pick_wall(straight, s.near, s.side, what, room, None, info.polygon)
     if wall.length < need:
         raise DesignError(f"{what}: wall {wall.id} of room '{room.id}' is {wall.length:.2f} m long but a straight flight "
                           f"needs {need:.2f} m; use a longer wall or enlarge the room")
@@ -581,51 +403,12 @@ def _stair(s: StairDef, design: Design, infos: dict[str, RoomInfo], level: Level
         y0 = sy + dy * 0.3 + iy * (CLEAR + s.width / 2)
         cx, cy = x0 + dx * run / 2, y0 + dy * run / 2
         angle = math.atan2(dy, dx)
-        if _fits(poly, _rect_at(cx, cy, s.width, run, angle - math.pi / 2)):
-            stair.position, stair.direction = (_r(x0), _r(y0)), _r(math.degrees(angle) % 360)
+        if fits(poly, rect_at(cx, cy, s.width, run, angle - math.pi / 2)):
+            stair.position, stair.direction = (r2(x0), r2(y0)), r2(math.degrees(angle) % 360)
             return stair
     raise DesignError(f"{what}: a {run:.2f} × {s.width} m flight along wall {wall.id} does not fit inside room '{room.id}'")
 
 
-def _place_piece(what: str, room: RoomDef, info: RoomInfo, side: str, near: Pt | None, at: float, w: float, d: float) -> tuple[Pt, float]:
-    """Where a w × d footprint goes inside a room — against the wall named by `near`/`side`, or in the
-    middle — and which way it then faces (degrees; its back to the wall). Shared by catalogue fixtures
-    and model-composed custom shapes so both are placed the same way."""
-    poly = info.polygon
-    x0, y0, x1, y1 = room.box
-    rw, rd = x1 - x0, y1 - y0
-    too_small = DesignError(f"{what}: room '{room.id}' is too small ({rw:.1f} x {rd:.1f} m) for a {w:.1f} x {d:.1f} m piece")
-
-    if near is None and side == "center":
-        c = poly.centroid if poly.contains(poly.centroid) else poly.representative_point()
-        inner = poly.buffer(-CLEAR, join_style="mitre")  # keep CLEAR from every wall, as against-the-wall pieces do
-        if inner.is_empty or not _fits(inner, _rect_at(c.x, c.y, w, d, 0.0)):
-            raise too_small
-        return (_r(c.x), _r(c.y)), 0.0
-
-    wall, picked_at = _pick(info.walls, near, None if side == "center" else side, what, room, None, poly)
-    at = at if picked_at is None else picked_at
-    if wall.length < w + 2 * CLEAR:
-        raise too_small
-    ux, uy = wall.unit()
-    ix, iy = wall.inward(poly)
-    along = CLEAR + w / 2 + at * (wall.length - 2 * CLEAR - w)
-    if wall.arc:
-        p = wall.line.interpolate(along)
-        # Local tangent of the faceted wall at that point.
-        q = wall.line.interpolate(min(wall.length, along + 0.1))
-        ux, uy = (q.x - p.x), (q.y - p.y)
-        n = math.hypot(ux, uy) or 1.0
-        ux, uy = ux / n, uy / n
-        ix, iy = (-uy, ux) if poly.contains(ShpPoint(p.x - uy * 0.1, p.y + ux * 0.1)) else (uy, -ux)
-        bx, by = p.x, p.y
-    else:
-        bx, by = wall.start[0] + ux * along, wall.start[1] + uy * along
-    cx, cy = bx + ix * (CLEAR + d / 2), by + iy * (CLEAR + d / 2)
-    rot = (math.degrees(math.atan2(iy, ix)) - 90) % 360
-    if not _fits(poly, _rect_at(cx, cy, w, d, math.radians(rot))):
-        raise DesignError(f"{what}: a {w:.1f} x {d:.1f} m piece against wall {wall.id} does not fit inside room '{room.id}'")
-    return (_r(cx), _r(cy)), _r(rot)
 
 
 def _fixture(f: FixtureDef, design: Design, infos: dict[str, RoomInfo], level: Level) -> Fixture:
@@ -635,7 +418,7 @@ def _fixture(f: FixtureDef, design: Design, infos: dict[str, RoomInfo], level: L
         raise DesignError(f"{what}: unknown room '{f.room}'")
     w, d, h = default_size(f.kind)
     w, d, h = f.width or w, f.depth or d, f.height or h
-    pos, rot = _place_piece(what, room, infos[room.id], f.side, f.near, f.at, w, d)
+    pos, rot = place_piece(what, room, infos[room.id], f.side, f.near, f.at, w, d)
     return Fixture(id=f.id, name=f"{f.kind.replace('_', ' ')} in {room.name}", level=room.level, kind=f.kind,
                    position=pos, rotation=f.rotation if f.rotation is not None else rot, width=w, depth=d, height=h)
 
@@ -654,174 +437,16 @@ def _custom_shape(cs: CustomShapeDef, design: Design, infos: dict[str, RoomInfo]
     w, d = x1 - x0, y1 - y0
     if w <= 0 or d <= 0:
         raise DesignError(f"{what}: parts have no footprint")
-    pos, rot = _place_piece(what, room, infos[room.id], cs.side, cs.near, cs.at, w, d)
+    pos, rot = place_piece(what, room, infos[room.id], cs.side, cs.near, cs.at, w, d)
     # Parts are given relative to their own min-corner bbox; re-centre them on the origin so
     # `pos` (the bbox centre) is where the whole assembly's local frame actually sits, matching
     # how catalog fixtures are centred (ifc/fixtures.py::_parts).
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-    parts = [ShapePart(shape=p.shape, x=_r(p.x - cx), y=_r(p.y - cy), z=p.z, w=p.w, d=p.d, h=p.h) for p in cs.parts]
+    parts = [ShapePart(shape=p.shape, x=r2(p.x - cx), y=r2(p.y - cy), z=p.z, w=p.w, d=p.d, h=p.h) for p in cs.parts]
     return CustomFixture(id=cs.id, name=f"{cs.name} in {room.name}", level=room.level, position=pos,
                          rotation=cs.rotation if cs.rotation is not None else rot, parts=parts)
 
 
-CEILING_T = 0.2        # slab of the storey above, hanging below its level line
-ROOF_T = 0.25          # flat roof thickness (see the roofs pass in analyze)
-
-
-@dataclass
-class _Site:
-    """What brick placement needs to know about the building beyond one room."""
-
-    levels: dict[str, Level]
-    footprints: dict[str, list[Polygon]]
-    top: Level
-    roof: object
-
-
-def _brick(b: BrickDef, design: Design, infos: dict[str, RoomInfo], site: _Site) -> Asset:
-    """A library brick, placed by its host: against a wall or free on the floor of a room, fixed to a
-    wall at its mount height, under the ceiling, on the roof, free on the site, or spanning two points."""
-    what = f"brick '{b.id}' ({b.brick})"
-    brick = library().get(b.brick)
-    if brick is None:
-        raise DesignError(f"{what}: not in the brick library")
-    room = design.room(b.room) if b.room else None
-    if b.room and room is None:
-        raise DesignError(f"{what}: unknown room '{b.room}'")
-    level = site.levels.get(room.level if room else (b.level or "L1"))
-    if level is None:
-        raise DesignError(f"{what}: unknown level '{b.level}'")
-    if brick.host == "roof":
-        level = site.top
-    try:
-        values = brick.resolve(b.params)
-    except ValueError as exc:
-        raise DesignError(f"{what}: {exc}") from exc
-    values["level_h"] = level.height
-    if brick.full_height and "h" not in b.params:
-        values["h"] = level.height
-    w, h = values["w"], values["h"]
-    d = values.get("d", w)
-    rotation = b.rotation
-    elevation = 0.0
-    notes: list[str] = []
-
-    if brick.host == "span":
-        (x0, y0), (x1, y1) = b.start, b.end
-        length = math.hypot(x1 - x0, y1 - y0)
-        if length < 0.2:
-            raise DesignError(f"{what}: start and end are {length:.2f} m apart; a span needs two distinct points")
-        values["length"] = length
-        if brick.rules.exterior:
-            building = unary_union(site.footprints.get(level.id) or [])
-            if not building.is_empty and LineString([b.start, b.end]).buffer(w / 2).intersects(building.buffer(-0.05)):
-                x0_, y0_, x1_, y1_ = building.bounds
-                raise DesignError(f"{what}: runs outside, but from {list(b.start)} to {list(b.end)} it crosses the building on {level.id} "
-                                  f"(footprint x {x0_:.1f}..{x1_:.1f}, y {y0_:.1f}..{y1_:.1f})")
-        pos = ((x0 + x1) / 2, (y0 + y1) / 2)
-        rotation = math.degrees(math.atan2(y1 - y0, x1 - x0))
-        foot_w, foot_d = length, w
-    else:
-        foot_w, foot_d = w, d
-        if brick.host == "floor":
-            pos, rot = _brick_on_floor(what, b, room, infos[room.id], foot_w, foot_d)
-        elif brick.host == "wall":
-            if not infos[room.id].walls:
-                raise DesignError(f"{what}: room '{room.id}' has no walls to fix it to")
-            near = b.near
-            if near is None and b.side == "center":
-                straight = [s for s in infos[room.id].walls if s.straight] or infos[room.id].walls
-                near = max(straight, key=lambda s: s.length).mid
-            pos, rot = _place_piece(what, room, infos[room.id], b.side, near, b.at, foot_w, foot_d)
-        elif brick.host == "ceiling":
-            pos, rot = _brick_on_floor(what, b, room, infos[room.id], foot_w, foot_d)
-        elif brick.host == "roof":
-            pos, rot = _brick_on_roof(what, b, site, foot_w, foot_d)
-            elevation = level.height + ROOF_T
-            if site.roof.kind != "flat":
-                x0, y0, x1, y1 = unary_union(site.footprints[level.id]).bounds
-                rise = math.tan(math.radians(site.roof.pitch)) * min(x1 - x0, y1 - y0) / 2
-                notes.append(f"on a {site.roof.kind} roof: set at mid-slope")
-                elevation = level.height + 0.2 + rise / 2
-        else:
-            pos, rot = _brick_free(what, b, brick, room, infos, site, level, foot_w, foot_d)
-        rotation = rot if rotation is None else rotation
-
-    mount = brick.mount_height(values)
-    if brick.host == "ceiling" or mount is None:
-        elevation = level.height - CEILING_T - h
-        if elevation < 0:
-            raise DesignError(f"{what}: {h:g} m tall does not fit under a {level.height:g} m ceiling")
-    elif brick.host != "roof":
-        elevation = mount
-    if brick.host in ("floor", "wall") and elevation + h > level.height - CEILING_T + 0.01 and not brick.full_height:
-        raise DesignError(f"{what}: top at {elevation + h:.2f} m is above the {level.height - CEILING_T:.2f} m ceiling of {level.id}")
-
-    try:
-        solids = brick.solids(values)
-    except ValueError as exc:
-        raise DesignError(f"{what}: {exc}") from exc
-    cx, cy = foot_w / 2, foot_d / 2
-    parts = [ShapePart(shape=s, x=_r(x - cx), y=_r(y - cy), z=_r(z), w=_r(pw), d=_r(pd), h=_r(ph)) for s, x, y, z, pw, pd, ph in solids]
-    if len(parts) > 24:
-        raise DesignError(f"{what}: evaluates to {len(parts)} parts; at most 24")
-    name = brick.name + (f" in {room.name}" if room else "")
-    return Asset(id=b.id, name=name, level=level.id, brick=brick.id, ifc_class=brick.ifc_class,
-                 predefined_type=brick.predefined_type, discipline=brick.discipline, phase=brick.phase, finish=brick.finish,
-                 host=brick.host, room=room.id if room else None, position=(_r(pos[0]), _r(pos[1])), rotation=_r(rotation % 360),
-                 elevation=_r(elevation), size=(_r(foot_w), _r(foot_d), _r(h)), parts=parts,
-                 params={k: v for k, v in values.items() if k != "level_h"},
-                 ports=[f"{p.kind}:{p.direction}" for p in brick.ports], structural=brick.structural,
-                 overlap_ok=brick.rules.overlap_ok, clearance=brick.rules.clearance, note="; ".join(notes) or None)
-
-
-def _brick_on_floor(what: str, b: BrickDef, room: RoomDef, info: RoomInfo, w: float, d: float) -> tuple[Pt, float]:
-    if b.position is None:
-        return _place_piece(what, room, info, b.side, b.near, b.at, w, d)
-    rot = b.rotation or 0.0
-    if not _fits(info.polygon, _rect_at(b.position[0], b.position[1], w, d, math.radians(rot))):
-        x0, y0, x1, y1 = room.box
-        raise DesignError(f"{what}: a {w:.2f} x {d:.2f} m footprint at {list(b.position)} is not inside room '{room.id}' "
-                          f"(x {x0:g}..{x1:g}, y {y0:g}..{y1:g})")
-    return b.position, rot
-
-
-def _brick_on_roof(what: str, b: BrickDef, site: _Site, w: float, d: float) -> tuple[Pt, float]:
-    polys = site.footprints.get(site.top.id) or []
-    if not polys:
-        raise DesignError(f"{what}: there is no roof yet; add rooms first")
-    top = unary_union(polys)
-    rot = b.rotation or 0.0
-    if b.position is None:
-        c = top.centroid if top.contains(top.centroid) else top.representative_point()
-        pos = (c.x, c.y)
-    else:
-        pos = b.position
-    if not _fits(top, _rect_at(pos[0], pos[1], w, d, math.radians(rot))):
-        x0, y0, x1, y1 = top.bounds
-        raise DesignError(f"{what}: a {w:.1f} x {d:.1f} m footprint at [{pos[0]:.1f}, {pos[1]:.1f}] is off the roof of {site.top.id} "
-                          f"(x {x0:.1f}..{x1:.1f}, y {y0:.1f}..{y1:.1f}); use a smaller size or another position")
-    return pos, rot
-
-
-def _brick_free(what: str, b: BrickDef, brick, room: RoomDef | None, infos: dict[str, RoomInfo], site: _Site, level: Level,
-                w: float, d: float) -> tuple[Pt, float]:
-    if b.position is None:
-        if room is None:
-            raise DesignError(f"{what}: free-standing bricks need a position [x, y]")
-        return _brick_on_floor(what, b, room, infos[room.id], w, d)
-    rot = b.rotation or 0.0
-    footprint = Polygon(_rect_at(b.position[0], b.position[1], w, d, math.radians(rot)))
-    if brick.rules.exterior:
-        building = site.footprints.get(level.id) or []
-        hit = next((p for p in building if p.buffer(-0.05).intersects(footprint)), None)
-        if hit is not None:
-            x0, y0, x1, y1 = unary_union(building).bounds
-            raise DesignError(f"{what}: stands outside, but at {list(b.position)} it overlaps the building on {level.id} "
-                              f"(footprint x {x0:.1f}..{x1:.1f}, y {y0:.1f}..{y1:.1f}); move it clear of the rooms")
-    elif room is not None and not _fits(infos[room.id].polygon, list(footprint.exterior.coords)[:-1]):
-        raise DesignError(f"{what}: at {list(b.position)} it is not inside room '{room.id}'")
-    return b.position, rot
 
 
 def _balcony(b, design: Design, infos: dict[str, RoomInfo], level: Level, els: list, sides: dict[str, Side]) -> None:
@@ -830,10 +455,10 @@ def _balcony(b, design: Design, infos: dict[str, RoomInfo], level: Level, els: l
     if room is None:
         raise DesignError(f"{what}: unknown room '{b.room}'")
     info = infos[room.id]
-    cands = [w for w in _exterior_candidates(info) if w.straight]
+    cands = [w for w in exterior_walls(info) if w.straight]
     if not cands:
         raise DesignError(f"{what}: room '{room.id}' has no straight exterior wall")
-    wall, _ = _pick(cands, b.near, b.side, what, room, info.sides)
+    wall, _ = pick_wall(cands, b.near, b.side, what, room, info.sides)
     sides[b.id] = wall.side
     ux, uy = wall.unit()
     ix, iy = wall.inward(info.polygon)
@@ -852,9 +477,9 @@ def _balcony(b, design: Design, infos: dict[str, RoomInfo], level: Level, els: l
             (a[0] + ux * inset + ox * (b.depth - inset), a[1] + uy * inset + oy * (b.depth - inset)),
             (c[0] - ux * inset + ox * (b.depth - inset), c[1] - uy * inset + oy * (b.depth - inset)),
             (c[0] - ux * inset, c[1] - uy * inset)]
-    els.append(Slab(id=b.id, name=f"{room.name} balcony", level=room.level, outline=[(_r(px), _r(py)) for px, py in deck], thickness=0.2))
+    els.append(Slab(id=b.id, name=f"{room.name} balcony", level=room.level, outline=[(r2(px), r2(py)) for px, py in deck], thickness=0.2))
     els.append(Railing(id=f"{b.id}-railing", name=f"{room.name} balcony railing", level=room.level,
-                       path=[(_r(px), _r(py)) for px, py in rail], height=1.05))
+                       path=[(r2(px), r2(py)) for px, py in rail], height=1.05))
 
 
 def _free(e: FreeDef, design: Design, levels: dict[str, Level], els: list, free_walls: dict[str, WallSeg]) -> None:
@@ -898,11 +523,11 @@ def _mep(design: Design, levels: list[Level], infos: dict[str, RoomInfo], els: l
     corner_of = utility or (ground_rooms[0] if ground_rooms else None)
     if corner_of:
         gx0, gy0, _, _ = corner_of.box
-        riser_xy = (_r(gx0 + 0.3), _r(gy0 + 0.3))
+        riser_xy = (r2(gx0 + 0.3), r2(gy0 + 0.3))
     else:
         riser_xy = (0.3, 0.3)
 
-    wet_rooms = {b.room for b in design.bricks if b.room and _needs_water(b.brick)}
+    wet_rooms = {b.room for b in design.bricks if b.room and needs_water(b.brick)}
     wet_risers: list[tuple[tuple[float, float], str]] = []
     for level in levels:
         for room in design.rooms_on(level.id):
@@ -910,14 +535,14 @@ def _mep(design: Design, levels: list[Level], infos: dict[str, RoomInfo], els: l
                 continue
             poly = infos[room.id].polygon
             c = poly.centroid if poly.contains(poly.centroid) else poly.representative_point()
-            cx, cy = _r(c.x), _r(c.y)
+            cx, cy = r2(c.x), r2(c.y)
             sid = room.id
             els.append(LightFixture(id=f"{level.id}-light-{sid}", name=f"{room.name} light", level=level.id, position=(cx, cy)))
             outlets: list[Pt] = []
             if room.enclosed:
                 x0, y0, x1, y1 = room.box
                 inset = min(0.3, (x1 - x0) / 4, (y1 - y0) / 4)
-                for pos in ((_r(x0 + inset), _r(y0 + inset)), (_r(x1 - inset), _r(y1 - inset))):
+                for pos in ((r2(x0 + inset), r2(y0 + inset)), (r2(x1 - inset), r2(y1 - inset))):
                     if poly.contains(ShpPoint(pos)):
                         outlets.append(pos)
             outlet_objs: list[Outlet] = []
@@ -949,39 +574,34 @@ def _mep(design: Design, levels: list[Level], infos: dict[str, RoomInfo], els: l
                         bottom_level=bottom, top_level=top, position=pos))
 
 
-def _needs_water(brick_id: str) -> bool:
-    brick = library().get(brick_id)
-    return brick is not None and any(k in brick.needs for k in ("water_cold", "water_hot", "drain"))
-
-
 def _porch(design: Design, polys: list[Polygon], els: list, ground: str = "L1") -> None:
     p = design.porch
     if p is None or not polys:
         return
     union = unary_union(polys)
     minx, miny, maxx, maxy = union.bounds
-    pts = [(_r(x), _r(y)) for poly in polys for x, y in poly.exterior.coords]
+    pts = [(r2(x), r2(y)) for poly in polys for x, y in poly.exterior.coords]
     if p.side in ("S", "N"):
         edge = miny if p.side == "S" else maxy
-        xs = [x for x, y in pts if abs(y - _r(edge)) < 0.01]
+        xs = [x for x, y in pts if abs(y - r2(edge)) < 0.01]
         a, b = min(xs), max(xs)
         y0, y1 = (edge - p.depth, edge) if p.side == "S" else (edge, edge + p.depth)
         deck = [(a, y0), (b, y0), (b, y1), (a, y1)]
         n = max(2, round((b - a) / 3) + 1)
         cy = y0 + 0.2 if p.side == "S" else y1 - 0.2
-        cols = [(_r(a + 0.25 + i * (b - a - 0.5) / (n - 1)), _r(cy)) for i in range(n)]
+        cols = [(r2(a + 0.25 + i * (b - a - 0.5) / (n - 1)), r2(cy)) for i in range(n)]
     else:
         edge = minx if p.side == "W" else maxx
-        ys = [y for x, y in pts if abs(x - _r(edge)) < 0.01]
+        ys = [y for x, y in pts if abs(x - r2(edge)) < 0.01]
         a, b = min(ys), max(ys)
         x0, x1 = (edge - p.depth, edge) if p.side == "W" else (edge, edge + p.depth)
         deck = [(x0, a), (x1, a), (x1, b), (x0, b)]
         n = max(2, round((b - a) / 3) + 1)
         cx = x0 + 0.2 if p.side == "W" else x1 - 0.2
-        cols = [(_r(cx), _r(a + 0.25 + i * (b - a - 0.5) / (n - 1))) for i in range(n)]
+        cols = [(r2(cx), r2(a + 0.25 + i * (b - a - 0.5) / (n - 1))) for i in range(n)]
     if b - a < 1.0:
         return
-    deck = [(_r(x), _r(y)) for x, y in deck]
+    deck = [(r2(x), r2(y)) for x, y in deck]
     els.append(Slab(id="porch-deck", name="Porch deck", level=ground, outline=deck, thickness=0.15))
     els.append(Roof(id="porch-roof", name="Porch roof", level=ground, outline=deck, thickness=0.2))
     for i, (x, y) in enumerate(cols, 1):
@@ -996,7 +616,7 @@ def _outline(poly: Polygon, grow: float = 0.0) -> list[tuple[float, float]]:
     coords = list(poly.exterior.coords)[:-1]
     if poly.exterior.is_ccw is False:
         coords = coords[::-1]
-    return [(_r(x), _r(y)) for x, y in coords]
+    return [(r2(x), r2(y)) for x, y in coords]
 
 
 def _polys(poly) -> list[Polygon]:
@@ -1034,12 +654,12 @@ def analyze(design: Design, prune: bool = False) -> Derived:
     z = 0.0
     for l in ordered:
         if l.index >= 0:
-            elevations[l.id] = _r(z)
+            elevations[l.id] = r2(z)
             z += l.height
     z = 0.0
     for l in reversed([l for l in ordered if l.index < 0]):
         z -= l.height
-        elevations[l.id] = _r(z)
+        elevations[l.id] = r2(z)
     levels = [Level(id=l.id, name=l.display, height=l.height, elevation=elevations[l.id]) for l in ordered]
     level_by_id = {l.id: l for l in levels}
     ground = next((l for l in levels if design.level(l.id).index >= 0), levels[0])
@@ -1071,7 +691,7 @@ def analyze(design: Design, prune: bool = False) -> Derived:
         roofprints[level.id] = _polys(unary_union([polys_by_room[r.id] for r in rooms if r.roofed])) if any(r.roofed for r in rooms) else []
         if len(polys) > 1:
             notes.append(f"{level.id}: rooms form {len(polys)} separate blocks")
-        corners = {(_r(x), _r(y)) for p in polys for x, y in p.exterior.coords}
+        corners = {(r2(x), r2(y)) for p in polys for x, y in p.exterior.coords}
         open_sides: dict[str, set[Side]] = {}
         walls = _walls_for_level(level.id, rooms, polys_by_room, corners, els, notes, open_sides)
         all_walls[level.id] = walls
@@ -1090,7 +710,7 @@ def analyze(design: Design, prune: bool = False) -> Derived:
             slab_polys = _polys(unary_union(list(polys_by_room.values())).difference(unary_union(ground_courtyards)))
         for i, poly in enumerate(slab_polys, 1):
             sid = f"{level.id}-floor" if i == 1 else f"{level.id}-floor-{i}"
-            els.append(Slab(id=sid, name=f"{level.name} slab", level=level.id, outline=_outline(poly, EXT_T / 2), thickness=0.2))
+            els.append(Slab(id=sid, name=f"{level.name} slab", level=level.id, outline=_outline(poly, EXT_T / 2), thickness=SLAB_T))
         for r in rooms:
             els.append(Space(id=f"{level.id}-space-{r.id}", name=r.name, level=level.id, outline=_space_outline(polys_by_room[r.id])))
 
@@ -1106,7 +726,7 @@ def analyze(design: Design, prune: bool = False) -> Derived:
             if w.external and w.rooms:
                 for a, b in zip(w.path, w.path[1:]):
                     bid = f"{w.id}-beam" if len(w.path) == 2 else f"{w.id}-beam-{w.path.index(a) + 1}"
-                    els.append(Beam(id=bid, name=f"Beam over {names[w.rooms[0]]} {_side_name(w.side)} wall", level=level.id, start=a, end=b))
+                    els.append(Beam(id=bid, name=f"Beam over {names[w.rooms[0]]} {side_name(w.side)} wall", level=level.id, start=a, end=b))
 
     # Roofs: whatever a storey's roofed rooms cover that the storey above does not. Basements get none.
     for i, level in enumerate(levels):
@@ -1124,7 +744,7 @@ def analyze(design: Design, prune: bool = False) -> Derived:
             if shape != "flat" and not is_axis_rectangle(outline):
                 notes.append(f"{rid}: {shape} roofs need a rectangular footprint; this part got a flat roof")
                 shape = "flat"
-            els.append(Roof(id=rid, name=f"Roof over {level.name}", level=level.id, outline=outline, thickness=0.25 if shape == "flat" else 0.2,
+            els.append(Roof(id=rid, name=f"Roof over {level.name}", level=level.id, outline=outline, thickness=ROOF_T if shape == "flat" else 0.2,
                             shape=shape, pitch=design.roof.pitch))
 
     # Free-standing elements (walls first: doors and windows may sit on them).
@@ -1161,12 +781,12 @@ def analyze(design: Design, prune: bool = False) -> Derived:
     each("custom_shapes", lambda cs, level: _custom_shape(cs, design, infos, level))
     each("balconies", lambda b, level: _balcony(b, design, infos, level, els, sides))
     top = next((l for l in reversed(levels) if footprints.get(l.id)), ground)
-    site = _Site(level_by_id, footprints, top, design.roof)
-    each("bricks", lambda b, level: _brick(b, design, infos, site))
+    site = Site(level_by_id, footprints, ground, top, design.roof)
+    each("bricks", lambda b, level: derive_brick(b, design, infos, site))
     for c in design.columns:
         if c.level not in level_by_id:
             raise DesignError(f"column '{c.id}': unknown level '{c.level}'")
-        els.append(Column(id=c.id, level=c.level, position=(_r(c.x), _r(c.y)), width=c.size, depth=c.size))
+        els.append(Column(id=c.id, level=c.level, position=(r2(c.x), r2(c.y)), width=c.size, depth=c.size))
     _porch(design, footprints[ground.id], els, ground.id)
     _mep(design, levels, infos, els)
 

@@ -10,17 +10,14 @@ room area it needs) are reported as warnings.
 
 from __future__ import annotations
 
-from shapely.ops import unary_union
-
 from bricks import BASE_SERVICES, Brick, library
-from core.clash import clashes
-from core.derive import DesignError, Derived, analyze
+from core.derive import Derived
 from core.issues import Issue
+from core.placement import candidates, first_fit
 from schemas.bim import Asset
+from schemas.brick_types import PortKind
 from schemas.design import Design, RoomDef
-from schemas.steps import Step, StepError, apply_step
 
-PLANT_ROOMS = ("utility", "garage", "storage")
 SERVICE_WORDS = {"water_hot": "hot water", "water_cold": "cold water", "air_supply": "supply air", "air_return": "return air",
                  "fire_water": "sprinkler water"}
 
@@ -35,94 +32,37 @@ def _home(kind: str) -> str:
     return {"data": "data", "fire_water": "fire", "power": "energy"}.get(kind, "hvac" if kind in ("air_supply", "air_return", "heating", "refrigerant", "flue") else "plumbing")
 
 
-def candidates(brick: Brick, design: Design, derived: Derived, near_room: str | None = None, slot: int = 0,
-               room_kind: str | None = None) -> list[dict]:
-    """Arguments of `brick` steps that would place it sensibly, best first (empty when nowhere fits its rules)."""
-    if brick.host == "roof":
-        return [{}]
-    polys = derived.footprints.get("L1") or next((p for p in derived.footprints.values() if p), [])
-    if brick.host == "span" and brick.rules.exterior:
-        if not polys:
-            return []
-        x0, y0, x1, y1 = unary_union(polys).bounds
-        g = 2.0 + slot * 1.5
-        lines = [((x0 - g, y1 + g), (x1 + g, y1 + g)), ((x1 + g, y0 - g), (x1 + g, y1 + g)),
-                 ((x0 - g, y0 - g), (x0 - g, y1 + g)), ((x0 - g, y0 - g), (x1 + g, y0 - g))]
-        return [{"start": [round(a[0], 2), round(a[1], 2)], "end": [round(b[0], 2), round(b[1], 2)]} for a, b in lines]
-    if brick.rules.exterior or (brick.host == "free" and not design.rooms):
-        if not polys:
-            return []
-        x0, y0, x1, y1 = unary_union(polys).bounds
-        v = brick.resolve()
-        gap = 1.0 + max(v["w"], v.get("d", v["w"])) / 2
-        spots = []
-        for k in range(slot, slot + 4):
-            t = 0.25 + 0.5 * (k % 2)
-            spots += [[x1 + gap, y0 + (y1 - y0) * t], [x0 - gap, y0 + (y1 - y0) * t], [x0 + (x1 - x0) * t, y1 + gap],
-                      [x0 + (x1 - x0) * t, y0 - gap - 1.0]]
-        return [{"position": [round(x, 2), round(y, 2)]} for x, y in spots]
-    if brick.host == "span":
-        return []
-    enclosed = [r for r in design.rooms if r.enclosed and (not brick.rules.ground_only or r.level == "L1")]
-    if room_kind:
-        enclosed = [r for r in enclosed if r.kind == room_kind] or enclosed
-    # Rules name where a brick usually goes; with no such room, any room will do (the rule check warns).
-    rooms = [r for r in enclosed if not brick.rules.rooms or r.kind in brick.rules.rooms] or enclosed
-    rooms.sort(key=lambda r: (r.id != near_room, r.kind not in PLANT_ROOMS, -r.area_m2))
-    sides = [("N", "E", "S", "W")[(slot + i) % 4] for i in range(4)]
-    out: list[dict] = []
-    for room in rooms:
-        if brick.host == "ceiling":
-            out.append({"room": room.id})
-            continue
-        for at in (0.5, 0.15, 0.85):
-            out += [{"room": room.id, "side": side, "at": at} for side in sides]
-        out.append({"room": room.id, "side": "center"})
-    return out
-
-
-def first_fit(brick: Brick, design: Design, options: list[dict], limit: int = 40) -> tuple[dict, Design] | None:
-    """The first placement that applies, derives and clashes with nothing, with the design it makes."""
-    for args in options[:limit]:
-        step = {"step": "brick", "brick": brick.id, **args}
-        try:
-            candidate, _ = apply_step(design, Step(**step))
-            derived = analyze(candidate)
-        except (StepError, DesignError, ValueError):
-            continue
-        if not [i for i in clashes(derived.spec, {candidate.bricks[-1].id}) if i.severity == "error"]:
-            return args, candidate
-    return None
-
-
 def services(design: Design, derived: Derived) -> list[Issue]:
+    """An error per service some brick needs that nothing provides, each with the provider brick that fits."""
     assets = [e for e in derived.spec.elements if isinstance(e, Asset)]
     provided = set(BASE_SERVICES) if design.rooms else set()
-    for a in assets:
-        provided |= {p.split(":")[0] for p in a.ports if p.endswith(":out")}
-    missing: dict[str, list[Asset]] = {}
+    provided |= {p.kind for a in assets for p in a.ports if p.direction == "out"}
+    missing: dict[PortKind, list[Asset]] = {}
     for a in assets:
         for p in a.ports:
-            kind, direction = p.split(":")
-            if direction == "in" and kind not in provided:
-                missing.setdefault(kind, []).append(a)
+            if p.direction == "in" and p.kind not in provided:
+                missing.setdefault(p.kind, []).append(a)
+    gaps = [(kind, users, providers(kind)) for kind, users in sorted(missing.items())]
     issues = []
-    for slot, (kind, users) in enumerate(sorted(missing.items())):
-        offer = providers(kind)
+    for kind, users, offer in gaps:
         names = ", ".join(f"{u.brick} '{u.id}'" for u in users[:4]) + (" …" if len(users) > 4 else "")
-        steps = []
-        for brick in offer:
-            fit = first_fit(brick, design, candidates(brick, design, derived, users[0].room, slot))
-            if fit is not None:
-                steps.append({"step": "brick", "brick": brick.id, **fit[0]})
-                design = fit[1]
-                derived = analyze(design)
-                break
         hint = f"; add one of: {', '.join(b.id for b in offer[:4])}" if offer else ""
         issues.append(Issue("service", "error", f"{names} need{'s' if len(users) == 1 else ''} {SERVICE_WORDS.get(kind, kind)}, "
-                                                f"but nothing in the design provides it{hint}",
-                            [u.id for u in users], steps))
+                                                f"but nothing in the design provides it{hint}", [u.id for u in users]))
+    _suggest_providers(issues, [(offer, users[0].room) for _, users, offer in gaps], design, derived)
     return issues
+
+
+def _suggest_providers(issues: list[Issue], wanted: list[tuple[list[Brick], str | None]], design: Design, derived: Derived) -> None:
+    """Attach to each issue a step placing its first provider that fits. Placed one after the other on
+    the same design, so the suggestions can all be applied together without clashing."""
+    for slot, (issue, (offer, near_room)) in enumerate(zip(issues, wanted)):
+        for brick in offer:
+            fit = first_fit(brick, design, candidates(brick, design, derived, near_room, slot))
+            if fit is not None:
+                args, design, derived = fit
+                issue.suggestions.append({"step": "brick", "brick": brick.id, **args})
+                break
 
 
 def rules(design: Design, derived: Derived) -> list[Issue]:

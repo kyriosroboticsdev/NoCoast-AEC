@@ -14,6 +14,8 @@ from typing import Annotated, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
 
+from schemas.brick_types import Discipline, Finish, Host, Phase, Port
+
 Point = tuple[float, float]
 
 WallMaterial = Literal["masonry", "concrete", "timber", "plaster", "stone", "glass"]
@@ -219,10 +221,10 @@ class Asset(_Element):
     brick: str
     ifc_class: str
     predefined_type: Optional[str] = None
-    discipline: str
-    phase: str = "details"
-    finish: str = "device"
-    host: str = "floor"
+    discipline: Discipline
+    phase: Phase = "details"
+    finish: Finish = "device"
+    host: Host = "floor"
     room: Optional[str] = None
     position: Point
     rotation: float = 0.0
@@ -230,7 +232,7 @@ class Asset(_Element):
     size: tuple[float, float, float] = Field(description="Nominal width (or length for spans), depth and height")
     parts: list[ShapePart] = Field(min_length=1, max_length=24)
     params: dict[str, float] = Field(default_factory=dict)
-    ports: list[str] = Field(default_factory=list, description="'<kind>:<in|out>' service connections")
+    ports: list[Port] = Field(default_factory=list)
     structural: bool = False
     overlap_ok: bool = False
     clearance: float = 0.0

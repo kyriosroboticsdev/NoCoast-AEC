@@ -30,5 +30,5 @@ def add_asset(ctx: BuildContext, asset: Asset) -> None:
     ps = ifcopenshell.api.pset.add_pset(m, product=element, name=BRICK_PSET)
     ifcopenshell.api.pset.edit_pset(m, pset=ps, properties={
         "Brick": asset.brick, "Discipline": asset.discipline, "Phase": asset.phase, "Host": asset.host,
-        "Ports": ", ".join(asset.ports), "Params": json.dumps(asset.params, sort_keys=True),
+        "Ports": ", ".join(p.label for p in asset.ports), "Params": json.dumps(asset.params, sort_keys=True),
     })
