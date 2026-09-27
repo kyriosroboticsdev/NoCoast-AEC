@@ -43,6 +43,7 @@ export const PHASE_TITLES: Record<string, string> = {
 type Tone = NonNullable<TraceStep["tone"]>;
 interface Finding {
   title: string; reference: string; status: Tone; value: string; target: string; detail: string; advice: string;
+  fix?: number;
 }
 
 const money = (v: number) => (v >= 1e6 ? `$${(v / 1e6).toFixed(2)}M` : `$${Math.round(v / 1e3).toLocaleString()}k`);
@@ -441,8 +442,9 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
             return;
           }
           for (const c of failing) {
+            const proposed = c.fix ? ` · ${c.fix} buildable fix step${c.fix === 1 ? "" : "s"} proposed` : "";
             child(g, `${c.title}: ${c.value} (required ${c.target})`, null, "done",
-                  { badge: c.reference, tone: "fail", why: c.advice ? `Sent back to the model: ${c.advice}` : null });
+                  { badge: c.reference, tone: "fail", why: c.advice || proposed ? `Sent back to the model: ${c.advice}${proposed}` : null });
           }
           setDetail(g, `${failing.length} clause${failing.length === 1 ? "" : "s"} failing · the model is fixing them before the drawings are issued`);
           return;
