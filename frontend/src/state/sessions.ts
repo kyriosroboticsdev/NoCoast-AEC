@@ -22,7 +22,7 @@ export type Stage = "planning" | "building" | "loading" | "done" | "error";
  * still found in sessions persisted by an earlier version.)
  */
 export type TracePhase =
-  | "brief" | "research" | "massing" | "plan" | "circulation" | "envelope" | "structure" | "fitout" | "review" | "output"
+  | "brief" | "research" | "concept" | "massing" | "plan" | "circulation" | "envelope" | "structure" | "fitout" | "review" | "output"
   | "code" | "cost" | "issue"
   | "validate" | "build" | "load";
 
