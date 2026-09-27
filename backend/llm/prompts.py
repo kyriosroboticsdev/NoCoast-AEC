@@ -94,6 +94,20 @@ WRITING THE REASONING (this is read by the user, live, and is as important as th
 - Write `why` on the moves that carry a decision (layouts, room sizes, orientation, circulation, structure,
   roof form, anything unusual). Routine repetition (the fourth identical window, a chair) needs none.
 - Never apologise, never narrate the tool ("now I will add…"), never mention JSON, steps or the schema.
+- Where a move answers a code requirement, cite the clause the way an architect would ("two exits: occupant
+  load is over 49, IBC 1006.3.3"). Only cite clauses you are sure of; never invent a section number.
+
+DESIGN STANDARDS the finished model is reviewed against (IBC 2021, or IRC 2021 for a house; ADA 2010):
+- every habitable room gets glazing of at least 10 % of its floor area (IBC 1204.2 asks 8 %); a standard window is
+  1.44 m², large 3.2 m², ribbon 8.4 m² — add several windows along a long wall (`at` 0.25 / 0.5 / 0.75)
+- every bedroom has a window it can be escaped through (IRC R310); every building people use has a WC / bathroom,
+  and non-domestic buildings need one toilet room at least 1.6 m in both directions (ADA turning circle)
+- exits: more than 49 occupants (about 700 m² of offices, 70 m² of seated assembly) needs two exterior doors, far
+  apart; each storey above 29 occupants needs two stairs. Main entrances of non-domestic buildings are "double"
+- a straight flight needs a straight wall about 5.2 m long for a 3 m storey (riser ≤ 178 mm, going 280 mm), and
+  is 1,118 mm clear (give it "width":1.2) once the storeys above it hold 50 or more occupants
+- exit doors: every leaf clears 813 mm, and all exits together clear 5.1 mm per occupant (a 1.8 m pair clears
+  1.7 m, enough for about 330 people)
 
 Coordinates: metres, x east, y north, plan view. Most rooms are rectangles rect=[x, y, width, depth] with (x, y)
 the south-west corner. Any other shape is a polygon poly=[[x,y], [x,y], …] listed counter-clockwise; an edge is
@@ -128,7 +142,8 @@ Steps (fields not listed are left null):
         kind: single|double|sliding|french|garage|roller (4 m industrial shutter)|revolving (lobby entrance)
   {"step":"window","room","side"|"near":[x,y],"at":0..1,"kind"}      exterior walls only
         kind: standard|large|floor|small|ribbon (6 m horizontal band)|clerestory (high strip, tall spaces)
-  {"step":"stair","room","side"|"near"}                               straight flight along that wall, up to the level above
+  {"step":"stair","room","side"|"near","width","to_level"}           straight flight along that wall, up to the level above
+        width: clear metres (default 1.0); 1.2 for a stair serving 50+ occupants above it (IBC 1011.2)
   {"step":"furniture","room","kind","side":"N|S|E|W|center"|"near","at"}   catalogue piece against a wall or in the middle:
         home       bed|double_bed|bunk_bed|sofa|armchair|coffee_table|tv_stand|dining_table|chair|desk|bookshelf|
                    wardrobe|dresser|kitchen_counter|island|fridge|oven|sink|dishwasher|washing_machine|toilet|
@@ -288,6 +303,10 @@ ISSUES_INTRO = ("COORDINATION ISSUES (clashes, missing services, unsupported spa
 
 
 SEEN_INTRO = "WHAT YOU SAW IN THE SCREENSHOTS of the model. Emit ONLY steps that fix these:"
+CODE_INTRO = ("CODE REVIEW of the model you built (indicative IBC/IRC 2021 + 2010 ADA screen, measured from the geometry). "
+              "These clauses FAIL. Emit ONLY steps that fix them — add, resize or move what the clause needs — and cite "
+              "the clause in each step's why. Leave a failure alone only if fixing it would break the brief, and say so "
+              "in a note step:")
 
 
 FOCUS_INTRO = "SELECTED IN THE VIEWER: "
@@ -337,7 +356,7 @@ def look_user_message(prompt: str, checklist: list[str], context: str | None, lo
 
 def build_user_message(prompt: str, checklist: list[str], context: str | None, *, focus: str | None = None,
                        toolbox: str | None = None, problems: Sequence[str] = (), unmet: Sequence[str] = (), issues: Sequence[str] = (),
-                       seen: Sequence[str] = (), attached: Sequence[str] = ()) -> str:
+                       seen: Sequence[str] = (), code: Sequence[str] = (), attached: Sequence[str] = ()) -> str:
     parts = []
     if toolbox:
         parts.append("LIBRARY (bricks and skills from your research):\n" + toolbox)
@@ -361,4 +380,6 @@ def build_user_message(prompt: str, checklist: list[str], context: str | None, *
         parts.append(ISSUES_INTRO + "\n- " + "\n- ".join(issues))
     if seen:
         parts.append(SEEN_INTRO + "\n- " + "\n- ".join(seen))
+    if code:
+        parts.append(CODE_INTRO + "\n- " + "\n- ".join(code))
     return "\n\n".join(parts)

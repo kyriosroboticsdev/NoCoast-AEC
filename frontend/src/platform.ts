@@ -15,6 +15,9 @@ export interface LaunchOptions {
   smoke: boolean;
   /** LLM provider to preselect (`?planner=mock` for smoke tests). */
   planner: string | null;
+  /** Play a recorded run back: `?replay=<project>` or `<project>:<version>`, `&speed=` times faster. */
+  replay: string | null;
+  speed: number | null;
 }
 
 const DEFAULT_BACKEND = "http://127.0.0.1:8765";
@@ -25,7 +28,8 @@ export async function launchOptions(): Promise<LaunchOptions> {
     const o = await invoke<{
       backend_url: string; autoload: string | null; prompt: string | null; select: string | null; tab: string | null; smoke: boolean;
     }>("launch_options");
-    return { backendUrl: o.backend_url, autoload: o.autoload, prompt: o.prompt, select: o.select, tab: o.tab, smoke: o.smoke, planner: null };
+    return { backendUrl: o.backend_url, autoload: o.autoload, prompt: o.prompt, select: o.select, tab: o.tab, smoke: o.smoke,
+             planner: null, replay: null, speed: null };
   }
   const q = new URLSearchParams(location.search);
   return {
@@ -36,6 +40,8 @@ export async function launchOptions(): Promise<LaunchOptions> {
     tab: q.get("tab"),
     smoke: q.has("smoke"),
     planner: q.get("planner"),
+    replay: q.get("replay"),
+    speed: q.has("speed") ? Number(q.get("speed")) || null : null,
   };
 }
 

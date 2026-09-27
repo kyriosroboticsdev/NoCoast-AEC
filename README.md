@@ -31,8 +31,11 @@ roof from those and compiles them to IFC after every step.
                  rejected steps ─────────────────────────────── fix round (≤ N) ──────────────────┘
         ──► COORDINATE (clashes, connectors, structural spans) + CHECK against the checklist ──► errors/unmet → fix round
         ──► LOOK: screenshots from camera views the model picks, sent back to it ──► problems it sees → fix round
+        ──► CODE SCREEN: IBC/IRC 2021 + ADA clauses on the derived model ──► failing clauses + fix steps → fix round
         ──► derive BuildingSpec (IR) ─► IfcOpenShell compiler (stable GlobalIds) ─► version store ─► viewer
-        ──► export: IFC, or a bundle with the spec, design, checks, schedule and reasoning
+        ──► issue: code review, US NCS drawing set (SVG/PDF), area schedule, UniFormat cost plan,
+            upfront carbon (LETI band), BCF 2.1 issues
+        ──► export: IFC, drawings PDF, DXF plans, Excel schedules, BCF, estimate CSV, review report, or a bundle of all of it
  edit:  the same, starting from the head version's DESIGN; the model emits only the steps that change it
 ```
 
@@ -150,6 +153,9 @@ switching provider, model or key takes effect without a restart — only paths a
 | `BIM_MAX_REPAIRS` | fix rounds for rejected steps per prompt (default 2) |
 | `BIM_VERIFY_ROUNDS` | fix rounds for unmet requirements per prompt (default 1; 0 = report only) |
 | `BIM_LOOK_ROUNDS`, `BIM_LOOK_TURNS` | visual reviews per prompt (default 1; 0 = off) and camera turns per review (default 3) |
+| `BIM_CODE_ROUNDS` | pre-issue code screens per prompt: failing IBC/IRC clauses and buildable fix steps go back to the model (default 1; 0 = report only) |
+| `LLM_EFFORT`, `LLM_THINKING` | `claude`: reasoning effort (`low`/`medium`/`high`, default `medium`) and whether its thinking streams into the trace (`summarized`, default, or `omitted`) |
+| `BIM_THINK_EVERY` | seconds between updates of the thinking paragraph still being written (default 0.25) |
 | `LLM_VISION` | `1`/`0`: whether the model is sent screenshots; default on for `claude`, Anthropic's endpoint and `mock` |
 | `BIM_OUTPUT_DIR`, `BIM_DB_PATH`, `BIM_PORT` | storage and port |
 | `BIM_BACKEND_URL` (Tauri) or `?backend=` (browser) | backend origin for the UI, default `http://127.0.0.1:8765` |
@@ -197,6 +203,21 @@ Edits 2 min including a fix round. `LLM_PROVIDER=claude` uses the native SDK wit
 with a JSON-schema `response_format`: `LLM_BASE_URL=https://api.fireworks.ai/inference/v1`,
 `LLM_MODEL=accounts/fireworks/models/qwen3p8-max`, `LLM_API_KEY=fw_…`. The same provider covers vLLM,
 LM Studio, a hosted API or a fine-tuned model. **Ollama:** `LLM_PROVIDER=ollama LLM_MODEL=llama3.1`.
+
+**Recorded runs and replay.** Every prompt run is recorded next to its version (`projects/<id>/v<n>.run.json`).
+The home screen lists runs made by a real model under *Recorded runs*; clicking one plays it back ten
+times faster — the model's thinking, every step, the build previews, the screenshots it checked and the
+deliverables — and the session then continues on that project, so the next prompt edits the recorded
+building. `?replay=<project>[:<version>]&speed=` does the same from a URL. `python tools/pack_run.py
+<project> <name>` packs a run into `backend/demo/<name>.zip`; the backend restores every pack in `demo/`
+(`BIM_DEMO_DIR`) at startup, so a machine with no API key can still show a real Claude run.
+Two ship with the repo:
+
+- `demo/architecture-studio.zip`: a 40-person studio over two floors, 366 elements, 13 of 15 code clauses
+  passing, 6½ minutes live.
+- `demo/primary-school.zip`: a two-storey school for 180 pupils, 504 elements. The pre-issue code screen
+  finds a clause failing, hands it back, and Claude fits out an accessible WC before the set is issued with
+  nothing failing. 8¾ minutes live, about a minute at the default replay speed.
 
 ## 4. Specifications
 
@@ -538,7 +559,7 @@ optimistic concurrency (409).
 | `POST /projects/{id}/import` | multipart `file` (.ifc) | **SSE** |
 | `GET /projects/{id}/versions/{n}/ifc` | | the IFC file |
 | `GET /projects/{id}/versions/{n}/export` | `?format=zip` (default) | the whole version as one zip — see below |
-| `GET /projects/{id}/versions/{n}/export` | `?format=ifc\|summary\|spec\|design\|context\|checks\|schedule` | one artefact on its own |
+| `GET /projects/{id}/versions/{n}/export` | `?format=ifc\|drawings\|dxf\|xlsx\|bcf\|review\|estimate\|summary\|spec\|design\|context\|checks\|schedule` | one artefact on its own |
 | `GET /projects/{id}/export` | | the head version as a bundle |
 | `GET /projects/{id}/versions/{n}/spec` | | `{version, spec, design, guids}` |
 | `GET /projects/{id}/versions/{n}/context` | | text — exactly what the LLM sees when editing |
@@ -721,7 +742,27 @@ Every screenshot is stored under `output/projects/<id>/shots/` and linked from t
 reasoning trace shows them inline. `GET …/versions/{n}/render` takes the same view parameters for people.
 Text-only models skip the stage with a note (`LLM_VISION`).
 
-### 4.16 Troubleshooting
+### 4.16 Deliverables — what an architect gets back
+
+Every version is issued with the documents an office produces at concept stage, all derived from the
+same `BuildingSpec` the IFC is compiled from, so they never disagree with the model:
+
+| Deliverable | Module | Where |
+|---|---|---|
+| Code review against IBC 2021 / IRC 2021 and the 2010 ADA Standards: occupancy group, occupant load, exits, exit separation, travel distance, stair geometry and width by the storeys served, headroom, daylight, ventilation, escape openings, accessible entrance/doors/toilet/vertical route, WC counts. Every clause names its section, the measured value, the requirement, the elements and a fix | `core/review.py` | **Code review** tab, `code` event, `review.md` |
+| Pre-issue screen: failing clauses go back to the model as a fix round, with buildable suggested steps (`core/remedy.py` tries each candidate door, stair or WC against the design first) | `core/pipeline.py` | `precheck` event, trace |
+| US NCS drawing set: cover and area schedule, floor plans, roof plan, elevations, section, door/window schedules | `core/draw/` | **Drawings** tab, `/sheets/{A-101}.svg`, `drawings.pdf` |
+| Concept cost plan (UniFormat II, AACE Class 5 range) and upfront carbon with a LETI band and the best saving | `core/estimate.py` | **Cost & carbon** tab, `estimate.csv` |
+| BCF 2.1 issues for every failing or flagged clause, with IFC GlobalIds and a viewpoint | `core/bcf.py` | `issues.bcfzip` |
+| CAD plans: every storey in model space, in metres, on NCS/AIA layers (A-WALL + poché hatch, A-DOOR swings, A-GLAZ, A-FLOR-STRS, A-AREA boundaries, A-AREA-IDEN room tags, S-GRID, A-ANNO-DIMS), same marks and room numbers as the PDF set | `core/draw/dxf.py` | `plans.dxf`, `cad/<level>.dxf` in the bundle |
+| Schedules workbook: summary, area summary by storey, room / door / window / equipment schedules, cost plan, carbon and the code review, with live SUM and conversion formulas | `core/workbook.py` | `schedules.xlsx` |
+
+`GET /projects/{id}/versions/{n}/analysis` returns the review, sheets, estimate and export links in one
+call; `…/export?format=` accepts `ifc`, `zip`, `drawings`, `dxf`, `xlsx`, `review`, `bcf`, `estimate`, `spec`,
+`design`, `context`, `checks`, `schedule` and `summary`. "Show in model" on any clause highlights its elements in the
+3D viewer.
+
+### 4.17 Troubleshooting
 
 Both sides log verbosely so a failure can be diagnosed from two pastes:
 

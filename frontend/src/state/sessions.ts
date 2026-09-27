@@ -22,7 +22,8 @@ export type Stage = "planning" | "building" | "loading" | "done" | "error";
  * still found in sessions persisted by an earlier version.)
  */
 export type TracePhase =
-  | "brief" | "research" | "massing" | "plan" | "circulation" | "envelope" | "structure" | "fitout" | "review" | "output"
+  | "brief" | "research" | "concept" | "massing" | "plan" | "circulation" | "envelope" | "structure" | "fitout" | "review" | "output"
+  | "code" | "cost" | "issue"
   | "validate" | "build" | "load";
 
 /** One line of the live reasoning trace (from the backend stream, or the viewer's load steps). */
@@ -42,6 +43,10 @@ export interface TraceStep {
   why?: string | null;
   /** The quantities behind it ("16 m² · 4.0 × 4.0 m"), shown next to the title. */
   metric?: string | null;
+  /** A code clause or sheet number shown as a tag after the title ("IBC 1006.3.3", "A-101"). */
+  badge?: string | null;
+  /** Outcome of a review line: drives its icon and colour. */
+  tone?: "pass" | "warn" | "fail" | "info" | null;
 }
 
 export interface Run {
@@ -56,6 +61,8 @@ export interface Run {
   drafting?: string | null;
   startedAt?: number;
   endedAt?: number;
+  /** Seconds the backend spent on the run, from its own clock (a replay keeps the live run's time). */
+  seconds?: number;
 }
 
 /** An image the user attached to a prompt. `dataUrl` lives only in memory; `url` is the backend's copy. */

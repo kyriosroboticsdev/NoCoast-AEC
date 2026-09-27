@@ -164,7 +164,7 @@ export class LegacyViewer {
         m.userData.tag = tagOf(line);
         m.userData.opacity = w;
         m.visible = typeCode !== WebIFC.IFCSPACE || this.roomsVisible;
-        if (this.highlighted && m.userData.tag === this.highlighted) this.applyHighlight(m, true);
+        if (this.highlighted.has(m.userData.tag)) this.applyHighlight(m, true);
         this.root.add(m);
         const list = this.byGuid.get(guid);
         if (list) list.push(m); else this.byGuid.set(guid, [m]);
@@ -232,12 +232,13 @@ export class LegacyViewer {
     for (const m of this.live()) if (m.userData.typeCode !== WebIFC.IFCSPACE) this.box.union(bb.setFromObject(m));
   }
 
-  private highlighted: string | null = null;
+  private highlighted = new Set<string>();
 
-  highlight(tag: string | null) {
-    if (this.highlighted) for (const m of this.live()) if (m.userData.tag === this.highlighted) this.applyHighlight(m, false);
-    this.highlighted = tag;
-    if (tag) for (const m of this.live()) if (m.userData.tag === tag) this.applyHighlight(m, true);
+  /** Highlight one element, or several (a code-review issue names every element involved). */
+  highlight(tag: string | string[] | null) {
+    for (const m of this.live()) if (this.highlighted.has(m.userData.tag)) this.applyHighlight(m, false);
+    this.highlighted = new Set(tag === null ? [] : typeof tag === "string" ? [tag] : tag);
+    for (const m of this.live()) if (this.highlighted.has(m.userData.tag)) this.applyHighlight(m, true);
   }
 
   private applyHighlight(m: THREE.Mesh, on: boolean) {

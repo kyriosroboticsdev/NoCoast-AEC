@@ -20,6 +20,7 @@ are stored with the version, so the history shows what the request really was.
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import time
@@ -31,6 +32,7 @@ import ifcopenshell
 from pydantic import ValidationError
 
 import config
+from core import export as deliverables
 from core.checks import CheckResult, check, score, unmet_lines
 from core.context import describe_design, describe_focus
 from core.coordinate import coordinate, errors, fix_lines
@@ -40,10 +42,12 @@ from core.issues import Issue
 from core.look import Review, look_rounds, look_turns, review_design
 from core.research import Toolbox, research, tool_rounds
 from core.ops import OpError, apply_ops
-from core.stream import StepStream
+from core.remedy import remedies
+from core.review import review
+from core.stream import StepStream, ThoughtStream
 from ifc.builder import GeometryError, compile_ifc, summarize
 from llm import LLM, LLMError, LLMRequest
-from llm.base import EmptyReply, Image
+from llm.base import EmptyReply, Image, thinking_of
 from llm.prompts import (build_system, build_user_message, look_system, look_user_message, requirements_system,
                          requirements_user_message, research_system, research_user_message)
 from render import Shot
@@ -67,6 +71,11 @@ LOOK_SCHEMA = LookTurn.model_json_schema()
 
 def verify_rounds() -> int:
     return int(os.environ.get("BIM_VERIFY_ROUNDS", 1))
+
+
+def code_rounds() -> int:
+    """Fix rounds driven by the pre-issue code screen (0 turns the screen-and-fix loop off)."""
+    return int(os.environ.get("BIM_CODE_ROUNDS", 1))
 
 
 class PipelineError(Exception):
@@ -103,8 +112,17 @@ def _call(llm: LLM, request: LLMRequest, emit: Emit = _noop, stream: StepStream 
          {"provider": llm.name, "model": model, "schema": request.schema_name, "system_chars": len(request.system),
           "user_chars": len(request.user), "user": request.user[-6000:]})
     t = time.perf_counter()
+    thoughts = ThoughtStream(emit, request.schema_name, stream.touch if stream else None)
+
+    def on_text(text: str) -> None:
+        if "<think>" in text:
+            thoughts.feed(thinking_of(text))
+        if stream:
+            stream.feed(text)
+
+    reasoning = {"on_thinking": thoughts.feed} if "on_thinking" in inspect.signature(llm.complete).parameters else {}
     try:
-        raw = llm.complete(request, stream.feed if stream else None, lambda note: emit("llm", note, None))
+        raw = llm.complete(request, on_text, lambda note: emit("llm", note, None), **reasoning)
     except EmptyReply as exc:
         # Nothing to do is a valid answer to "fix these problems"; it is not one to "list the brief".
         if stream is None:
@@ -125,6 +143,7 @@ def _call(llm: LLM, request: LLMRequest, emit: Emit = _noop, stream: StepStream 
                                                          "accepted": len(stream.accepted)})
         raw = {"steps": []}
     finally:
+        thoughts.flush()
         if stream:
             stream.close()
     text = json.dumps(raw)
@@ -206,12 +225,15 @@ class Feedback:
     unmet: list[str] = field(default_factory=list)      # unmet requirements
     issues: list[Issue] = field(default_factory=list)   # coordination issues; the errors are sent, with suggested steps
     seen: list[str] = field(default_factory=list)       # problems the model saw in screenshots
+    code: list[str] = field(default_factory=list)       # failing clauses of the pre-issue code screen
+    remedies: list[dict] = field(default_factory=list)  # design steps that would clear those clauses
 
     def label(self, editing: bool) -> str:
         fixing = [what for what, items in (("the moves that did not build", self.problems),
                                            ("the gaps against the brief", self.unmet),
                                            ("the coordination issues", errors(self.issues)),
-                                           ("what the screenshots showed", self.seen))
+                                           ("what the screenshots showed", self.seen),
+                                           ("the code-review failures", self.code))
                   if items]
         if fixing:
             return "reworking " + " and ".join(fixing)
@@ -225,7 +247,9 @@ class Feedback:
             return "gaps"
         if self.issues:
             return "coordination"
-        return "look" if self.seen else "design"
+        if self.seen:
+            return "look"
+        return "code" if self.code else "design"
 
 
 def build_round(llm: LLM, prompt: str, design: Design, checklist: list[str], emit: Emit, *, guids: GuidMap,
@@ -235,14 +259,14 @@ def build_round(llm: LLM, prompt: str, design: Design, checklist: list[str], emi
     fixes = fix_lines(feedback.issues)
     emit("build", feedback.label(editing),
          {"problems": feedback.problems, "unmet": feedback.unmet, "issues": fixes, "seen": feedback.seen,
-          "editing": editing, "round": "edit" if editing and feedback.round == "design" else feedback.round})
+          "code": feedback.code, "editing": editing, "round": "edit" if editing and feedback.round == "design" else feedback.round})
     stream = StepStream(emit, design, guids, first_index)
     meta = {"prompt": prompt, "design": design.model_dump(mode="json"), "problems": feedback.problems, "unmet": feedback.unmet,
             "editing": editing, "focus": focus, "issues": [i.as_dict() for i in errors(feedback.issues)], "seen": feedback.seen,
-            "bricks": toolbox.bricks if toolbox else []}
+            "code": feedback.code, "remedies": feedback.remedies, "bricks": toolbox.bricks if toolbox else []}
     user = build_user_message(prompt, checklist, context, focus=focus, toolbox=toolbox.text() if toolbox else None,
                               problems=feedback.problems, unmet=feedback.unmet, issues=fixes, seen=feedback.seen,
-                              attached=[i.name for i in attached])
+                              code=feedback.code, attached=[i.name for i in attached])
     raw = _call(llm, LLMRequest(system=build_system(), user=user, schema=STEPS_SCHEMA, schema_name="build", meta=meta,
                                 images=attached_images(llm, attached)), emit, stream)
     # Anything the streaming parser did not see (non-streaming adapters, or a reply that only parsed whole).
@@ -311,9 +335,50 @@ def _persist(store: Store, project_id: str, spec: BuildingSpec, guids: GuidMap, 
     version = store.add_version(project_id, spec=spec, guids=guids, mode=mode, summary=summarize(model), ifc_path=path,
                                 prompt=prompt, llm=llm, ops=ops, notes=notes, design=design, checks=checks or [],
                                 images=images or [], approach=approach)
+    analysis_url = _issue(version, emit)
     emit("done", f"version {version.number} ready",
-         version.as_version().model_dump() | {"ifc_url": version.ifc_url, "export_url": version.export_url})
+         version.as_version().model_dump() | {"ifc_url": version.ifc_url, "export_url": version.export_url,
+                                              "analysis_url": analysis_url})
     return version
+
+
+def _money(v: float) -> str:
+    return f"${v / 1e6:,.2f}M" if v >= 1e6 else f"${v / 1e3:,.0f}k"
+
+
+def _issue(version: VersionData, emit: Emit) -> str | None:
+    """Review the finished model like the office would before it goes out — code screen, cost and
+    carbon, drawing set — and narrate the findings into the trace. Never fails the run."""
+    try:
+        data = deliverables.analysis(version)
+    except Exception as exc:  # noqa: BLE001 — the model is built; a review bug must not lose it
+        log.exception("review of version %s failed", version.number)
+        emit("code", f"the design review could not run ({exc})", {"error": str(exc)})
+        return None
+    rev, est = data["review"], data["estimate"]
+    occ, tot, score = rev["occupancy"], rev["totals"], rev["score"]
+    findings = sorted(rev["checks"], key=lambda c: {"fail": 0, "warn": 1, "info": 2, "pass": 3}[c["status"]])
+    verdict = (f"{score['fail']} to fix" if score["fail"] else "nothing failing") + \
+              (f", {score['warn']} to review" if score["warn"] else "")
+    emit("code", f"Code screen against {rev['code']}: occupancy {occ['group']}, {occ['load']} occupants — "
+                 f"{score['pass']} of {score['total']} clauses pass, {verdict}",
+         {"phase": "code", "code": rev["code"], "occupancy": occ, "totals": tot, "score": score,
+          "checks": findings})
+    cost, carbon = est["cost"], est["carbon"]
+    best = carbon["options"][0] if carbon["options"] else None
+    emit("estimate", f"Concept estimate {_money(cost['total'])} (${cost['per_sf']:,}/sf, {cost['class'].split(' —')[0]}); "
+                     f"upfront carbon {carbon['per_m2']} kgCO2e/m², LETI band {carbon['band']}",
+         {"phase": "cost", "cost": {k: cost[k] for k in ("total", "low", "high", "per_m2", "per_sf", "class", "basis")},
+          "carbon": {k: carbon[k] for k in ("total_kg", "per_m2", "band", "typology", "target_2020", "target_2030",
+                                            "meets_2030", "options")},
+          "best": best, "gia": tot["gia"], "gia_sf": tot["gia_sf"]})
+    base = f"/projects/{version.project_id}/versions/{version.number}"
+    sheets = [{"number": s.number, "title": s.title, "url": f"{base}/sheets/{s.number}.svg"} for s in data["sheets"]]
+    emit("deliver", f"Drawing set issued: {len(sheets)} sheets, DXF plans, Excel schedules, BCF issues and cost plan",
+         {"phase": "issue", "sheets": sheets, "pdf": f"{base}/export?format=drawings",
+          "dxf": f"{base}/export?format=dxf", "xlsx": f"{base}/export?format=xlsx",
+          "bcf": f"{base}/export?format=bcf", "analysis_url": f"{base}/analysis"})
+    return f"{base}/analysis"
 
 
 def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_version: int | None = None,
@@ -410,6 +475,21 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
             accepted_total += len(stream.accepted)
             results, issues = _verify(design, reqs.requirements, emit)
 
+        for _ in range(code_rounds() if accepted_total else 0):
+            failing, fixes = _code_screen(design, emit)
+            if not failing:
+                break
+            fixing = follow_up(llm, prompt, design, checklist, emit, guids=guids, first_index=steps_total,
+                               feedback=Feedback(code=failing, remedies=fixes), editing=editing, toolbox=toolbox,
+                               attached=attached)
+            if fixing is None:
+                break
+            stream = fixing
+            design, guids = stream.design, stream.guids
+            steps_total += stream.applied
+            accepted_total += len(stream.accepted)
+            results, issues = _verify(design, reqs.requirements, emit)
+
         if accepted_total == 0:
             raise PipelineError("the model produced no applicable steps" + (": " + stream.rejected[0][2] if stream.rejected else ""))
         if not design.has_geometry():
@@ -430,6 +510,35 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
         raise PipelineError(f"language model unavailable: {exc}") from exc
     except (DesignError, GeometryError) as exc:
         raise PipelineError(f"the design could not be built: {exc}") from exc
+
+
+def _code_screen(design: Design, emit: Emit) -> tuple[list[str], list[dict]]:
+    """Screen the design against the code before it is issued: the failing clauses, as lines a fix round can
+    act on, and the design steps that would clear them."""
+    try:
+        spec, _ = derive(design)
+        screen = review(spec, design)
+    except Exception as exc:  # noqa: BLE001 — a review bug must not stop the building being issued
+        log.warning("pre-issue code screen failed: %s", exc)
+        return [], []
+    failing = [c for c in screen["checks"] if c["status"] == "fail"]
+    try:
+        fixes = remedies(failing, spec, design)
+    except Exception as exc:  # noqa: BLE001 — the clauses still go back to the model without suggested steps
+        log.warning("code remedies failed: %s", exc)
+        fixes = {}
+    score = screen["score"]
+    emit("precheck", f"pre-issue code screen: {score['pass']} of {score['total']} clauses pass"
+                     + (f", {len(failing)} failing — handing them back to the model" if failing else ", nothing failing"),
+         {"phase": "code", "code": screen["code"], "score": score,
+          "checks": [{**{k: c[k] for k in ("title", "reference", "status", "value", "target", "detail", "advice")},
+                      "fix": len(fixes.get(c["id"], []))} for c in failing]})
+    lines = [f"{c['reference']} — {c['title']}: measured {c['value']}, required {c['target']}. {c['detail']}"
+             + (f" Fix: {c['advice']}" if c["advice"] else "") + (f" (elements: {', '.join(c['elements'][:6])})" if c["elements"] else "")
+             + (" Suggested steps: " + json.dumps([{k: v for k, v in s.items() if k != "why"} for s in fixes[c["id"]]])
+                if c["id"] in fixes else "")
+             for c in failing]
+    return lines, [s for c in failing for s in fixes.get(c["id"], [])]
 
 
 def _verify(design: Design, reqs: list[Requirement], emit: Emit) -> tuple[list[CheckResult], list[Issue]]:
