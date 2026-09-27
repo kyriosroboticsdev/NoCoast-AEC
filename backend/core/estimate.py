@@ -16,6 +16,7 @@ from __future__ import annotations
 import math
 from collections import Counter
 
+from core.review import lifts
 from schemas.bim import (Asset, BuildingSpec, Column, CustomFixture, Door, Fixture, Roof, Slab, Stair, Wall, Window,
                          polygon_area)
 
@@ -32,6 +33,8 @@ STAIR_RATE = 22000              # $ per flight
 FINISHES = 140                  # $/m² NIA floors + ceilings
 FF_E = 950                      # $ per fixture / equipment item
 ASSET_RATE = 2500               # $ per placed library asset
+LIFT_RATE, LIFT_STOP = 85000, 15000  # $ per MRL passenger elevator, plus per stop
+LIFT_CARBON = 9000              # kgCO2e per elevator installation (car, machine, rails, doors)
 SERVICES = {"R-3": 420, "B": 780, "E": 760, "I-2": 1500, "M": 520, "A-1": 880, "A-2": 900, "A-3": 800,
             "F-1": 520, "S-1": 300, "S-2": 260, "U": 180}        # $/m² GIA, plumbing + HVAC + fire + electrical
 SERVICES_SPLIT = {"D20 Plumbing": 0.16, "D30 HVAC": 0.44, "D40 Fire protection": 0.08, "D50 Electrical": 0.32}
@@ -96,6 +99,7 @@ def quantities(spec: BuildingSpec) -> dict:
     doors = [e for e in spec.elements if isinstance(e, Door)]
     ext_doors = [d for d in doors if d.wall in walls and walls[d.wall].external]
     fixtures = [e for e in spec.elements if isinstance(e, (Fixture, CustomFixture))]
+    shafts = lifts(spec)
     return {
         "external_wall_area": round(sum(ext_by_material.values()), 2),
         "external_wall_by_material": {str(k or "unspecified"): round(v, 2) for k, v in ext_by_material.items()},
@@ -109,7 +113,8 @@ def quantities(spec: BuildingSpec) -> dict:
         "door_kinds": dict(Counter(d.kind for d in doors)),
         "stairs": sum(1 for e in spec.elements if isinstance(e, Stair)),
         "columns": sum(1 for e in spec.elements if isinstance(e, Column)),
-        "fixtures": len(fixtures), "assets": sum(1 for e in spec.elements if isinstance(e, Asset)),
+        "fixtures": len(fixtures), "lifts": len(shafts), "lift_stops": sum(len(s) for s in shafts),
+        "assets": sum(1 for e in spec.elements if isinstance(e, Asset)) - sum(len(s) for s in shafts),
         "window_wall_ratio": round(sum(w.width * w.height for w in windows) /
                                    max(1e-6, sum(ext_by_material.values()) + sum(w.width * w.height for w in windows)), 3),
     }
@@ -139,6 +144,7 @@ def _carbon(q: dict, gia: float, nia: float, material_override: str | None = Non
         "Stairs": q["stairs"] * STAIR_CARBON,
         "Finishes": nia * FINISHES_CARBON,
         "Services (MEP)": gia * SERVICES_CARBON,
+        **({"Elevators": q["lifts"] * LIFT_CARBON} if q.get("lifts") else {}),
     }
     a13 = sum(rows.values())
     return {"rows": rows, "a1_a3": a13, "a1_a5": a13 * (1 + A4_A5)}
@@ -173,6 +179,8 @@ def estimate(spec: BuildingSpec, review: dict) -> dict:
         ("C", "Interiors", "C10 Interior doors", int_doors, "ea", DOOR_RATE["interior"]),
         ("C", "Interiors", "C20 Stairs", q["stairs"], "flight", STAIR_RATE),
         ("C", "Interiors", "C30 Interior finishes", nia, "m²", FINISHES),
+        ("D", "Services", "D10 Conveying — passenger elevators", q["lifts"], "ea",
+         (LIFT_RATE + LIFT_STOP * q["lift_stops"] / q["lifts"]) if q["lifts"] else 0),
         *[("D", "Services", name, gia, "m²", SERVICES.get(group, 700) * share) for name, share in SERVICES_SPLIT.items()],
         ("E", "Equipment & furnishings", "E20 Furnishings and fixtures", q["fixtures"], "ea", FF_E),
         ("E", "Equipment & furnishings", "E10 Library equipment and site assets", q["assets"], "ea", ASSET_RATE),

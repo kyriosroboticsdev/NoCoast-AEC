@@ -21,12 +21,13 @@ silent.
 from __future__ import annotations
 
 import math
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
 from shapely.geometry import Point, Polygon
 
-from schemas.bim import BuildingSpec, Door, Fixture, Space, Stair, Wall, Window, polygon_area
+from schemas.bim import Asset, BuildingSpec, Door, Fixture, Space, Stair, Wall, Window, polygon_area
 from schemas.design import Design, guess_kind
 
 DWELLING = {"living", "kitchen", "dining", "bedroom", "bathroom", "hall", "garage", "utility", "storage", "office"}
@@ -122,6 +123,18 @@ def _check(cid: str, category: str, title: str, reference: str, status: str, val
             "value": value, "target": target, "detail": detail, "elements": elements or [], "advice": advice}
 
 
+LIFT = re.compile(r"elevator|(^|_)(platform_)?lift(_|$)")
+
+
+def lifts(spec: BuildingSpec) -> list[list[Asset]]:
+    """Lift cars placed from the brick library, grouped by shaft (a lift is often placed once per storey)."""
+    shafts: dict[tuple[float, float], list[Asset]] = {}
+    for a in spec.elements:
+        if isinstance(a, Asset) and LIFT.search(a.brick) and "stair_lift" not in a.brick:
+            shafts.setdefault((round(a.position[0], 0), round(a.position[1], 0)), []).append(a)
+    return list(shafts.values())
+
+
 class Model:
     """The spec indexed for review: rooms with their openings, stairs, exits."""
 
@@ -134,6 +147,7 @@ class Model:
         self.windows = [e for e in spec.elements if isinstance(e, Window)]
         self.stairs = [e for e in spec.elements if isinstance(e, Stair)]
         self.fixtures = [e for e in spec.elements if isinstance(e, Fixture)]
+        self.assets = [e for e in spec.elements if isinstance(e, Asset)]
         kinds: dict[str, str] = {}
         if design is not None:
             for r in design.rooms:
@@ -382,24 +396,34 @@ def _checks(m: Model, group: str, load: int) -> list[dict]:
                 "Add an exit: the path is too long even with sprinklers."))
 
     # --- stairs -------------------------------------------------------------
-    max_riser, min_tread, min_width = (0.196, 0.254, 0.914) if residential else (0.178, 0.279, 0.914 if load < 50 else 1.118)
     ref = "IRC R311.7.5 / R311.7.1" if residential else "IBC 1011.5.2 / 1011.2"
+
+    def height_of(lid: str) -> float:
+        return (m.levels[lid].elevation or 0.0) if lid in m.levels else 0.0
+
     for s in m.stairs:
+        # IBC 1011.2: 44 in wide, or 36 in when the stair serves fewer than 50 occupants (the storeys above it).
+        served = sum(v for lid, v in per_level.items() if height_of(lid) > height_of(s.level) + 1e-6)
+        max_riser, min_tread, min_width = (0.196, 0.254, 0.914) if residential else (0.178, 0.279, 0.914 if served < 50 else 1.118)
         rise = s.rise or m.levels[s.level].height
         riser = rise / s.steps(rise)
-        issues = []
+        issues, fixes = [], []
         if riser > max_riser + 1e-6:
             issues.append(f"riser {riser * MM:.0f} > {max_riser * MM:.0f} mm")
+            n = math.ceil(rise / max_riser - 1e-9)
+            fixes.append(f"use {n} risers of {rise / n * MM:.0f} mm (the flight grows by {(n - s.steps(rise)) * s.going * MM:,.0f} mm)")
         if s.going < min_tread - 1e-6:
             issues.append(f"tread {s.going * MM:.0f} < {min_tread * MM:.0f} mm")
+            fixes.append(f"deepen the going to {min_tread * MM:.0f} mm")
         if s.width < min_width - 1e-6:
             issues.append(f"width {s.width * MM:.0f} < {min_width * MM:.0f} mm")
+            fixes.append(f"widen the flight to {min_width * MM:,.0f} mm clear")
         checks.append(_check(
             f"stairs.{s.id}", "Stairs", f"Stair geometry — {s.name or s.id}", ref, "fail" if issues else "pass",
             f"{s.steps(rise)} risers × {riser * MM:.0f} mm, {s.going * MM:.0f} mm tread, {s.width * MM:.0f} mm wide",
             f"riser ≤ {max_riser * MM:.0f}, tread ≥ {min_tread * MM:.0f}, width ≥ {min_width * MM:.0f} mm",
             "; ".join(issues) if issues else f"2R + G = {(2 * riser + s.going) * MM:.0f} mm, within the 550–700 mm comfort band.",
-            [s.id], "Increase the going or add a riser; the flight gets longer." if issues else ""))
+            [s.id], (fixes[0][0].upper() + "; ".join(fixes)[1:] + ".") if fixes else ""))
 
     # --- headroom -----------------------------------------------------------
     min_h = 2.134 if residential else 2.286
@@ -487,7 +511,14 @@ def _checks(m: Model, group: str, load: int) -> list[dict]:
             "Turning space checked against each toilet room's smallest plan dimension.",
             [r.id for r in wcs if r not in turning] or ([] if wcs else [ground]),
             "" if turning else "Make one toilet room at least 1.6 × 2.2 m with a 1,525 mm turning circle."))
-        if len(m.order) > 1:
+        shafts = lifts(m.spec)
+        if len(m.order) > 1 and shafts:
+            first = shafts[0][0]
+            checks.append(_check(
+                "access.vertical", "Accessibility", "Accessible route between storeys", "IBC 1104.4 / ADA 206.2.3",
+                "pass", f"{len(shafts)} {'lift' if len(shafts) == 1 else 'lifts'} ({first.name or first.brick.replace('_', ' ')})",
+                "elevator or platform lift", "Every storey is on an accessible route.", [a.id for s in shafts for a in s], ""))
+        elif len(m.order) > 1:
             checks.append(_check(
                 "access.vertical", "Accessibility", "Accessible route between storeys", "IBC 1104.4 / ADA 206.2.3",
                 "warn", "stairs only", "elevator or platform lift",
@@ -496,7 +527,8 @@ def _checks(m: Model, group: str, load: int) -> list[dict]:
                 "Allow a 2.0 × 2.2 m shaft for a MRL elevator next to the stair."))
 
     # --- plumbing fixtures --------------------------------------------------
-    toilets = [f for f in m.fixtures if f.kind == "toilet"]
+    toilets = [f for f in m.fixtures if f.kind == "toilet"] + [
+        a for a in m.assets if re.search(r"(^|_)(wc|toilet|water_closet)(_|$)", a.brick)]
     count = len(toilets) or sum(1 for r in m.rooms if r.kind == "bathroom")
     if residential:
         need = 1
