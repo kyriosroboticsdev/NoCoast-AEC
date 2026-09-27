@@ -1,6 +1,6 @@
 import {
   AlertTriangle, BookOpen, Box, Calculator, Check, FileStack, Info, ChevronDown, ChevronRight, ClipboardList, DoorOpen, FileDown, Frame, Hammer, Layers,
-  LayoutGrid, LoaderCircle, Ruler, ShieldCheck, Sofa, Sparkles, X,
+  LayoutGrid, Lightbulb, LoaderCircle, Ruler, ShieldCheck, Sofa, Sparkles, X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { backendUrl } from "../api/client";
@@ -9,6 +9,7 @@ import type { Run, TracePhase, TraceStep } from "../state/sessions";
 const PHASE_ICON: Partial<Record<TracePhase, typeof Sparkles>> = {
   brief: ClipboardList,
   research: BookOpen,
+  concept: Lightbulb,
   massing: Ruler,
   plan: LayoutGrid,
   circulation: DoorOpen,

@@ -26,6 +26,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 export const PHASE_TITLES: Record<string, string> = {
   brief: "Reading the brief",
   research: "Looking up parts and precedents",
+  concept: "Design thinking",
   massing: "Massing and storey heights",
   plan: "Planning the floor plates",
   circulation: "Circulation and access",
@@ -351,6 +352,21 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
             const g = group("review", `Closing ${plural(unmet.length, "gap")} against the brief`);
             setDetail(g, unmet.map((x) => `• ${x}`).join("\n"));
           }
+          return;
+        }
+        case "think": {
+          // The model's own reasoning (Claude's summarised thinking, or an open model's <think> block).
+          if (typeof d.live === "string") {
+            hooks.onLive?.(`Thinking · ${d.live}`);
+            return;
+          }
+          const purpose = String(d.purpose ?? "");
+          const phase = purpose === "requirements" ? "brief" : purpose === "research" ? "research"
+            : purpose === "build" && !applied ? "concept" : "review";
+          const g = group(phase);
+          const text = typeof d.text === "string" ? d.text : "";
+          const title = typeof d.title === "string" && d.title ? d.title : e.message;
+          child(g, title, null, "done", { why: text && text !== title ? text : null, tone: null, badge: null });
           return;
         }
         case "llm":
