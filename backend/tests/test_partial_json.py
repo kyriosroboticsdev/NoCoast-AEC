@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from core.partial_json import parse_partial
+from core.partial_json import open_step, parse_partial
 from llm.base import clean_reply, parse_reply
 
 FULL = {"mode": "ops", "ops": [{"op": "delete_element", "id": "garage-door"}, {"op": "modify_element", "id": "L1-wall-S", "set": {"thickness": 0.4}}],
@@ -26,6 +26,15 @@ def test_every_prefix_yields_a_prefix_of_the_truth(cut):
     assert ops == FULL["ops"][: len(ops)]  # complete ops only, in order
     for note in result.get("notes") or []:
         assert note in FULL["notes"]
+
+
+def test_open_step_keeps_finished_rooms_while_the_next_is_cut_off():
+    text = ('{"steps":[{"step":"level","id":"L1"},'
+            '{"step":"layout","level":"L1","rooms":[{"name":"Hall","rect":[0,0,4,6]},{"name":"Kit')
+    step = open_step(text)
+    assert step is not None and step["step"] == "layout"
+    assert step["rooms"] == [{"name": "Hall", "rect": [0, 0, 4, 6]}]
+    assert open_step('{"steps":[{"step":"level","id":"L1"}]}') is None
 
 
 def test_specific_tails():

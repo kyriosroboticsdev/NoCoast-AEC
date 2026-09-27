@@ -87,6 +87,27 @@ def parse_partial(text: str):
     return None
 
 
+def open_step(text: str) -> dict | None:
+    """The `steps` element still being written, with unfinished nested objects dropped.
+
+    `peek_element` returns the innermost open object, so a layout whose next room is
+    half-written comes back as that room. This stays on the step: the same prefix comes
+    back as the layout, containing only the rooms that are already complete."""
+    start = text.rfind('"steps"')
+    if start < 0:
+        return None
+    stack, _ = _scan(text)
+    steps_at = next((idx for ch, idx in stack if ch == "[" and idx > start), None)
+    if steps_at is None:
+        return None
+    cuts = [idx for k, (ch, idx) in enumerate(stack)
+            if ch == "{" and k > 0 and stack[k - 1] == ("[", steps_at)]
+    if not cuts:
+        return None
+    value = parse_partial(text[cuts[-1]:])
+    return value if isinstance(value, dict) and value else None
+
+
 def peek_element(text: str, key: str) -> dict | None:
     """The element of the `key` array the model is *still writing*, with the fields finished so far.
 

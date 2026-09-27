@@ -344,9 +344,10 @@ export default function App() {
       };
     };
 
-    // Previews stream in while the model works (`partial` events carry a geometry-checked IFC of what
-    // exists so far). Loads are serialised, only the newest pending preview is loaded, nothing is loaded
-    // once the final version has arrived, and the camera is kept so the building grows in place.
+    // Previews stream in while the model works (`partial` events carry an IFC of what exists so far;
+    // the finished version is the one that is geometry-checked). Loads are serialised, only the newest
+    // pending preview is loaded, nothing is loaded once the final version has arrived, and the camera
+    // is kept so the asset grows in place.
     let finalArrived = false;
     let pending: Preview | null = null;
     let chain = Promise.resolve();

@@ -43,7 +43,7 @@ def test_design_then_edit_keeps_guids():
     assert v1["summary"]["counts"]["IfcWall"] > 10 and v1["summary"]["counts"]["IfcFurniture"] >= 5
     stages = [e["stage"] for e in evs]
     assert stages.count("requirements") == 2 and "verify" in stages and stages[-1] == "done"
-    # Steps are applied while the mock streams; every one is reported, and geometry-checked previews are emitted.
+    # Steps are applied while the mock streams; every one is reported, and previews are emitted.
     steps = [e for e in evs if e["stage"] == "step"]
     assert len(steps) > 20 and all(e["data"]["ok"] for e in steps), [e["message"] for e in steps if not e["data"]["ok"]]
     assert steps[0]["data"]["index"] == 1 and steps[0]["data"]["step"]["step"] == "building"

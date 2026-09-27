@@ -5,10 +5,11 @@ the model's thread each newly completed step (the partial-JSON parser only retur
 complete array elements) is applied to the design and the design is re-derived; a
 step that cannot be applied is rejected on the spot with a message and the design
 stays as it was. Every accepted step marks the design dirty; a worker thread takes
-the latest dirty design, compiles it to IFC (geometry-checking only the elements that
-changed), writes a preview file and emits a `partial` event. Steps therefore land in
-the viewer at the model's pace — typically well under a second apart — while the
-expensive compile is coalesced and never blocks the stream.
+the latest dirty design, compiles it to IFC without tessellating (the finished version
+is geometry-checked), writes a preview file and emits a `partial` event. The first
+preview is sent as soon as a room or element exists, including rooms that are finished
+inside a layout step the model is still writing. Later previews wait briefly so a burst
+of steps is one reload. The compile never blocks the stream.
 
 The stream is deliberately chatty so the UI never looks stuck:
 
@@ -38,7 +39,7 @@ import config
 from core.clash import new_brick_clashes
 from core.derive import DesignError, Derived, analyze
 from core.narrate import gross_area, narrate_draft, narrate_step, phase_of, step_facts
-from core.partial_json import parse_partial, peek_element
+from core.partial_json import open_step, parse_partial, peek_element
 from ifc.builder import GeometryError, compile_ifc
 from llm.base import body
 from logsetup import log
@@ -133,6 +134,7 @@ class StepStream:
         self._last_stream = 0.0
         self._last_draft = 0.0
         self._draft_key: str | None = None
+        self._open_key: str | None = None       # rooms already previewed from the layout step still being written
         self._chars = 0
         self._last_chars = 0
         self._last_beat = time.time()
@@ -220,6 +222,45 @@ class StepStream:
         for raw in steps[self.applied:]:
             self.applied += 1
             self.apply(raw)
+        self._preview_open_layout(text)
+
+    def _preview_open_layout(self, text: str) -> None:
+        """Show rooms that are finished inside the layout step still being written.
+
+        A storey arrives as one step, so the viewer used to stay empty until every room of
+        it had been written. This compiles a preview from the rooms complete so far and does
+        not touch the design: the step is applied for real when it closes. A partial rewrite
+        of a storey that already has rooms is skipped, because a layout replaces that storey
+        and an unfinished one would erase rooms the model has not restated yet."""
+        raw = open_step(body(text))
+        if not isinstance(raw, dict) or raw.get("step") != "layout":
+            return
+        rooms = raw.get("rooms")
+        if not isinstance(rooms, list):
+            return
+        ready = [r for r in rooms if isinstance(r, dict) and r.get("name") and (r.get("rect") or r.get("poly"))]
+        if not ready:
+            return
+        key = json.dumps(ready, sort_keys=True, default=str)
+        if key == self._open_key:
+            return
+        self._open_key = key
+        trial = {k: v for k, v in raw.items() if k != "why"}
+        trial["rooms"] = ready
+        try:
+            step = Step.model_validate(trial)
+            candidate, _ = apply_step(self.design, step)
+            level = step.level or "L1"
+            before = {r.id for r in self.design.rooms if r.level == level}
+            after = {r.id for r in candidate.rooms if r.level == level}
+            if not before <= after:
+                return
+            analyze(candidate)
+        except (StepError, DesignError, ValidationError, ValueError):
+            return
+        with self._cond:
+            self._dirty = candidate
+            self._cond.notify_all()
 
     def apply(self, raw) -> bool:
         index = self.first_index + self.applied
@@ -282,10 +323,12 @@ class StepStream:
                     self._cond.wait()
                 if self._dirty is None:
                     return
-                if not self._closed:
-                    # Coalesce a burst of steps into one render, but never wait longer than the last
-                    # compile took: on a fast machine previews then follow the model almost per step.
-                    self._cond.wait(min(1.0, max(PREVIEW_DEBOUNCE, self._last_compile * 0.5)))
+                # The first picture goes out immediately. Later ones wait out a short burst so a
+                # layout that lands as several steps is one reload, not one per step. The wait used
+                # to grow with the last compile (up to a second), so a heavy tessellation made the
+                # next preview later still.
+                if not self._closed and self.count > 0:
+                    self._cond.wait(PREVIEW_DEBOUNCE)
                 design, self._dirty = self._dirty, None
             try:
                 self._render(design)
@@ -307,7 +350,10 @@ class StepStream:
         if not changed and set(elements) == set(self._last_elements):
             return
         t = time.perf_counter()
-        model, self.guids = compile_ifc(spec, self.guids, design.model_dump_json(), check=changed)
+        # Tessellating every changed solid (IfcOpenShell create_shape) is what made the first
+        # preview stall, and it stalled longer as the model grew. The finished version is still
+        # geometry-checked; a preview that the viewer cannot draw is skipped and the next one replaces it.
+        model, self.guids = compile_ifc(spec, self.guids, design.model_dump_json(), check=set())
         name = f"{uuid.uuid4().hex[:12]}.ifc"
         model.write(str(PARTIAL_DIR / name))
         self._last_compile = time.perf_counter() - t
