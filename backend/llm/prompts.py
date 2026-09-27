@@ -4,6 +4,7 @@ The system prompts end with the brick and skill indexes, so they are built on fi
 rather than at import: importing the LLM layer never loads the library.
 """
 
+import re
 import textwrap
 from collections.abc import Sequence
 from functools import lru_cache
@@ -292,6 +293,13 @@ SEEN_INTRO = "WHAT YOU SAW IN THE SCREENSHOTS of the model. Emit ONLY steps that
 
 FOCUS_INTRO = "SELECTED IN THE VIEWER: "
 FOCUS_RULE = " — the request refers to this element unless it clearly says otherwise."
+FOCUS_RULE_MANY = "\nThe request refers to these elements, applied to each of them, unless it clearly says otherwise."
+
+
+def focus_block(focus: str) -> str:
+    """The selection paragraph; several elements (core.context.describe_selection) get the plural rule."""
+    many = re.match(r"^\d+ elements:\n", focus) is not None
+    return FOCUS_INTRO + focus + (FOCUS_RULE_MANY if many else FOCUS_RULE)
 
 
 def attached_block(names: Sequence[str], instruction: str) -> str:
@@ -308,7 +316,7 @@ def requirements_user_message(prompt: str, errors: list[str] | None = None, focu
         parts.append(attached_block(attached, "They are part of the request; if you cannot see them, extract "
                                               "requirements from the text only and say so in the summary."))
     if focus:
-        parts.append(FOCUS_INTRO + focus + FOCUS_RULE)
+        parts.append(focus_block(focus))
     if errors:
         parts.append("YOUR PREVIOUS ANSWER WAS REJECTED. Fix these problems and answer again:\n- " + "\n- ".join(errors))
     return "\n\n".join(parts)
@@ -350,7 +358,7 @@ def build_user_message(prompt: str, checklist: list[str], context: str | None, *
         parts.append(attached_block(attached, "Build what they show; if you cannot see them, build from the text "
                                               "and say so in a note step."))
     if focus:
-        parts.append(FOCUS_INTRO + focus + FOCUS_RULE)
+        parts.append(focus_block(focus))
     if checklist:
         parts.append("CHECKLIST:\n- " + "\n- ".join(checklist))
     if problems:

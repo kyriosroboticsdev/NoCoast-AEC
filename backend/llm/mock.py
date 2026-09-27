@@ -136,29 +136,40 @@ class MockLLM:
 
     # --- edits -----------------------------------------------------------------
 
+    @staticmethod
+    def _focus_steps(text: str, design: Design, focus: str) -> list[dict]:
+        """Steps for a request like "add a window" / "remove this" about one selected element."""
+        room = side = item = None
+        m = re.search(r"wall id (\S+?); side=([NSEW])", focus)
+        if m:
+            room, side = re.sub(r"^\w+-wall-", "", m.group(1)).rsplit("-", 1)[0], m.group(2)
+        m = m or re.search(r"room id ([\w-]+)", focus)
+        if m and room is None:
+            room = m.group(1)
+        m = re.search(r"\b(door|window|stair|balcony|[a-z_]+) ([\w-]+) (of|on|in) the", focus)
+        if m and design.room(m.group(2)) is None:
+            item = m.group(2)
+        if room and re.match(r"^(add|put) (a |an |another )?(large |big )?(window|door)s?( here| there| to (it|them|each)| on (it|them|each))?$", text):
+            kind = "large" if re.search(r"large|big", text) else "standard"
+            if "window" in text:
+                return [{"step": "window", "room": room, "side": side or "S", "kind": kind}]
+            return [{"step": "door", "room": room, "to": "outside", "side": side or "S"}]
+        if item and re.match(r"^(remove|delete|drop)( this| it| that| these| them| the selected \w+)?$", text):
+            return [{"step": "remove", "id": item}]
+        return []
+
     def _edit(self, prompt: str, design: Design, focus: str | None = None) -> list[dict]:
         text = prompt.lower().strip()
         steps: list[dict] = []
 
-        # A viewer selection (see core.context.describe_focus) stands in for the place the prompt leaves out.
+        # A viewer selection (see core.context.describe_selection) stands in for the place the prompt leaves
+        # out. Several selected elements arrive one per numbered line; the request applies to each of them.
         if focus:
-            room = side = item = None
-            m = re.search(r"wall id (\S+?); side=([NSEW])", focus)
-            if m:
-                room, side = re.sub(r"^\w+-wall-", "", m.group(1)).rsplit("-", 1)[0], m.group(2)
-            m = m or re.search(r"room id ([\w-]+)", focus)
-            if m and room is None:
-                room = m.group(1)
-            m = re.search(r"\b(door|window|stair|balcony|[a-z_]+) ([\w-]+) (of|on|in) the", focus)
-            if m and design.room(m.group(2)) is None:
-                item = m.group(2)
-            if room and re.match(r"^(add|put) (a |an |another )?(large |big )?(window|door)( here| there| to it| on it)?$", text):
-                kind = "large" if re.search(r"large|big", text) else "standard"
-                if "window" in text:
-                    return [{"step": "window", "room": room, "side": side or "S", "kind": kind}]
-                return [{"step": "door", "room": room, "to": "outside", "side": side or "S"}]
-            if item and re.match(r"^(remove|delete|drop)( this| it| that| the selected \w+)?$", text):
-                return [{"step": "remove", "id": item}]
+            pieces = re.findall(r"^\d+\. (.+)$", focus, re.M) if re.match(r"^\d+ elements:\n", focus) else [focus]
+            for piece in pieces:
+                steps += self._focus_steps(text, design, piece)
+            if steps:
+                return steps
 
         mentions = mentioned_bricks(prompt)
         if mentions and re.search(r"\b(add|put|install|place|fit|give)\b", text):

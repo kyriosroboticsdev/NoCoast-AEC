@@ -72,7 +72,8 @@ class PromptRequest(BaseModel):
     prompt: str
     planner: str | None = None
     base_version: int | None = None
-    focus: str | None = None  # spec element id selected in the viewer (e.g. "L1-wall-hall-W"); described to the model
+    # Spec element id(s) selected in the viewer (e.g. "L1-wall-hall-W", or several via shift-click); described to the model
+    focus: str | list[str] | None = None
     # Images attached to this prompt (a sketched plan, a photo): base64 or a data: URL, validated in schemas/attachments.py.
     images: list[ImageAttachment] = Field(default_factory=list, max_length=MAX_IMAGES)
 

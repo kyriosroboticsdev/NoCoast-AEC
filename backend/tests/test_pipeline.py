@@ -118,3 +118,29 @@ def test_focus_describes_selection_and_mock_acts_on_it(tmp_path):
     assert steps == [{"step": "window", "room": "hall", "side": "W", "kind": "standard"}]
     steps = MockLLM()._edit("remove this", d, describe_focus(d, "door-kitchen-hall"))
     assert steps == [{"step": "remove", "id": "door-kitchen-hall"}]
+
+
+def test_multi_selection_is_listed_and_applied_to_each():
+    from core.context import describe_focus, describe_selection
+    from llm.mock import MockLLM
+    from llm.prompts import FOCUS_RULE, FOCUS_RULE_MANY, focus_block
+    from schemas.design import Design, LevelDef, RoomDef
+
+    d = Design(levels=[LevelDef(id="L1")], rooms=[RoomDef(id="hall", name="Hall", level="L1", kind="hall", rect=(0, 0, 4, 6)),
+                                                RoomDef(id="kitchen", name="Kitchen", level="L1", kind="kitchen", rect=(4, 0, 4, 6))])
+    # One id (as a string or a one-item list) reads exactly like the single-selection description.
+    assert describe_selection(d, "L1-wall-hall-W") == describe_focus(d, "L1-wall-hall-W")
+    assert describe_selection(d, ["L1-wall-hall-W", " L1-wall-hall-W"]) == describe_focus(d, "L1-wall-hall-W")
+    text = describe_selection(d, ["L1-wall-hall-W", "L1-wall-kitchen-E", "L1-space-kitchen"])
+    assert text.splitlines() == [
+        "3 elements:",
+        "1. " + describe_focus(d, "L1-wall-hall-W"),
+        "2. " + describe_focus(d, "L1-wall-kitchen-E"),
+        "3. " + describe_focus(d, "L1-space-kitchen"),
+    ]
+    assert focus_block(text).endswith(FOCUS_RULE_MANY)
+    assert focus_block(describe_focus(d, "L1-wall-hall-W")).endswith(FOCUS_RULE)
+
+    steps = MockLLM()._edit("add a window", d, describe_selection(d, ["L1-wall-hall-W", "L1-wall-kitchen-E"]))
+    assert steps == [{"step": "window", "room": "hall", "side": "W", "kind": "standard"},
+                     {"step": "window", "room": "kitchen", "side": "E", "kind": "standard"}]

@@ -9,7 +9,7 @@ import { formatSize, type Attachment } from "../state/attachments";
 import { PANEL_RANGE } from "../state/layout";
 import type { Message, Session } from "../state/sessions";
 import { turnId } from "../turns";
-import { Composer } from "./Composer";
+import { Composer, type FocusItem } from "./Composer";
 import { Reasoning } from "./Reasoning";
 import { Resizer } from "./Resizer";
 
@@ -22,8 +22,9 @@ interface Props {
   onSubmit: (text: string, images: Attachment[]) => void;
   onAttach: () => void;
   /** Viewer selection that the next prompt will be about. */
-  focus: { id: string; label: string } | null;
+  focus: FocusItem[];
   onClearFocus: () => void;
+  onRemoveFocus: (id: string) => void;
   /** Key of the model in the workspace (`<session>:v<n>.ifc`). */
   viewing: string | null;
   onView: (v: Version) => void;

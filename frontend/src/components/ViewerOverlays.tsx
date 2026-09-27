@@ -77,6 +77,7 @@ interface InfoProps {
   picked: Picked | null;
   facts: Facts | null;
   properties: PropertySet[];
+  selectedCount: number;
   onClear: () => void;
   width: number;
   height: number;
@@ -84,7 +85,7 @@ interface InfoProps {
   onResetSize: () => void;
 }
 
-export function InfoCard({ fileName, schema, picked, facts, properties, onClear, width, height, onResize, onResetSize }: InfoProps) {
+export function InfoCard({ fileName, schema, picked, facts, properties, selectedCount, onClear, width, height, onResize, onResetSize }: InfoProps) {
   return (
     <div className="float info-card" style={{ width }}>
       {/* Anchored bottom-left, so the card grows to the right and upwards from its top-right corner.
@@ -102,6 +103,9 @@ export function InfoCard({ fileName, schema, picked, facts, properties, onClear,
               <div className="info-sub" title={facts?.title ?? picked.name ?? picked.type}>{facts?.title ?? `${picked.type.replace(/^Ifc/, "")} ${picked.tag || picked.name}`}</div>
               <button className="icon-btn tiny" title="Clear selection" onClick={onClear}><X size={14} /></button>
             </div>
+            {selectedCount > 1 && (
+              <div className="muted small info-more">+ {selectedCount - 1} more selected · shift-click to add or remove</div>
+            )}
             {facts && facts.rows.length > 0 && (
               <dl className="kv facts">
                 {facts.rows.map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}
@@ -122,7 +126,7 @@ export function InfoCard({ fileName, schema, picked, facts, properties, onClear,
             <div className="guid">{picked.globalId}</div>
           </>
         ) : (
-          <div className="muted small">Click an element to inspect it and to make the next prompt about it. Clicking a floor picks the room.</div>
+          <div className="muted small">Click an element to inspect it and to make the next prompt about it. Clicking a floor picks the room. Shift-click to select several.</div>
         )}
       </div>
     </div>

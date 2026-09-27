@@ -283,9 +283,14 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
           });
           return;
         }
-        case "focus":
-          child(group("brief"), `Working on ${String(d.text ?? "the selection").replace(/ \((wall|room) id [^)]*\)/, "")}`, null);
+        case "focus": {
+          // One selected element reads as a sentence; several (shift-click) as a count with one line each.
+          const plain = (s: string) => s.replace(/ \((wall|room) id [^)]*\)/, "");
+          const lines = String(d.text ?? "the selection").split("\n");
+          if (lines.length > 1) child(group("brief"), `Working on ${lines.length - 1} selected elements`, lines.slice(1).map(plain).join("\n"));
+          else child(group("brief"), `Working on ${plain(lines[0])}`, null);
           return;
+        }
         case "approach":
           if (typeof d.approach === "string") hooks.onApproach?.(d.approach);
           return;

@@ -32,7 +32,7 @@ from pydantic import ValidationError
 
 import config
 from core.checks import CheckResult, check, score, unmet_lines
-from core.context import describe_design, describe_focus
+from core.context import describe_design, describe_selection
 from core.coordinate import coordinate, errors, fix_lines
 from core.derive import DesignError, analyze, derive
 from core.guids import GuidMap, prune_guids
@@ -317,7 +317,7 @@ def _persist(store: Store, project_id: str, spec: BuildingSpec, guids: GuidMap, 
 
 
 def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_version: int | None = None,
-               emit: Emit = _noop, focus: str | None = None, attached: Sequence[ImageAttachment] = ()) -> VersionData:
+               emit: Emit = _noop, focus: str | Sequence[str] | None = None, attached: Sequence[ImageAttachment] = ()) -> VersionData:
     if not prompt.strip():
         raise PipelineError("prompt is empty")
     head = store.head(project_id)
@@ -330,10 +330,12 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
     notes: list[str] = []
     if head is not None and not editing:
         notes.append("the previous version had no design record (older pipeline); the model started from an empty design")
-    # A viewer selection travels as a spec element id; the model sees it in words, with the ids it can act on.
-    focus_text = describe_focus(design, focus) if focus and focus.strip() and editing else None
+    # A viewer selection travels as spec element ids (one click, or several with shift-click); the model sees
+    # them in words, with the ids it can act on.
+    focus_ids = [i.strip() for i in ([focus] if isinstance(focus, str) else focus or []) if i and i.strip()]
+    focus_text = describe_selection(design, focus_ids) if focus_ids and editing else None
     if focus_text:
-        emit("focus", f"selected: {focus_text}", {"id": focus, "text": focus_text})
+        emit("focus", f"selected: {focus_text}", {"id": focus_ids[0], "ids": focus_ids, "text": focus_text})
     # Attachments belong to this prompt only: they are kept with the version, not carried into later edits.
     stored_images = [store.save_attachment(project_id, image) for image in attached]
     if attached:
