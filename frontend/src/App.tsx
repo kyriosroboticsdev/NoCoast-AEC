@@ -6,16 +6,14 @@ import { ExportDialog } from "./components/ExportDialog";
 import { Home } from "./components/Home";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
-import { Workspace, type Tab } from "./components/Workspace";
+import { Workspace } from "./components/Workspace";
 import * as platform from "./platform";
 import {
   addMessage, patchRun, SESSIONS_KEY, uid, upsertStep, useSessions, type Session, type TraceStep,
 } from "./state/sessions";
 import { stageTracer, type Preview } from "./state/trace";
 import { runtime, toTurn, turnId } from "./turns";
-import {
-  BimViewer, type ElementRow, type ElementSummary, type LevelNode, type ModelStats, type PropertyGroup,
-} from "./viewer/BimViewer";
+import { LegacyViewer, type Picked, type PropertySet } from "./viewer/LegacyViewer";
 
 const SAMPLE_URL = "samples/sample-house.ifc";
 
@@ -42,20 +40,15 @@ export default function App() {
 
   // --- viewer ---------------------------------------------------------------
   const hostRef = useRef<HTMLDivElement>(null);
-  const viewerRef = useRef<BimViewer | null>(null);
+  const viewerRef = useRef<LegacyViewer | null>(null);
   const [viewerReady, setViewerReady] = useState(false);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const loadedKey = useRef<string | null>(null); // sync copy, avoids double loads
   const [progress, setProgress] = useState<number | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [stats, setStats] = useState<ModelStats | null>(null);
-  const [levels, setLevels] = useState<LevelNode[]>([]);
-  const [rows, setRows] = useState<ElementRow[] | null>(null);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [selected, setSelected] = useState<ElementSummary | null>(null);
-  const [properties, setProperties] = useState<PropertyGroup[]>([]);
+  const [picked, setPicked] = useState<Picked | null>(null);
+  const [properties, setProperties] = useState<PropertySet[]>([]);
   const [roomsVisible, setRoomsVisible] = useState(false);
-  const [treeVersion, setTreeVersion] = useState(0);
 
   // --- chrome ---------------------------------------------------------------
   const [options, setOptions] = useState<platform.LaunchOptions | null>(null);
@@ -66,8 +59,6 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [assistantOpen, setAssistantOpen] = useState(true);
-  const [treeOpen, setTreeOpen] = useState(false);
-  const [tab, setTab] = useState<Tab>("model");
   const [exporting, setExporting] = useState<api.Version | null>(null);
   // Viewer selection sent with the next prompt as `focus` ("add a window" → on the selected wall).
   const [focus, setFocus] = useState<{ id: string; label: string } | null>(null);
@@ -75,21 +66,17 @@ export default function App() {
 
   useEffect(() => {
     if (!hostRef.current || viewerRef.current) return;
-    const viewer = new BimViewer();
+    const viewer = new LegacyViewer(hostRef.current);
     viewerRef.current = viewer;
-    (window as unknown as { __viewer: BimViewer }).__viewer = viewer; // debug / smoke-test handle
-    viewer.setCategoryVisible("IFCSPACE", false); // room volumes hide the building
+    (window as unknown as { __viewer: LegacyViewer }).__viewer = viewer; // debug / smoke-test handle
     viewer.onSelect = async (sel) => {
-      setSelectedId(sel?.localId ?? null);
-      const summary = sel ? await viewer.elementSummary(sel.localId) : null;
-      setSelected(summary);
-      setFocus(summary?.specId ? { id: summary.specId, label: `${summary.name} · ${summary.category}${summary.level ? ` · ${summary.level}` : ""}` } : null);
-      setProperties(sel ? await viewer.properties(sel.localId) : []);
+      setPicked(sel);
+      // Generated models carry the spec element id in Tag; that is what the backend understands as focus.
+      viewer.highlight(sel?.tag || null);
+      setFocus(sel?.tag ? { id: sel.tag, label: `${sel.name || sel.tag} · ${sel.type.replace(/^IFC/i, "").toLowerCase()}` } : null);
+      setProperties(sel ? await viewer.properties(sel.expressID) : []);
     };
-    viewer.init(hostRef.current).then(() => setViewerReady(true), (e) => {
-      setLoadError(`Viewer failed to start: ${e}`);
-      platform.report({ status: "error", error: String(e) });
-    });
+    setViewerReady(true);
     platform.launchOptions().then((o) => {
       api.setBackendUrl(o.backendUrl);
       setOptions(o);
@@ -127,33 +114,22 @@ export default function App() {
     loadedKey.current = key;
     setLoadError(null);
     setProgress(0);
-    setSelectedId(null);
-    setSelected(null);
+    setPicked(null);
     setProperties([]);
-    setStats(null);
-    setRows(null);
-    await v.loadIfc(bytes, name, (p) => { setProgress(p); onProgress?.(p); }, opts);
+    await v.loadIfc(bytes, name, (p) => { setProgress(p); onProgress?.(p); }, !!opts.keepCamera);
     const head = new TextDecoder().decode(bytes.subarray(0, 4000));
     const schema = head.match(/FILE_SCHEMA\s*\(\s*\(\s*'([^']+)'/i)?.[1] ?? "";
-    setLevels(await v.levels());
-    setTreeVersion((n) => n + 1);
     setLoaded({ key, name, schema, bytes });
     setProgress(null);
-    const s = await v.stats();
-    setStats(s);
-    return s ?? { elements: 0, levels: 0, triangles: 0, extent: [0, 0, 0] as [number, number, number] };
+    return { levels: v.storeys().length };
   }, []);
 
   const clearModel = useCallback(async () => {
     loadedKey.current = null;
     setLoaded(null);
-    setLevels([]);
-    setStats(null);
-    setRows(null);
-    setSelectedId(null);
-    setSelected(null);
+    setPicked(null);
     setProperties([]);
-    await viewerRef.current?.clear();
+    viewerRef.current?.clear();
   }, []);
 
   // Switching sessions loads that session's model and registers its version turn cards.
@@ -185,10 +161,6 @@ export default function App() {
     })();
   }, [viewerReady, active?.id, active?.model?.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (tab === "data" && loaded && rows === null) viewerRef.current!.elementRows().then(setRows);
-  }, [tab, loaded, rows]);
-
   // --- actions ------------------------------------------------------------------
 
   /**
@@ -216,20 +188,18 @@ export default function App() {
       };
     };
     // Previews stream in while the model works: load only the newest pending one, never after the
-    // final version arrived, and keep the camera so the building grows in place.
+    // final version arrived. The viewer keeps the camera and fades changed elements; re-frame only when
+    // the model clearly outgrows what was framed (the first preview can be a single riser).
     let finalArrived = false;
     let pending: Preview | null = null;
     let chain = Promise.resolve();
-    const inSession = () => activeRef.current === sid && !!loadedKey.current?.startsWith(`${sid}:`);
-    // The camera follows growth but not small changes: re-frame only when the model's extent clearly
-    // outgrows what was last framed (the first preview can be a single column).
-    const diag = (e: [number, number, number]) => Math.hypot(...e);
     let framed = 0;
-    const growFrame = async (s: { extent: [number, number, number] }) => {
-      const d = diag(s.extent);
+    const inSession = () => activeRef.current === sid && !!loadedKey.current?.startsWith(`${sid}:`);
+    const growFrame = () => {
+      const d = viewerRef.current?.extent() ?? 0;
       if (d > framed * 1.4) {
         framed = d;
-        await viewerRef.current?.fit();
+        viewerRef.current?.fit();
       }
     };
     const queuePreview = (p: Preview) => {
@@ -239,8 +209,8 @@ export default function App() {
         pending = null;
         if (!next || finalArrived || activeRef.current !== sid) return;
         try {
-          const s = await showModel(await api.fetchBytes(next.url), `${next.label}.ifc`, `${sid}:preview`, undefined, { keepCamera: true });
-          await growFrame(s);
+          await showModel(await api.fetchBytes(next.url), `${next.label}.ifc`, `${sid}:preview`, undefined, { keepCamera: true });
+          growFrame();
         } catch {
           // A preview is best effort: the final version replaces it anyway.
         }
@@ -279,20 +249,14 @@ export default function App() {
 
       const name = versionName(version);
       if (activeRef.current === sid) {
-        setTab("model");
         current = step("Downloading the IFC", version.ifc_url);
         const bytes = await api.fetchBytes(version.ifc_url);
         current.done(`${name} · ${Math.round(bytes.length / 1024)} KB`);
 
-        current = step("Loading into the 3D viewer", "converting IFC to fragments");
-        const load = current;
-        let shown = -1;
-        const loaded = await showModel(bytes, name, `${sid}:${name}`, (p) => {
-          const pct = Math.round(p * 100);
-          if (pct >= shown + 10) { shown = pct; load.update(`converting IFC to fragments · ${pct}%`); }
-        }, { keepCamera: inSession() });
-        if (framed > 0) await growFrame(loaded);
-        current.done(`${loaded.levels} levels · ${loaded.elements} elements · ${loaded.triangles.toLocaleString()} triangles`);
+        current = step("Loading into the 3D viewer", "parsing IFC with web-ifc");
+        const loaded = await showModel(bytes, name, `${sid}:${name}`, undefined, { keepCamera: inSession() });
+        if (framed > 0) growFrame();
+        current.done(`${loaded.levels} levels`);
         current = null;
       }
       update(sid, (s) => ({ ...patchRun(aid, { stage: "done", endedAt: Date.now() })(s), model: { name, url: version.ifc_url } }));
@@ -329,7 +293,6 @@ export default function App() {
   const viewVersion = useCallback(async (v: api.Version) => {
     if (!active) return;
     try {
-      setTab("model");
       await showModel(await api.fetchBytes(v.ifc_url), versionName(v), `${active.id}:${versionName(v)}`);
     } catch (e) {
       setProgress(null);
@@ -352,7 +315,6 @@ export default function App() {
     const sid = create(name);
     if (!url) localFiles.current.set(sid, bytes);
     update(sid, addMessage({ id: uid(), role: "assistant", text: `Opened ${name}. Explore it in the viewer, or describe a new building below.` }));
-    setTab("model");
     await showModel(bytes, name, `${sid}:${name}`);
     update(sid, (s) => ({ ...s, model: { name, url } }));
   };
@@ -376,11 +338,10 @@ export default function App() {
     }
   };
 
-  const toggleRooms = async () => {
+  const toggleRooms = () => {
     const next = !roomsVisible;
     setRoomsVisible(next);
-    await viewerRef.current?.setCategoryVisible("IFCSPACE", next);
-    setTreeVersion((n) => n + 1);
+    viewerRef.current?.setRoomsVisible(next);
   };
 
   // Smoke-test hooks (BIM_AUTOLOAD / BIM_PROMPT / BIM_SMOKE_SELECT) once everything is up.
@@ -401,16 +362,12 @@ export default function App() {
         await new Promise((r) => setTimeout(r, 800));
         return platform.report({ status: "ready", screen: "home" });
       } else return;
-      if (select) await viewerRef.current!.selectFirstOf(select);
-      if (smokeTab === "model" || smokeTab === "elements" || smokeTab === "data") setTab(smokeTab);
-      if (smokeTab === "levels") setTreeOpen(true);
+      if (select) viewerRef.current!.selectFirstOf(select);
       if (smokeTab === "trace") (document.querySelector(".reasoning-head") as HTMLElement | null)?.click();
       await new Promise((r) => setTimeout(r, 800));
       platform.report({
         status: "ready",
         model: document.querySelector(".ws-file")?.textContent,
-        levels: [...document.querySelectorAll(".lrow.bold")].map((e) => e.textContent),
-        rows: document.querySelectorAll(".data-scroll tbody tr").length,
         info: document.querySelector(".info-card")?.textContent?.slice(0, 160),
       });
     })().catch((e) => platform.report({ status: "error", error: String(e) }));
@@ -425,8 +382,7 @@ export default function App() {
     ?? (!loaded && active ? "No model in this session yet." : null);
   const v = viewerRef.current;
 
-  // The version shown in the workspace, when it is one of this session's project versions (not a file
-  // opened from disk). Export then goes through the validated, stamped export; otherwise it saves as is.
+  // The version shown in the workspace, when it is one of this session's project versions.
   const shownNumber = Number(loaded?.name.match(/^v(\d+)\.ifc$/)?.[1] ?? NaN);
   const shownVersion = active?.project && loaded?.key.startsWith(`${active.id}:`)
     ? active.messages.map((m) => m.run?.version).find((ver) => ver?.number === shownNumber) ?? null
@@ -434,6 +390,7 @@ export default function App() {
   const onExport = shownVersion
     ? () => setExporting(shownVersion)
     : loaded ? () => platform.saveIfc(loaded.name, loaded.bytes) : null;
+  const focusable = active?.project && loaded?.key.startsWith(`${active.id}:v`) ? focus : null;
 
   return (
     <IfcViewerProvider runtime={runtime}>
@@ -452,20 +409,15 @@ export default function App() {
         <div className="content">
           <Workspace hostRef={hostRef} viewer={viewerReady ? v : null}
             fileName={loaded?.name ?? (active?.model?.name ?? null)} schema={loaded?.schema ?? ""}
-            status={status} progress={progress} tab={tab} setTab={setTab}
-            treeOpen={treeOpen} setTreeOpen={setTreeOpen} treeVersion={treeVersion}
+            status={status} progress={progress}
             onClose={() => { if (active) update(active.id, (s) => ({ ...s, model: undefined })); clearModel(); }}
-            stats={stats} levels={levels} rows={rows} selectedId={selectedId} selected={selected} properties={properties}
-            onSelect={(id) => v?.select(id)}
-            onPick={(id) => { setTab("model"); v?.select(id); }}
-            onVisible={(ids, vis) => v?.setItemsVisible(ids, vis)}
+            picked={picked} properties={properties}
             roomsVisible={roomsVisible} onRooms={toggleRooms} />
           {active && assistantOpen && (
             <Assistant session={active} busy={busy} planners={planners} planner={planner} setPlanner={setPlanner}
-              onSubmit={(t) => generate(active.id, t, active.project && loaded?.key.startsWith(`${active.id}:v`) ? focus : null)}
-              onAttach={openFile}
-              focus={active.project && loaded?.key.startsWith(`${active.id}:v`) ? focus : null}
-              onClearFocus={() => { setFocus(null); void v?.clearSelection(); }}
+              onSubmit={(t) => generate(active.id, t, focusable)} onAttach={openFile}
+              focus={focusable}
+              onClearFocus={() => { setFocus(null); viewerRef.current?.highlight(null); }}
               viewing={loaded?.key ?? null} onView={viewVersion} onRestore={(n) => restore(active.id, n)} />
           )}
           {!active && (
