@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Callable, Protocol
@@ -44,6 +45,34 @@ class Image:
         return base64.b64encode(self.data).decode("ascii")
 
 
+@dataclass(frozen=True)
+class Usage:
+    """Tokens one call used. `input_tokens` is everything the model read, cached or not;
+    `cached_tokens` is the part of it that came from the provider's prompt cache."""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_tokens: int = 0
+    estimated: bool = False     # counted from the text (about 4 characters a token), not by the provider
+
+    def __add__(self, other: "Usage") -> "Usage":
+        return Usage(self.input_tokens + other.input_tokens, self.output_tokens + other.output_tokens,
+                     self.cached_tokens + other.cached_tokens, self.estimated or other.estimated)
+
+    def as_dict(self) -> dict:
+        return {"input_tokens": self.input_tokens, "output_tokens": self.output_tokens, "cached_tokens": self.cached_tokens,
+                "total_tokens": self.input_tokens + self.output_tokens, "estimated": self.estimated}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Usage":
+        return cls(int(d.get("input_tokens") or 0), int(d.get("output_tokens") or 0), int(d.get("cached_tokens") or 0),
+                   bool(d.get("estimated")))
+
+
+def estimate_tokens(text: str) -> int:
+    """A rough count for providers that report none: about four characters a token."""
+    return math.ceil(len(text) / 4)
+
+
 @dataclass
 class LLMRequest:
     system: str
@@ -52,6 +81,7 @@ class LLMRequest:
     schema_name: str        # "program" | "edit" — lets adapters pick a grammar or route
     meta: dict = field(default_factory=dict)  # side channel (raw prompt, current state) for the mock adapter
     images: list[Image] = field(default_factory=list)   # only sent to adapters with `vision`
+    usage: Usage | None = None   # filled in by the adapter when the provider reports token counts
 
     def captioned_text(self) -> str:
         """The user text with the image captions listed, for adapters that attach images without text parts."""

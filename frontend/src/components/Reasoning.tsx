@@ -5,6 +5,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { backendUrl } from "../api/client";
 import type { Run, TracePhase, TraceStep } from "../state/sessions";
+import { describeUsage, formatTokens, runUsage } from "../state/usage";
 
 const PHASE_ICON: Partial<Record<TracePhase, typeof Sparkles>> = {
   brief: ClipboardList,
@@ -46,6 +47,7 @@ export function Reasoning({ run }: { run: Run }) {
   const elapsed = ((run.endedAt ?? now) - (run.startedAt ?? now)) / 1000;
   const current = [...steps].reverse().find((s) => s.status === "running");
   const failed = run.stage === "error";
+  const usage = runUsage(run);
   // What the model is writing this instant beats the last finished step as the "now" line.
   const nowLine = running
     ? run.drafting ?? (current ? `${current.title}${current.detail ? ` — ${current.detail}` : ""}` : null)
@@ -66,6 +68,14 @@ export function Reasoning({ run }: { run: Run }) {
         <span className="reasoning-title">
           <b>{running ? "Working" : failed ? "Stopped" : "Reasoned"}</b>
           <span className="muted"> {running ? "·" : failed ? "after" : "for"} {fmtSeconds(elapsed)}{!running && ` · ${steps.length} steps`}</span>
+          {usage && (
+            <span className="token-count" title={describeUsage({
+              input: usage.input_tokens, output: usage.output_tokens, cached: usage.cached_tokens ?? 0,
+              calls: usage.calls ?? 0, estimated: !!usage.estimated,
+            })}>
+              {usage.estimated ? "~" : ""}{formatTokens(usage.total_tokens)} tokens
+            </span>
+          )}
           {nowLine && <small className="reasoning-now">{nowLine}</small>}
         </span>
         {totalLayers > 0 && (

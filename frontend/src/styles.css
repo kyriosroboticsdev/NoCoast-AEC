@@ -278,6 +278,10 @@ pre.code { margin: 8px 0 0; max-height: 320px; overflow: auto; font-size: 12px; 
 .error-card { display: flex; align-items: flex-start; gap: 8px; background: var(--danger-soft); color: var(--danger); border-radius: 10px; padding: 10px 12px; font-size: 14px; word-break: break-word; }
 .error-card svg { flex: none; margin-top: 3px; }
 .jump { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); width: 36px; height: 36px; border-radius: 50%; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); display: grid; place-items: center; z-index: 3; }
+.session-usage { display: flex; align-items: center; gap: 7px; padding: 0 24px 8px; font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.session-usage svg { flex: none; color: var(--muted); }
+.session-usage b { color: var(--text); font-weight: 600; }
+.token-count { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; background: var(--sunken); border-radius: 999px; padding: 1px 7px; margin-left: 4px; }
 .dock { padding: 0 20px 18px; }
 .dock .composer { border-radius: 20px; }
 

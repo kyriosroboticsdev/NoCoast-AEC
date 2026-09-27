@@ -10,7 +10,7 @@
 // says which `phase` it belongs to. `describe()` below is the fallback for older backends that only
 // sent the raw step. Previews (`partial`) are handed to the caller so the viewer can show the
 // building as it grows; `draft` events are handed over as the live "writing…" line.
-import type { StageEvent } from "../api/client";
+import type { StageEvent, TokenUsage } from "../api/client";
 import { uid, type TracePhase, type TraceStep } from "./sessions";
 
 type Step = Record<string, unknown>;
@@ -69,6 +69,8 @@ interface Hooks {
   onStep?: (step: Step, ok: boolean) => void;
   /** The design strategy, as soon as the model has written it. */
   onApproach?: (text: string) => void;
+  /** The run's token count so far, after every model call. */
+  onUsage?: (usage: TokenUsage) => void;
   /** What the model is writing right now; null when it has landed. */
   onLive?: (text: string | null) => void;
 }
@@ -344,6 +346,7 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
           return;
         }
         case "llm":
+          if (d.usage_total) hooks.onUsage?.(d.usage_total as TokenUsage);
           if (d.provider && lastGroup) setDetail(lastGroup, `${d.provider}${d.model ? ` ${d.model}` : ""} is drawing…`);
           return;
         case "stream":
