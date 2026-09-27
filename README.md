@@ -204,6 +204,16 @@ with a JSON-schema `response_format`: `LLM_BASE_URL=https://api.fireworks.ai/inf
 `LLM_MODEL=accounts/fireworks/models/qwen3p8-max`, `LLM_API_KEY=fw_…`. The same provider covers vLLM,
 LM Studio, a hosted API or a fine-tuned model. **Ollama:** `LLM_PROVIDER=ollama LLM_MODEL=llama3.1`.
 
+**Recorded runs and replay.** Every prompt run is recorded next to its version (`projects/<id>/v<n>.run.json`).
+The home screen lists runs made by a real model under *Recorded runs*; clicking one plays it back ten
+times faster — the model's thinking, every step, the build previews, the screenshots it checked and the
+deliverables — and the session then continues on that project, so the next prompt edits the recorded
+building. `?replay=<project>[:<version>]&speed=` does the same from a URL. `python tools/pack_run.py
+<project> <name>` packs a run into `backend/demo/<name>.zip`; the backend restores every pack in `demo/`
+(`BIM_DEMO_DIR`) at startup, so a machine with no API key can still show a real Claude run.
+`demo/architecture-studio.zip` ships one: a 40-person studio over two floors, 366 elements, 13 of 15 code
+clauses passing, 6½ minutes live.
+
 ## 4. Specifications
 
 ### 4.1 Design — what the LLM builds
