@@ -175,7 +175,10 @@ body.resizing * { cursor: var(--drag-cursor, col-resize) !important; }
 .view-icons button { height: 46px; border-radius: 8px; display: grid; place-items: center; color: var(--text-2); }
 .view-icons button.on { background: var(--accent-soft); color: var(--accent-text); }
 
-.info-card { left: 18px; bottom: 18px; width: 330px; padding: 16px 18px 14px; }
+/* The card itself only positions and sizes; its content scrolls inside, so the corner
+   handle can sit on the edge without the card scrolling sideways or losing the grip. */
+.info-card { left: 18px; bottom: 18px; width: 330px; }
+.info-scroll { padding: 16px 18px 14px; overflow-y: auto; }
 .info-title { font-weight: 650; font-size: 15.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .info-sub { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
 .info-sep { height: 1px; background: var(--line); margin: 12px 0; }
@@ -339,7 +342,7 @@ pre.code { margin: 8px 0 0; max-height: 320px; overflow: auto; font-size: 12px; 
 .section-bar .section-label { min-width: 9.5em; font-variant-numeric: tabular-nums; color: var(--text-2); white-space: nowrap; }
 .section-bar label { display: flex; align-items: center; gap: 5px; white-space: nowrap; color: var(--muted); cursor: pointer; }
 .section-bar input[type="checkbox"] { margin: 0; accent-color: var(--accent); }
-.info-card { max-height: calc(100% - 96px); overflow-y: auto; }
+.info-scroll { max-height: calc(100vh - 230px); }
 .info-head { display: flex; align-items: center; gap: 6px; }
 .info-head .info-sub { flex: 1; min-width: 0; margin: 0; }
 .kv.facts { gap: 5px 12px; margin-top: 8px; font-size: 13px; }
