@@ -23,8 +23,8 @@ def test_build_order_is_phase_grouped_and_covers_every_element():
 
     assert {el.id for el in order} == {el.id for el in spec.elements}  # every element appears exactly once
     kinds = [type(el) for el in order]
-    phase_of = {Slab: 0, Wall: 1, Column: 1, Beam: 1, Stair: 1, Roof: 2, Pipe: 3, Space: 4, Outlet: 5, Panel: 5, Wire: 5,
-                Door: 6, Window: 6, Railing: 6, Fixture: 6, LightFixture: 6}
+    phase_of = {Slab: 0, Wall: 1, Column: 1, Beam: 1, Stair: 1, Roof: 2, Pipe: 3, Space: 5, Outlet: 6, Panel: 6, Wire: 6,
+                Door: 7, Window: 7, Railing: 7, Fixture: 7, LightFixture: 7}
     phases = [phase_of[k] for k in kinds]
     assert phases == sorted(phases)  # foundation -> structure -> roof -> spaces -> details, never out of order
 

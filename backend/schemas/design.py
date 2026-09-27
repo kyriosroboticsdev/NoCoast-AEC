@@ -27,6 +27,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from bricks import Brick, library
+from bricks.place import Placement
 from schemas.bim import FixtureKind, RoofShape, WallMaterial
 
 Side = Literal["N", "S", "E", "W"]
@@ -414,6 +416,16 @@ class CustomShapeDef(BaseModel):
         return None if v is None else _pt(v)
 
 
+class BrickDef(Placement):
+    """One placed brick — from the shared library or the design's own `library` — where it goes (see
+    bricks/place.py: `ref` is any room, wall, element, brick, "site" or "roof" id), and any parameters
+    that differ from its defaults."""
+
+    id: str
+    brick: str = Field(description="Brick id")
+    params: dict[str, float] = Field(default_factory=dict)
+
+
 class BalconyDef(BaseModel):
     id: str
     room: str
@@ -501,6 +513,10 @@ class RoofDef(BaseModel):
     overhang: float = Field(0.3, ge=0, le=1.5)
 
 
+# Collections whose items stand in a room (`.room`) and go when the room does.
+ROOM_OWNED = ("doors", "windows", "stairs", "fixtures", "custom_shapes", "balconies")
+
+
 class Design(BaseModel):
     name: str = "Generated Building"
     description: Optional[str] = None
@@ -511,6 +527,8 @@ class Design(BaseModel):
     stairs: list[StairDef] = Field(default_factory=list)
     fixtures: list[FixtureDef] = Field(default_factory=list)
     custom_shapes: list[CustomShapeDef] = Field(default_factory=list)
+    library: list[Brick] = Field(default_factory=list, description="Bricks the model wrote for this design")
+    bricks: list[BrickDef] = Field(default_factory=list, description="Placed bricks")
     balconies: list[BalconyDef] = Field(default_factory=list)
     columns: list[ColumnDef] = Field(default_factory=list)
     elements: list[FreeDef] = Field(default_factory=list, description="Free-standing walls, slabs, roofs, columns, beams")
@@ -546,11 +564,18 @@ class Design(BaseModel):
         return [r for r in self.rooms if r.level == level_id]
 
     def all_ids(self) -> set[str]:
-        ids = {r.id for r in self.rooms} | {d.id for d in self.doors} | {w.id for w in self.windows}
-        ids |= {s.id for s in self.stairs} | {f.id for f in self.fixtures} | {b.id for b in self.balconies}
-        ids |= {c.id for c in self.columns} | {l.id for l in self.levels} | {e.id for e in self.elements}
-        ids |= {cs.id for cs in self.custom_shapes}
-        return ids
+        return {x.id for attr in ("levels", "rooms", "columns", "elements", "bricks", *ROOM_OWNED) for x in getattr(self, attr)}
+
+    def has_geometry(self) -> bool:
+        """Anything the compiler can turn into IFC: rooms, free structure, placed bricks, or a porch."""
+        return bool(self.rooms or self.elements or self.bricks or self.columns or self.porch or self.custom_shapes)
+
+    def find_brick(self, brick_id: str | None) -> Brick | None:
+        """A brick definition: the design's own first, then the shared library."""
+        if brick_id is None:
+            return None
+        key = brick_id.strip().lower().replace("-", "_").replace(" ", "_")
+        return next((b for b in self.library if b.id == key), None) or library().get(key)
 
     def unique_id(self, base: str) -> str:
         ids = self.all_ids()
@@ -570,6 +595,10 @@ class Design(BaseModel):
 
     def ordered_levels(self) -> list[LevelDef]:
         return sorted(self.levels, key=lambda l: l.index)
+
+    def ground_level(self) -> LevelDef:
+        """The lowest storey above ground (L1), or the first level when there are only basements."""
+        return next((l for l in self.ordered_levels() if l.index >= 0), self.levels[0])
 
     def level_above(self, level_id: str) -> LevelDef | None:
         cur = self.level(level_id)

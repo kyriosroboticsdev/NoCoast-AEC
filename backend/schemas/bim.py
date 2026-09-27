@@ -14,6 +14,9 @@ from typing import Annotated, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
 
+from bricks.geometry import Bounds, Solid
+from bricks.model import Connector, Material, PropertyValue
+
 Point = tuple[float, float]
 
 WallMaterial = Literal["masonry", "concrete", "timber", "plaster", "stone", "glass"]
@@ -214,6 +217,46 @@ class CustomFixture(_Element):
     parts: list[ShapePart] = Field(min_length=1, max_length=12)
 
 
+class Asset(_Element):
+    """A placed brick (bricks/): any IFC element class, drawn from its evaluated solids.
+
+    The solids are in the brick's own frame (its origin at 0, 0, 0); `position` + `elevation` put that
+    origin on the level and `rotation` (about z) then `pitch` (raising the local x axis, for paths that
+    climb) turn it. `bounds` is the solids' box in the brick's frame, `keepout` the boxes nothing else
+    may enter, `path` the start and end it was placed along, if any."""
+
+    type: Literal["asset"] = "asset"
+    level: str
+    brick: str
+    ifc_class: str
+    predefined_type: Optional[str] = None
+    tags: list[str] = Field(default_factory=list)
+    ref: Optional[str] = None
+    position: Point
+    elevation: float = 0.0
+    rotation: float = 0.0
+    pitch: float = 0.0
+    bounds: Bounds
+    solids: list[Solid] = Field(min_length=1)
+    materials: dict[str, Material] = Field(default_factory=dict)
+    params: dict[str, float] = Field(default_factory=dict)
+    connectors: list[Connector] = Field(default_factory=list)
+    properties: dict[str, PropertyValue] = Field(default_factory=dict)
+    keepout: list[Bounds] = Field(default_factory=list)
+    collides: bool = True
+    path: Optional[tuple[tuple[float, float, float], tuple[float, float, float]]] = None
+    note: Optional[str] = None
+
+    @property
+    def size(self) -> tuple[float, float, float]:
+        x0, y0, z0, x1, y1, z1 = self.bounds
+        return (round(x1 - x0, 4), round(y1 - y0, 4), round(z1 - z0, 4))
+
+    @property
+    def load_bearing(self) -> bool:
+        return bool(self.properties.get("load_bearing"))
+
+
 class Railing(_Element):
     type: Literal["railing"] = "railing"
     level: str
@@ -266,14 +309,14 @@ class Wire(_Element):
 
 
 Element = Annotated[
-    Union[Wall, Slab, Roof, Door, Window, Column, Beam, Space, Stair, Fixture, CustomFixture, Railing, Pipe,
+    Union[Wall, Slab, Roof, Door, Window, Column, Beam, Space, Stair, Fixture, CustomFixture, Asset, Railing, Pipe,
           Outlet, LightFixture, Panel, Wire],
     Field(discriminator="type"),
 ]
 
 ELEMENT_ORDER = {"wall": 0, "slab": 1, "space": 2, "column": 3, "beam": 4, "roof": 5, "pipe": 6, "door": 7,
                  "window": 8, "stair": 9, "outlet": 10, "panel": 11, "wire": 12, "fixture": 13, "custom": 13,
-                 "light": 14, "railing": 15}
+                 "asset": 13, "light": 14, "railing": 15}
 
 
 def polygon_area(outline: list[Point]) -> float:

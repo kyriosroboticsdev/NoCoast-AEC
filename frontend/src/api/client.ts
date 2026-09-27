@@ -67,7 +67,7 @@ export interface ProjectDetail {
   versions: Version[];
 }
 
-/** One progress event from the pipeline: program | edit | apply | solve | compile | done | error. */
+/** One progress event from the pipeline: requirements | build | step | partial | compile | done | error. */
 export interface StageEvent {
   stage: string;
   message: string;

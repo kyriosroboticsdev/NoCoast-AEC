@@ -20,10 +20,12 @@ roof from those and compiles them to IFC after every step.
 
 ```
  prompt ──► LLM: REQUIREMENTS checklist  (atomic, typed, "supported" flag)
+        ──► LLM: RESEARCH turns — tool calls into the brick library and skills (search_bricks, get_brick, get_skill …)
         ──► LLM: BUILD STEPS, streamed ──► each complete step ─► apply to DESIGN ─► derive ─► preview IFC ─► viewer
-                                              (room, door, window, stair, furniture, roof …)      ▲     (≤ 1 s apart)
+                                   (room, door, window, stair, brick, roof …)                     ▲     (≤ 1 s apart)
                  rejected steps ─────────────────────────────── fix round (≤ N) ──────────────────┘
-        ──► deterministic CHECK of the design against the checklist ──► unmet → fix round
+        ──► COORDINATE (clashes, connectors, structural spans) + CHECK against the checklist ──► errors/unmet → fix round
+        ──► LOOK: screenshots from camera views the model picks, sent back to it ──► problems it sees → fix round
         ──► derive BuildingSpec (IR) ─► IfcOpenShell compiler (stable GlobalIds) ─► version store ─► viewer
  edit:  the same, starting from the head version's DESIGN; the model emits only the steps that change it
 ```
@@ -49,8 +51,20 @@ backend/
   schemas/requirements.py  Requirement checklist (typed, checkable) extracted before building
   schemas/bim.py        BuildingSpec — the geometric IR: walls/slabs/roofs/doors/windows/columns/beams/spaces/stairs/fixtures/railings
   schemas/ops.py        Raw element ops (UI/scripts escape hatch; stored as design overrides)
+  schemas/phases.py     construction phases, derived from an element's IFC class
   core/derive.py        Design → BuildingSpec: walls from room edges, opening placement, stairs, roofs, balconies, porch
+  core/rooms.py         room geometry shared by derive and placement: wall pieces, sides, fitting a piece against a wall
+  core/derive_bricks.py the building's frames (rooms, site, roof, walls, slabs, placed assets) and brick placement → Asset
+  core/placement.py     candidate placements by mount and tags, and first_fit (the first one that derives without a clash)
   core/checks.py        deterministic verification of a design against its requirements
+  bricks/               the parametric geometry kernel: expr.py (expressions), geometry.py (nodes → solids),
+                        model.py (Brick), place.py (placement against frames), and the JSON library (bricks/library/*.json)
+  skills/               assembly know-how the model reads on demand (skills/library/*.md)
+  core/research.py      the research loop: the model's tool calls into bricks and skills, collected into a toolbox
+  core/look.py          the look loop: screenshots of the model from views it picks, what it sees → a fix round
+  render/               headless renderer: scene.py (IFC → triangles), raster.py (numpy z-buffer), caps.py (plan cuts),
+                        font.py (labels), png.py; schemas/look.py is the View the model picks
+  core/coordinate.py    coordination: clash.py (solid and keep-out clashes), assembly.py (connectors), structure.py (spans)
   core/stream.py        apply steps as they stream; worker thread compiles previews (geometry-checks only what changed)
   core/pipeline.py      the run: requirements → build stream → fix rounds → check → compile → version
   core/ops.py           apply raw ops to a spec (pure, cascading deletes, re-validates)
@@ -91,7 +105,7 @@ cd backend
 pip install -r requirements.txt
 cp .env.example .env            # optional; defaults to the mock LLM
 python main.py                  # http://127.0.0.1:8765
-python -m pytest                # 104 tests, ~19 s
+python -m pytest                # 348 tests, ~40 s
 python tools/eval.py            # accuracy of the configured model on tests/evals/prompts.json
 
 # frontend (once)
@@ -121,6 +135,8 @@ switching provider, model or key takes effect without a restart — only paths a
 | `LLM_MODEL`, `LLM_BASE_URL`, `LLM_API_KEY` | model id / endpoint / key for the chosen provider |
 | `BIM_MAX_REPAIRS` | fix rounds for rejected steps per prompt (default 2) |
 | `BIM_VERIFY_ROUNDS` | fix rounds for unmet requirements per prompt (default 1; 0 = report only) |
+| `BIM_LOOK_ROUNDS`, `BIM_LOOK_TURNS` | visual reviews per prompt (default 1; 0 = off) and camera turns per review (default 3) |
+| `LLM_VISION` | `1`/`0`: whether the model is sent screenshots; default on for `claude`, Anthropic's endpoint and `mock` |
 | `BIM_OUTPUT_DIR`, `BIM_DB_PATH`, `BIM_PORT` | storage and port |
 | `BIM_BACKEND_URL` (Tauri) or `?backend=` (browser) | backend origin for the UI, default `http://127.0.0.1:8765` |
 | `BIM_NO_BACKEND`, `BIM_BACKEND_DIR` (Tauri) | don't spawn the backend / where `backend/` is |
@@ -295,13 +311,13 @@ requirements with a `kind` the checker understands:
 wall on side) · window (count, side) · door (room ↔ room/outside) · stair · furniture (kind, room, count) ·
 roof · feature (garage/porch/balcony/basement) · dimension · material · style · other`
 
-plus `supported: false` for what the builder cannot do (curved walls, pools, elevators …) — those are
+plus `asset` and `structure` (§4.14) and `supported: false` for what the builder cannot do — those are
 listed in the version notes instead of being silently dropped. After the build stream, `check()` runs each
 requirement against the design deterministically (`[met]`, `[UNMET] living room facing south — Living
 Room's exterior sides are N, W`, `[unsupported]`, `[not checked]` for style), the result goes to the step
 log and the version record, and unmet items trigger one fix round with the same build prompt.
 
-The same format is the evaluation set (`tests/evals/prompts.json`, 16 detailed prompts with hand-written
+The same format is the evaluation set (`tests/evals/prompts.json`, 24 detailed prompts with hand-written
 requirements). `python tools/eval.py` runs the real pipeline on each and prints met/checkable per case
 and overall — the number to watch when changing prompts, schemas or models.
 
@@ -371,11 +387,13 @@ ones that no longer apply, with a note). Deleting a wall deletes its openings; l
 ```python
 @dataclass
 class LLMRequest:
-    system: str; user: str; schema: dict; schema_name: str  # "requirements" | "build"
+    system: str; user: str; schema: dict; schema_name: str  # "requirements" | "research" | "build" | "look"
     meta: dict                                              # side channel for the mock only
+    images: list[Image]                                     # PNG + caption each; sent only to vision models
 
 class LLM(Protocol):
     name: str
+    vision: bool                                            # can be shown images (LLM_VISION overrides)
     def complete(self, request: LLMRequest, on_text=None, on_note=None) -> dict: ...
 ```
 
@@ -386,6 +404,9 @@ class LLM(Protocol):
 | `claude` | Anthropic SDK, `output_config.format` json_schema | structured outputs |
 | `ollama` | `/api/chat` with `format: <json schema>` | local models via Ollama |
 | `openai` | `/chat/completions` with `response_format: json_schema` (strict) | Anthropic's compat endpoint, Fireworks, vLLM, LM Studio, fine-tuned models |
+
+Images go after the user text, each introduced by its caption: Anthropic `image` blocks (`claude`), `image_url`
+data-URL parts (`openai`, `llamacpp`), or the message's `images` list with the captions appended (`ollama`).
 
 Every provider receives the schema through `llm/schema.py::strict_schema` (all properties required,
 objects closed, tuples as arrays, `oneOf`→`anyOf`, optionally without numeric bounds). Two prompts exist
@@ -446,9 +467,14 @@ History is linear; `revert/{n}` appends a copy of *n*; `base_version` gives opti
 | `GET /projects/{id}/versions/{n}/ifc` | | the IFC file |
 | `GET /projects/{id}/versions/{n}/spec` | | `{version, spec, design, guids}` |
 | `GET /projects/{id}/versions/{n}/context` | | text — exactly what the LLM sees when editing |
+| `GET /projects/{id}/versions/{n}/render` | `?target=&azimuth=&elevation=&level=&cut=&hide=&position=&look_at=&distance=&ortho=&fov=&width=&height=` | a PNG from any view — the renderer the model looks through; `X-Visible` lists the elements in frame |
+| `GET /projects/{id}/shots/{name}` | | a screenshot the model was shown (linked from the `look` SSE stage) |
 | `GET /projects/{id}/versions/{n}/slices`, `…/gcode` | `?layer_height=` | horizontal slices of the compiled IFC in construction-phase order; slicer-style preview G-code (`slicer/`) |
 | `POST /projects/{id}/versions/{n}/construction`, `GET …/construction/{job}` | | live-build job: one IFC per element in construction order, polled by the viewer (`core/construction.py`) |
 | `POST /plan`, `/build`, `/generate` | | stateless one-shots (scripts, tests) |
+| `GET /bricks` | `?q=&tag=&limit=` | brick search (the same ranking the model's `search_bricks` tool uses) |
+| `GET /bricks/{id}` | | the full brick card; 404 lists the closest ids |
+| `GET /skills`, `GET /skills/{name}` | | skill index; one skill's markdown |
 
 SSE events: `event: <stage>` + `data: {"seq", "t", "stage", "message", "data"}`, stages as in §4.5.
 `done.data` is the version record incl. `ifc_url` and `checks`.
@@ -482,7 +508,112 @@ port (skip with `BIM_NO_BACKEND=1`). A Windows Job Object ties the backend to th
 on a crash or force-quit. The shell also provides native open/save dialogs and raw-bytes
 `read_ifc`/`write_ifc` commands. `src/platform.ts` is the only frontend file that knows about Tauri.
 
-## 4.14 Troubleshooting
+### 4.14 Bricks, skills, research and coordination
+
+Instead of a fixed furniture vocabulary, the model places **bricks**: parametric assets described as
+data, drawn from a library or written by the model itself. Nothing in a brick, or in the kernel that
+evaluates and places it, knows about houses, rooms or disciplines; the building is just one host
+application that supplies frames to place into.
+
+**The kernel** (`bricks/`):
+
+- `expr.py` — a safe expression language for every number: arithmetic, comparisons, `and`/`or`/`not`,
+  `a if c else b`, `min max abs sqrt pow floor ceil round clamp hypot`, trigonometry in degrees, `pi`.
+- `geometry.py` — geometry nodes: `box`, `cylinder` (optionally hollow), `cone`, `sphere`, `extrude`,
+  `revolve` (a profile in (r, z) about +z), `sweep` (a profile along a polyline; a circle becomes a pipe),
+  `loft` (between sections with the same vertex count), `mesh`, and `group`. Profiles are `rect`,
+  `circle`, `ngon`, or `points` with `holes`. Any node takes `at`, `rotate` (degrees), `repeat`
+  (`count`, loop variable), `when` (a condition), `material`, and `subtract` (nodes cut out of it).
+  Evaluation yields extrusions, revolutions, pipes and meshes, each with a transform and its cuts.
+- `model.py` — a `Brick`: `ifc_class` / `predefined_type` (any IFC4 product class), `params`
+  (`default`/`min`/`max`, or `fit` to the space it is placed in: `ref_w`, `ref_d`, `ref_h`, `path_length`),
+  `geometry`, `origin`, `mount`, `elevation`, named `materials`, `connectors` (a free-form kind going in
+  or out), `keepout` volumes, `collides`, and free `properties` (e.g. `load_bearing`, `max_span`).
+- `place.py` — generic placement. The host supplies **frames**: an id, a level, a z range, a footprint
+  (a void to stand in, or a solid to stand on), and sides (a line with an outward normal). A placement names a
+  `ref` frame (or a level) and one of `position`, `side`/`near`/`at`, or `start`/`end`. The mount decides the rest:
+  `rest` stands on the floor of a void or the top of a solid, `fix` backs onto a side at an elevation,
+  `hang` hangs from a ceiling or an underside, and `path` runs from start to end with its length as a param.
+
+The 169 library bricks are JSON cards in `bricks/library/*.json`. The files group them for browsing
+only; search is by words and `tags`. The model writes its own with the `asset` step, stored in
+`Design.library` and validated like a library card:
+
+```json
+{"step": "asset", "definition": "{\"id\": \"planter\", \"name\": \"Planter\", \"ifc_class\": \"IfcFurniture\", \"params\": [...], \"geometry\": [...]}"}
+{"step": "brick", "brick": "planter", "ref": "living", "side": "S", "params": [{"name": "w", "value": 1.2}]}
+{"step": "brick", "brick": "solar_pv_array", "ref": "roof", "params": [{"name": "w", "value": 8}]}
+{"step": "brick", "brick": "hedge", "ref": "site", "start": [-2, -2], "end": [14, -2]}
+```
+
+**The building host** (`core/derive_bricks.py::building_frames`) turns the design into frames:
+each room (a void up to the underside of the slab above, with its walls as sides), `site` (the ground around
+the building, whose sides are the building's outer faces), `roof`, every wall, slab, column and beam,
+and every asset once it is placed, so bricks can stand on, hang from or back onto each other.
+`derive_bricks` places bricks in dependency order and turns each into an `Asset`; `ifc/solids.py` compiles
+every solid kind to parametric IFC geometry (swept solids, revolved solids, swept disks, polygonal face
+sets, and boolean differences for cuts), and `ifc/assets.py` emits the brick's IFC class with per-item
+material styles and `NoCoast_Brick` / `NoCoast_Properties` psets. Construction phases come from the IFC class.
+
+**Skills** (`skills/library/*.md`, 15 of them) are how-to notes: kitchen and bathroom layout, plumbing and
+hot water, HVAC, electrical, fire safety, accessibility, structural spans, energy, site, placing bricks, and
+writing assets.
+
+**Research** (`core/research.py`). Between the checklist and the build, the model gets up to
+`BIM_TOOL_ROUNDS` (default 3) turns of at most 8 tool calls each (`search_bricks`, `get_brick`,
+`check_asset`, `list_skills`, `get_skill`, `check_design`, `structure_report`) or says it is done.
+`check_asset` validates a draft definition and returns its card, so the model can iterate on geometry
+before placing it. Results stream as `research` / `tool` SSE stages and are collected into a toolbox
+(capped at 14k chars) that goes into every build and fix prompt as `LIBRARY`.
+
+**Coordination** (`core/coordinate.py`) runs with the checks after the build:
+
+- `clash.py` — solid overlaps for any pair involving an asset (skipping `collides: false` and
+  load-bearing pairs) and intrusions into keep-out volumes; the stream rejects a clashing brick step
+  immediately;
+- `assembly.py` — every connector kind an asset takes in must be supplied by some asset, or be one of
+  the host's base services; the issue suggests providers from the library;
+- `structure.py` — clear spans against the wall material's limit (timber 6 m, masonry 7, concrete 8,
+  glass 5), beams against their `max_span` property, overhangs over 1 m.
+
+Each issue carries suggested steps (found by `first_fit`, which tries candidate placements by mount and
+tags until one derives without a clash); errors join unmet requirements in the fix round. Requirements gain
+the kinds `asset` (brick, room, count) and `structure`.
+
+### 4.15 Looking at the model — visual self-check
+
+Numbers catch clashes and missing services; they do not catch a fridge facing the wall, a canopy floating
+above its trunk or a model-written asset that does not look like what it should. So after the checks, a
+vision model looks at what it built and picks where to point the camera (`core/look.py`):
+
+```
+ design ─► compile ─► first views: the whole model from the south-west + a plan cut of each level (≤ 3)
+        ─► LLM look turn {views, problems, done} with the latest screenshots attached
+        ─► more views? render them ─► next turn (≤ BIM_LOOK_TURNS)
+        ─► problems ─► fix round with them as "WHAT YOU SAW IN THE SCREENSHOTS" ─► checks again (≤ BIM_LOOK_ROUNDS)
+```
+
+**A view** (`schemas/look.py::View`) is the model's camera: `target` (an element, asset or room id to frame)
+or `look_at` [x, y, z]; `azimuth` (compass bearing it looks from) and `elevation` (90 = a plan), or a
+`position` to stand at (e.g. in a room at eye height 1.6 m); `distance`; `level` (that level and below, cut
+1.5 m above its floor) or an absolute `cut` height; `hide` (IFC classes, ids, `ground`); `ortho`; `fov`.
+
+**The renderer** (`render/`) is headless numpy: the compiled IFC is tessellated once per review
+(`scene.py`), clipped against the near plane and the cut, z-buffered with an element-id buffer, flat-shaded
+with outlines on depth steps, and written as PNG with the standard library (~0.3 s at 1024×768). Section
+cuts get solid caps: the cut's crossing segments per element are polygonized and kept where they are
+inside the solid by winding number (`caps.py`), so a plan shows walls and furniture as dark shapes with
+the door gaps. A targeted element is drawn over anything in front of it and highlighted, so a close-up
+always shows it. Element ids are written where each element is seen, room ids on their floors, and a red
+arrow points north. Each screenshot's caption lists the visible elements with their share of the frame, so
+the model can tie what it sees to ids it can act on. A view that cannot be taken (unknown id or level,
+everything hidden) comes back to the model as text with the ids it could use.
+
+Every screenshot is stored under `output/projects/<id>/shots/` and linked from the `look` SSE stage; the
+reasoning trace shows them inline. `GET …/versions/{n}/render` takes the same view parameters for people.
+Text-only models skip the stage with a note (`LLM_VISION`).
+
+### 4.16 Troubleshooting
 
 Both sides log verbosely so a failure can be diagnosed from two pastes:
 
@@ -504,7 +635,13 @@ shows each reason (usually an edit request the model could not map onto existing
 
 ## 5. Tests
 
-`cd backend && python -m pytest` — 107 tests on the mock LLM, no network: derivation (walls from shared
+`cd backend && python -m pytest` — 400 tests on the mock LLM, no network: the look loop (screenshots sent to
+the model, the views it asks for, what it sees driving a fix round, text-only models skipping it, each
+adapter's image format) and the renderer (plan cuts with solid caps, x-rayed targets, bad views explained,
+the render and screenshot routes) · the geometry kernel (every
+node kind and modifier, every solid kind tessellating in IFC to the kernel's extent), every brick placing with
+its defaults and compiling to valid IFC, model-written assets, clashes, connectors and spans, the research loop and an
+end-to-end prompt with a lift, solar, heat pump, boiler and trees · derivation (walls from shared
 and free edges, opening placement, stairs and wells, roofs over partial footprints, id stability when a
 room moves, basements) · polygons (L-shaped rooms and their wall ids, ambiguous sides, curved walls as one
 faceted wall with a window, open edges and carports, courtyards, `near` errors, free elements with a gate
@@ -525,6 +662,8 @@ compiling. `python tools/eval.py` measures accuracy on the real model.
 | curved walls as one faceted IfcWall | every IFC toolchain copes with a polygon profile; openings in true curved profiles are where they break; the radius is kept in a pset |
 | steps streamed and applied one at a time | small deltas, ≤ 1 s cadence, each rejection is local and explained; nothing invalid is ever rendered |
 | requirements checklist + deterministic checker + fix round | accuracy becomes measurable and unmet detail is fed back instead of lost; unsupported wishes are surfaced |
+| a searchable brick library + skills, not a hard-coded vocabulary | coverage grows by adding JSON cards and markdown, not code; the model looks up what it needs instead of carrying it all in the prompt |
+| coordination issues carry suggested steps | the fix round gets a concrete, already clash-checked placement rather than just a complaint |
 | ids derived from room ids | GlobalIds survive moves and resizes without a diffing step |
 | raw ops kept as overrides | element-level edits from the UI survive later design edits |
 | mock adapter in the tree | the whole system is testable and demoable with no model installed |

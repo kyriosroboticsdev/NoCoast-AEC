@@ -19,6 +19,7 @@ import ifcopenshell.api.style
 import ifcopenshell.api.unit
 
 from core.guids import GuidMap, ensure_guids, key_for_element, key_for_level
+from ifc.solids import Styles
 from schemas.bim import BuildingSpec
 
 SPEC_PSET = "NoCoast_Spec"      # carries the element's spec JSON so our own files can be lifted back losslessly
@@ -77,6 +78,10 @@ class BuildContext:
     products: dict[str, ifcopenshell.entity_instance] = field(default_factory=dict)  # element id -> product
     styles: dict[str, ifcopenshell.entity_instance] = field(default_factory=dict)
     materials: dict[str, ifcopenshell.entity_instance] = field(default_factory=dict)
+    brick_styles: Styles = field(init=False)
+
+    def __post_init__(self):
+        self.brick_styles = Styles(self.model)
 
     def level(self, level_id: str):
         return next(l for l in self.spec.levels if l.id == level_id)

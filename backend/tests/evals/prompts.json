@@ -473,7 +473,7 @@
     ]
   },
   {
-    "id": "unsupported",
+    "id": "pool-and-lift",
     "prompt": "A round two-storey house with a basement, a swimming pool and an elevator, three bedrooms upstairs.",
     "requirements": [
       {
@@ -488,13 +488,13 @@
       },
       {
         "text": "swimming pool",
-        "kind": "other",
-        "supported": false
+        "kind": "asset",
+        "item": "swimming_pool"
       },
       {
         "text": "elevator",
-        "kind": "other",
-        "supported": false
+        "kind": "asset",
+        "item": "passenger_elevator"
       },
       {
         "text": "two storeys",
@@ -880,6 +880,178 @@
       {
         "text": "modern",
         "kind": "style"
+      }
+    ]
+  },
+  {
+    "id": "eco-services",
+    "prompt": "A single-storey eco house with a kitchen, living room and two bedrooms. An air-source heat pump outside, radiators in both bedrooms, solar panels on the roof and an EV charger.",
+    "requirements": [
+      {
+        "text": "single storey",
+        "kind": "storeys",
+        "value": 1
+      },
+      {
+        "text": "a kitchen",
+        "kind": "room",
+        "room": "kitchen"
+      },
+      {
+        "text": "a living room",
+        "kind": "room",
+        "room": "living"
+      },
+      {
+        "text": "two bedrooms",
+        "kind": "room",
+        "room": "bedroom",
+        "value": 2
+      },
+      {
+        "text": "an air-source heat pump",
+        "kind": "asset",
+        "item": "air_source_heat_pump"
+      },
+      {
+        "text": "radiators in both bedrooms",
+        "kind": "asset",
+        "item": "radiator",
+        "room": "bedroom",
+        "value": 2
+      },
+      {
+        "text": "solar panels on the roof",
+        "kind": "asset",
+        "item": "solar_pv_array"
+      },
+      {
+        "text": "an EV charger",
+        "kind": "asset",
+        "item": "ev_charger"
+      }
+    ]
+  },
+  {
+    "id": "barn-structure",
+    "prompt": "A single-storey barn conversion: one 12 by 10 metre open-plan living space plus a kitchen and a shower room. Make sure the roof over the big space is properly supported.",
+    "requirements": [
+      {
+        "text": "single storey",
+        "kind": "storeys",
+        "value": 1
+      },
+      {
+        "text": "open-plan living space",
+        "kind": "room",
+        "room": "living"
+      },
+      {
+        "text": "about 120 m² living space",
+        "kind": "area",
+        "room": "living",
+        "value": 120
+      },
+      {
+        "text": "a kitchen",
+        "kind": "room",
+        "room": "kitchen"
+      },
+      {
+        "text": "a shower room",
+        "kind": "room",
+        "room": "bathroom"
+      },
+      {
+        "text": "the roof is properly supported",
+        "kind": "structure"
+      }
+    ]
+  },
+  {
+    "id": "office-fitout",
+    "prompt": "A two-storey office: open-plan office and a meeting room downstairs, two offices upstairs. Sprinklers, MVHR ventilation, a passenger lift and a network rack.",
+    "requirements": [
+      {
+        "text": "two storeys",
+        "kind": "storeys",
+        "value": 2
+      },
+      {
+        "text": "open-plan office downstairs",
+        "kind": "room",
+        "room": "office",
+        "level": "L1"
+      },
+      {
+        "text": "a meeting room downstairs",
+        "kind": "room",
+        "room": "meeting room",
+        "level": "L1"
+      },
+      {
+        "text": "two offices upstairs",
+        "kind": "room",
+        "room": "office",
+        "value": 2,
+        "level": "L2"
+      },
+      {
+        "text": "sprinklers",
+        "kind": "asset",
+        "item": "sprinkler_head"
+      },
+      {
+        "text": "MVHR ventilation",
+        "kind": "asset",
+        "item": "mvhr_unit"
+      },
+      {
+        "text": "a passenger lift",
+        "kind": "asset",
+        "item": "passenger_elevator"
+      },
+      {
+        "text": "a network rack",
+        "kind": "asset",
+        "item": "network_rack"
+      }
+    ]
+  },
+  {
+    "id": "garden",
+    "prompt": "A cottage with a kitchen and a living room, a swimming pool in the garden, three trees, a hedge and a garden shed.",
+    "requirements": [
+      {
+        "text": "a kitchen",
+        "kind": "room",
+        "room": "kitchen"
+      },
+      {
+        "text": "a living room",
+        "kind": "room",
+        "room": "living"
+      },
+      {
+        "text": "a swimming pool",
+        "kind": "asset",
+        "item": "swimming_pool"
+      },
+      {
+        "text": "three trees",
+        "kind": "asset",
+        "item": "tree",
+        "value": 3
+      },
+      {
+        "text": "a hedge",
+        "kind": "asset",
+        "item": "hedge"
+      },
+      {
+        "text": "a garden shed",
+        "kind": "asset",
+        "item": "garden_shed"
       }
     ]
   },

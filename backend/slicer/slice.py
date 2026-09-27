@@ -18,20 +18,10 @@ from dataclasses import dataclass
 import ifcopenshell
 import ifcopenshell.geom
 
+from schemas.phases import PHASES, phase_for
+
 Point3 = tuple[float, float, float]
 Segment = tuple[float, float, float, float]  # x1, y1, x2, y2
-
-# Construction phases, in build order — mirrors ifc/builder.py's BUILDERS.
-PHASES: list[tuple[str, tuple[str, ...]]] = [
-    ("foundation", ("IfcSlab",)),
-    ("structure", ("IfcWall", "IfcColumn", "IfcBeam", "IfcStair")),
-    ("roof", ("IfcRoof",)),
-    ("plumbing", ("IfcPipeSegment", "IfcCableCarrierSegment")),  # water riser + electrical conduit stack, both rough-in
-    ("spaces", ("IfcSpace",)),
-    ("electrical", ("IfcOutlet", "IfcElectricDistributionBoard", "IfcCableSegment")),
-    ("details", ("IfcDoor", "IfcWindow", "IfcRailing", "IfcFurniture", "IfcSanitaryTerminal", "IfcElectricAppliance",
-                "IfcBuildingElementProxy", "IfcLightFixture")),
-]
 
 
 @dataclass
@@ -41,23 +31,14 @@ class LayerSlice:
     segments: list[Segment]
 
 
-def _phase_of(product: ifcopenshell.entity_instance) -> str | None:
-    for label, classes in PHASES:
-        if any(product.is_a(cls) for cls in classes):
-            return label
-    return None
-
-
 def _triangles_by_phase(model: ifcopenshell.file) -> dict[str, list[tuple[Point3, Point3, Point3]]]:
     settings = ifcopenshell.geom.settings()
     settings.set(settings.USE_WORLD_COORDS, True)
-    buckets: dict[str, list] = {label: [] for label, _ in PHASES}
+    buckets: dict[str, list] = {label: [] for label in PHASES}
     for product in model.by_type("IfcProduct"):
         if not product.Representation or product.is_a("IfcOpeningElement"):
             continue
-        label = _phase_of(product)
-        if label is None:  # not a NoCoast-compiled class (foreign import); not part of any build phase
-            continue
+        label = phase_for(product.is_a())
         shape = ifcopenshell.geom.create_shape(settings, product)
         verts, faces = shape.geometry.verts, shape.geometry.faces
         tris = buckets[label]
@@ -102,7 +83,7 @@ def slice_model(model: ifcopenshell.file, layer_height: float = 0.2) -> list[Lay
     spaces, and details — each phase swept bottom to top over its own height range."""
     buckets = _triangles_by_phase(model)
     layers: list[LayerSlice] = []
-    for label, _ in PHASES:
+    for label in PHASES:
         triangles = buckets[label]
         if not triangles:
             continue

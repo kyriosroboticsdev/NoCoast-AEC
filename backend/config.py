@@ -26,12 +26,13 @@ LLM_TIMEOUT = 600.0
 MAX_REPAIRS = 2
 ANTHROPIC_WORKSPACE_ID = LLAMA_SERVER = LLM_MODELS_DIR = ""
 LOG_LEVEL = "INFO"
+LLM_VISION: bool | None = None
 
 
 def reload() -> None:
     """Re-read .env (values there override the process environment) and refresh the LLM settings."""
     global LLM_PROVIDER, LLM_MODEL, LLM_BASE_URL, LLM_API_KEY, LLM_TIMEOUT, MAX_REPAIRS
-    global ANTHROPIC_WORKSPACE_ID, LLAMA_SERVER, LLM_MODELS_DIR, LOG_LEVEL
+    global ANTHROPIC_WORKSPACE_ID, LLAMA_SERVER, LLM_MODELS_DIR, LOG_LEVEL, LLM_VISION
     load_dotenv(ENV_FILE, override=True)
     LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "mock")           # mock | llamacpp | claude | ollama | openai
     LLM_MODEL = os.environ.get("LLM_MODEL", "")
@@ -43,6 +44,8 @@ def reload() -> None:
     LLAMA_SERVER = os.environ.get("LLAMA_SERVER", "")        # llamacpp provider: path to llama-server(.exe)
     LLM_MODELS_DIR = os.environ.get("LLM_MODELS_DIR", "")    # llamacpp provider: folder with .gguf files
     LOG_LEVEL = os.environ.get("BIM_LOG_LEVEL", "INFO")
+    vision = os.environ.get("LLM_VISION", "").strip().lower()   # 1/0 overrides whether the model is sent screenshots
+    LLM_VISION = None if not vision else vision in ("1", "true", "yes", "on")
 
 
 reload()

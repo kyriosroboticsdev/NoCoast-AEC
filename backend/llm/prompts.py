@@ -1,13 +1,27 @@
-"""System prompts for the three LLM calls. Versioned with the schemas they describe."""
+"""System prompts for the LLM calls (checklist, research, build). Versioned with the schemas they describe.
 
-REQUIREMENTS_SYSTEM = """You are an architect's assistant. Break the user's request into a checklist of atomic
+The system prompts end with the brick and skill indexes, so they are built on first use (and cached)
+rather than at import: importing the LLM layer never loads the library.
+"""
+
+import textwrap
+from collections.abc import Sequence
+from functools import lru_cache
+
+from bricks import MOUNT_HINTS, library
+from schemas.look import MAX_VIEWS, View
+from schemas.research import TOOL_HELP
+from skills import skillbook
+
+_REQUIREMENTS = """You are an architect's assistant. Break the user's request into a checklist of atomic
 REQUIREMENTS as JSON matching the given schema. Each requirement is one verifiable statement with a `kind`:
 
   storeys (value=n) | room (room=name or kind keyword, value=count, level optional) | room_level (room, level)
   area (room, value=m²) | adjacent (room, room2) | orientation (room, side) | window (room, value=count, side optional)
   door (room, room2 or 'outside') | stair (room optional) | furniture (item, room optional, value=count)
   roof (item=flat|gable|hip) | feature (item=garage|porch|balcony|open_plan) | dimension (value, value2 in metres)
-  material (item=masonry|concrete|timber|plaster|stone|glass) | style | other
+  material (item=masonry|concrete|timber|plaster|stone|glass) | asset (item=brick id from the LIBRARY below, room
+  optional, value=count) | structure (it must stand up: no unsupported spans or overhangs) | style | other
 
 Rules:
 - Split compound sentences: "three bedrooms and two bathrooms upstairs" → room bedroom value=3 level=L2; room bathroom value=2 level=L2.
@@ -20,14 +34,33 @@ Rules:
   footbridge (feature item=bridge: deck slab on piers with girders and parapets, no rooms), doors, windows, straight
   stairs, furniture and appliances (from a fixed catalog, or a custom shape built from box/round solids for
   anything the catalog lacks — a round table, an odd bench), balconies, a porch, flat/gable/hip roofs, exterior
-  wall materials.
-  It CANNOT do: split levels, pools, landscaping, elevators, specific brands, HVAC,
-  interior finishes/colours. Mark such requirements supported=false and keep them in the list.
+  wall materials, every brick in the LIBRARY below, and any other object with a shape — the builder writes its
+  own parametric assets for whatever the library lacks. Something the user names that a brick covers is kind=asset
+  with item=<brick id>, e.g. "a heat pump" → asset item=air_source_heat_pump; any other object is kind=asset with
+  item=<its name in lower_snake_case>.
+  It CANNOT do: split levels, specific brands, interior finishes/colours. Mark such requirements supported=false and
+  keep them in the list.
 - Aesthetic wishes ("modern", "cozy") are kind=style; they are not checked.
 - `summary`: one sentence describing the building.
-Return only the JSON object."""
+Return only the JSON object.
 
-BUILD_SYSTEM = """You are an architect building a 3D model step by step. Reply with JSON matching the given schema:
+LIBRARY (brick ids):
+"""
+
+_RESEARCH_HEAD = """You are an architect about to build a 3D model. Before building you may look things up in a
+library of parametric assets ("bricks") and in skills (short playbooks on writing and assembling them).
+Reply with JSON matching the given schema: {"calls": [ … ], "done": true|false}. Tools:
+"""
+
+_RESEARCH_TAIL = """Look up what the request needs beyond plain rooms. Read the card of every brick you will place and the skills
+involved. When nothing in the library fits, draft the asset yourself and check it with check_asset. Everything
+you read is given to you again when you build. Set done=true (with no calls) once you know enough; a plain house
+with furniture needs no research.
+
+SKILLS:
+"""
+
+_BUILD_HEAD = """You are an architect building a 3D model step by step. Reply with JSON matching the given schema:
 {"steps": [ ... ]}. Each step is applied the moment it is complete and the user watches the building grow, so emit
 steps in construction order: building → levels → ONE layout step per storey holding all of its rooms (L1 first)
 → roof → doors → windows → stairs → furniture → notes. Put the reasoning into the order and the numbers, not
@@ -76,7 +109,35 @@ Steps (fields not listed are left null):
         a slab hangs below it, a beam below elevation+level height, a wall/column stands on it. A level may hold only
         free elements and no rooms, and a whole design may be a structure with no rooms (a footbridge = piers,
         two girders, a deck slab, two parapet walls); the room rules below then do not apply.
-  {"step":"remove","id"}       {"step":"note","text"}
+  {"step":"asset","definition":"<JSON>"}   define a parametric asset of your own (see ASSETS); place it with brick steps
+  {"step":"brick","brick":<brick or asset id>,"id","ref","level","side"|"near"|"position","at","rotation","start","end",
+        "params":[{"name","value"}, …]}   place a brick from the LIBRARY or an asset you defined. `ref` is what it goes
+        in or on: a room id, a wall/slab/column/beam id, another brick's id, "roof", "site" (the ground around the
+        building) or a level id; null = the level. In a room it keeps clear of the walls; `side`/`near` put its back
+        against that side, `at` 0..1 along it; `position` [x,y] (or [x,y,z]) is exact; nothing = the middle.
+        params: only the ones that differ from the card's defaults, in range. Its mount decides the height:
+"""
+
+_BUILD_TAIL = """  {"step":"remove","id"}       {"step":"note","text"}
+ASSETS: an asset is a JSON object — {"id":"lower_snake","name","description","tags":[…],"ifc_class":"IfcFurniture"
+  (any concrete IFC4 element class; IfcBuildingElementProxy when unsure),"predefined_type":null,"params":{"w":[default,
+  min,max], …},"geometry":[nodes],"origin":[x,y,z] (the point that lands on the placement point; the brick's back is
+  its min y),"mount":"rest|fix|hang|path","elevation":0,"materials":{"key":{"color":[r,g,b] 0..1,"opacity":1,"name"}},
+  "connectors":[{"kind":"power","direction":"in|out"}],"keepout":[nodes],"collides":true,"properties":{…}}.
+  Every number may be an expression over the params: + - * / // % **, comparisons, and/or/not, a if c else b,
+  min max abs sqrt pow floor ceil round clamp hypot, sin cos tan asin acos atan atan2 (degrees), pi. A param
+  with "fit":"ref_h" (or ref_w, ref_d, path_length) takes the size of what it is placed in when not given; a path
+  asset needs a param with "fit":"path_length" and runs along local +x.
+  Nodes (sizes ≤ 0 are skipped, so a param can switch a part off):
+    {"shape":"box","size":[x,y,z]} from its min corner   {"shape":"cylinder","radius","height","inner"} axis +z
+    {"shape":"cone","radius","height","top_radius"}   {"shape":"sphere","radius"}
+    {"shape":"extrude","profile":P,"height"}   {"shape":"revolve","profile":P in (r,z),"angle":360} about +z
+    {"shape":"sweep","profile":P,"path":[[x,y,z],…]}   {"shape":"loft","sections":[{"z","profile":P},…]} (same vertex count)
+    {"shape":"mesh","vertices":[[x,y,z],…],"faces":[[0,1,2],…]}   {"shape":"group","children":[nodes]}
+  any node: "at":[x,y,z], "rotate":[rx,ry,rz] degrees, "repeat":{"count","var":"i"} (i in its expressions),
+  "when":<expr>, "material":<key>, "subtract":[nodes] (cut out of it).
+  P (profiles): {"rect":[w,d],"centered":true}, {"circle":r,"inner":r2}, {"ngon":n,"radius":r} (each with optional
+  "at":[x,y]), {"points":[[x,y],…],"holes":[[[x,y],…]]} or a bare list of points.
 Room ids are the lower-case, hyphenated names ("Bedroom 2" → "bedroom-2"); use them in room/to/remove.
 
 Rules:
@@ -84,8 +145,8 @@ Rules:
   room needs a window on an exterior side. Kitchens get a counter, fridge, oven and sink; bathrooms a toilet, washbasin and shower
   or bathtub; bedrooms a bed and wardrobe; living rooms a sofa; dining rooms a table; garages a car.
 - Give a garage a door to the house; the garage door itself is added automatically.
-- If the user asks for a specific piece the furniture catalog doesn't have (a round table, a built-in bench, an
-  odd-shaped counter), use a custom step instead of the closest catalog kind.
+- If the user asks for something neither the furniture catalog nor the LIBRARY has, write an asset for it (then
+  place it with a brick step) instead of settling for the closest kind. A custom step is enough for simple boxy pieces.
 - Two storeys need a stair, and the hall/landing it stands in must be at least 5 m long along the stair's side.
 - Satisfy every requirement in the checklist; if one is impossible, say so in a note step.
 - When EDITING an existing design: emit only the steps that change it. A room step with an existing id replaces
@@ -94,10 +155,73 @@ Rules:
 - Steps are applied one at a time and rooms may never overlap, not even between two steps. To rearrange several
   rooms on a storey use ONE layout step for that storey instead of moving rooms one by one. Openings and furniture
   that no longer fit after a room moves are dropped automatically; re-add the ones you still want.
+- Bricks: use one whenever the request names something a brick covers (a heat pump, a lift, solar panels, a beam,
+  a tree). Bricks may not overlap other pieces; what a brick needs (its `in` connectors: hot water, heating, supply
+  air, data, gas …) must be supplied by another brick in the design (cold water, drainage and power are always
+  there once the building has rooms). Rooms wider than the
+  walls can span (about 7 m, timber 6, concrete 8) need a beam; upper storeys overhanging by more than 1 m need columns.
+  The design is checked for all of this after building and problems come back to you with suggested steps.
+- Emit asset steps before the brick steps that place them, and brick steps after furniture, in construction order:
+  structure, services, equipment, site last. A brick placed on another brick comes after it.
+Return only the JSON object.
+
+LIBRARY (brick ids; a LIBRARY section in the user message has the cards you looked up):
+"""
+
+
+@lru_cache(maxsize=1)
+def requirements_system() -> str:
+    return _REQUIREMENTS + library().index_text()
+
+
+@lru_cache(maxsize=1)
+def research_system() -> str:
+    tools = "".join(f"  {line}\n" for line in TOOL_HELP.values())
+    return (_RESEARCH_HEAD + tools + _RESEARCH_TAIL + skillbook().index_text() + "\n\nLIBRARY (brick ids):\n"
+            + library().index_text())
+
+
+_LOOK = """You are checking a 3D model you just built by looking at rendered screenshots of it. Coordinates are
+metres: x east, y north, z up; each level's floor is at its elevation. In a screenshot, element ids are written
+where the element is seen, room ids on their floors, and a red arrow points north; a plan cut draws what it cuts
+through as dark solid shapes, and a targeted element is highlighted in orange and drawn through anything in front
+of it. Each screenshot's caption lists the elements it shows with their share of the frame.
+
+Look for what the numbers cannot tell you: parts floating above or sunk into what they should stand on, things
+facing the wrong way or backed onto the wrong side, overlaps, blocked doors and paths, gaps, assets that do not
+look like what they should (proportions, missing or misplaced parts), anything the request asked for that you
+cannot see. Only report what you can see; the checklist is checked separately.
+
+Reply with ONE JSON object: {"views": [ … ], "problems": [ … ], "done": true|false}
+- views: up to %d more screenshots when you need a closer or different look. A view is an object with:
+%s
+  e.g. {"target": "fridge-kitchen", "azimuth": 180, "elevation": 20} or {"level": "L1", "elevation": 90} (a plan) or
+  {"position": [2, 1, 1.6], "look_at": [5, 3, 1]} (standing in a room).
+- problems: what is wrong, each naming the element ids and the fix in terms of build steps, e.g. "fridge-kitchen
+  blocks door-kitchen-hall: move it to side E". Set done=true with them.
+- done: true when the model looks right (no problems) or when you have listed the problems.
 Return only the JSON object."""
+
+
+def look_system() -> str:
+    fields = "".join(textwrap.fill(f"{name}: {f.description}", 116, initial_indent="    ", subsequent_indent="      ") + "\n"
+                     for name, f in View.model_fields.items())
+    return _LOOK % (MAX_VIEWS, fields.rstrip("\n"))
+
+
+@lru_cache(maxsize=1)
+def build_system() -> str:
+    mounts = "".join(textwrap.fill(f"{name} = {hint}", 116, initial_indent="          ", subsequent_indent="            ") + "\n"
+                     for name, hint in MOUNT_HINTS.items())
+    return _BUILD_HEAD + mounts + _BUILD_TAIL + library().index_text()
 
 FIX_INTRO = "SOME STEPS WERE REJECTED. The current design is shown above; emit ONLY steps that fix the problems below:"
 UNMET_INTRO = "The design does not yet satisfy every requirement. The current design is shown above; emit ONLY steps that fix these:"
+ISSUES_INTRO = ("COORDINATION ISSUES (clashes, missing services, unsupported spans). Emit ONLY steps that resolve them; the "
+                "suggested steps work, adjust them if you know better:")
+
+
+SEEN_INTRO = "WHAT YOU SAW IN THE SCREENSHOTS of the model. Emit ONLY steps that fix these:"
 
 
 FOCUS_INTRO = "SELECTED IN THE VIEWER: "
@@ -113,9 +237,33 @@ def requirements_user_message(prompt: str, errors: list[str] | None = None, focu
     return "\n\n".join(parts)
 
 
-def build_user_message(prompt: str, checklist: list[str], context: str | None, problems: list[str] | None = None,
-                       unmet: list[str] | None = None, focus: str | None = None) -> str:
+def research_user_message(prompt: str, checklist: list[str], context: str | None, log: list[str]) -> str:
+    parts = ["CURRENT DESIGN:\n" + context if context else "CURRENT DESIGN: empty (new building)", "REQUEST:\n" + prompt.strip()]
+    if checklist:
+        parts.append("CHECKLIST:\n- " + "\n- ".join(checklist))
+    if log:
+        parts.append("TOOL RESULTS SO FAR:\n" + "\n\n".join(log))
+    else:
+        parts.append("No tools called yet.")
+    return "\n\n".join(parts)
+
+
+def look_user_message(prompt: str, checklist: list[str], context: str | None, log: list[str], turns_left: int) -> str:
+    parts = ["CURRENT DESIGN:\n" + context if context else "CURRENT DESIGN: empty", "REQUEST:\n" + prompt.strip()]
+    if checklist:
+        parts.append("CHECKLIST:\n- " + "\n- ".join(checklist))
+    parts.append("SCREENSHOTS SO FAR:\n" + ("\n".join(log) if log else "none"))
+    parts.append("The latest screenshots are attached below, in order. "
+                 + (f"You can ask for more views {turns_left} more time(s)." if turns_left else "This is your last look: report problems or say done."))
+    return "\n\n".join(parts)
+
+
+def build_user_message(prompt: str, checklist: list[str], context: str | None, *, focus: str | None = None,
+                       toolbox: str | None = None, problems: Sequence[str] = (), unmet: Sequence[str] = (), issues: Sequence[str] = (),
+                       seen: Sequence[str] = ()) -> str:
     parts = []
+    if toolbox:
+        parts.append("LIBRARY (bricks and skills from your research):\n" + toolbox)
     if context:
         parts.append("CURRENT DESIGN:\n" + context)
     else:
@@ -129,4 +277,8 @@ def build_user_message(prompt: str, checklist: list[str], context: str | None, p
         parts.append(FIX_INTRO + "\n- " + "\n- ".join(problems))
     if unmet:
         parts.append(UNMET_INTRO + "\n- " + "\n- ".join(unmet))
+    if issues:
+        parts.append(ISSUES_INTRO + "\n- " + "\n- ".join(issues))
+    if seen:
+        parts.append(SEEN_INTRO + "\n- " + "\n- ".join(seen))
     return "\n\n".join(parts)

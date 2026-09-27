@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from bricks import library
+from core import structure
 from core.derive import Derived
 from schemas.design import Design, RoomDef, guess_kind, slug
 from schemas.requirements import Requirement
@@ -182,11 +184,31 @@ def _check_one(design: Design, d: Derived, req: Requirement) -> CheckResult:
 
     if k == "furniture":
         kinds = _fixtures_for(req.item)
-        fx = [f for f in design.fixtures if f.kind in kinds]
+        fx = [(f, f.room) for f in design.fixtures if f.kind in kinds]
+        fx += [(b, b.ref) for b in design.bricks if b.brick in kinds or _fixture_kind(design, b.brick) in kinds]
         if req.room:
             ids = {r.id for r in _match_rooms(design, req.room)}
-            fx = [f for f in fx if f.room in ids]
+            fx = [(f, room) for f, room in fx if room in ids]
         return CheckResult(req, "met" if len(fx) >= n else "unmet", f"{len(fx)} {req.item}(s)" + (f" in {req.room}" if req.room else "") + f", wanted {n}")
+
+    if k == "asset":
+        own = {b.id for b in design.library if req.item.strip().lower().replace(" ", "_") in (b.id, b.name.lower().replace(" ", "_"))}
+        wanted = own or library().resolve(req.item)
+        if not wanted:
+            return CheckResult(req, "unmet", f"no brick in the library or the design's assets matches '{req.item}'")
+        placed = [b for b in design.bricks if b.brick in wanted]
+        if req.room:
+            ids = {r.id for r in _match_rooms(design, req.room)}
+            placed = [b for b in placed if b.ref in ids]
+        where = f" in {req.room}" if req.room else ""
+        return CheckResult(req, "met" if len(placed) >= n else "unmet",
+                           f"{len(placed)} of {'/'.join(sorted(wanted)[:3])}{where}, wanted {n}")
+
+    if k == "structure":
+        found = structure.report(design, d)
+        if found:
+            return CheckResult(req, "unmet", "; ".join(i.message for i in found[:3]))
+        return CheckResult(req, "met", f"spans within {structure.span_limit(design):g} m or supported, no unsupported overhangs")
 
     if k == "roof":
         want = (req.item or "").lower()
@@ -276,3 +298,10 @@ def unmet_lines(results: list[CheckResult]) -> list[str]:
 
 def is_verifiable(text: str) -> bool:
     return not re.search(r"\b(modern|cozy|cosy|beautiful|nice|elegant|minimal|style|feel|vibe)\b", text.lower())
+
+
+def _fixture_kind(design: Design, brick_id: str) -> str | None:
+    """The catalogue furniture kind a brick stands in for (its `fixture` property), if any."""
+    brick = design.find_brick(brick_id)
+    kind = brick.properties.get("fixture") if brick else None
+    return kind if isinstance(kind, str) else None

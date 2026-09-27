@@ -10,7 +10,11 @@ import re
 
 from agents import shapes
 from agents.base import PlanResult
+from agents.brick_words import mentioned_bricks
+from bricks import library
 from core.derive import DesignError, analyze
+from core.placement import candidates, first_fit
+from core.rooms import compass
 from schemas.design import Design, Edge, LevelDef, RoomDef, slug
 from schemas.requirements import Requirement
 from schemas.steps import Step, StepError, apply_step
@@ -81,8 +85,14 @@ def parse_requirements(prompt: str) -> list[Requirement]:
                                (r"railings?|parapets?|balustrades?|handrails?", "railing", "railings")):
         if re.search(words, text):
             reqs.append(Requirement(text=label, kind="feature", item=item))
-    if re.search(r"\bpool\b|elevator|lift\b", text):
-        reqs.append(Requirement(text="pool/elevator", kind="other", supported=False))
+    for m in mentioned_bricks(prompt):
+        name = library().get(m.brick).name.lower()
+        if m.room_kind:
+            reqs.append(Requirement(text=f"{name} in the {m.room_kind}", kind="asset", item=m.brick, room=m.room_kind,
+                                    value=m.count if not m.each else None))
+            continue
+        article = "an" if name[0] in "aeiou" else "a"
+        reqs.append(Requirement(text=f"{m.count} {name}s" if m.count > 1 else f"{article} {name}", kind="asset", item=m.brick, value=m.count))
     return reqs
 
 
@@ -236,11 +246,32 @@ def template_steps(prompt: str) -> list[dict]:
         steps += shapes.deck_steps(design)
     if BRIDGE.search(text):
         steps += shapes.bridge_steps(design)
+    mentions = mentioned_bricks(prompt)
+    if mentions:
+        steps += brick_steps(mentions, run_steps(steps)[0])
+    return steps
+
+
+def brick_steps(mentions, design: Design) -> list[dict]:
+    """A brick step for every brick the prompt names, at the first spot its mount and tags suggest that clashes with
+    nothing already there (core/placement.py)."""
+    steps: list[dict] = []
+    derived = analyze(design)
+    slot = 0
+    for m in mentions:
+        brick = library().get(m.brick)
+        targets = [r.id for r in design.rooms if r.kind == m.room_kind] if m.each else []
+        for i in range(len(targets) or m.count):
+            options = candidates(brick, design, derived, targets[i] if targets else None, slot, m.room_kind)
+            slot += 1
+            fit = first_fit(brick, design, options)
+            if fit is not None:
+                args, design, derived = fit
+                steps.append({"step": "brick", "brick": brick.id, **args})
     return steps
 
 
 def _facing(wall, poly) -> str:
-    from core.derive import compass
     ix, iy = wall.inward(poly)
     return compass(-ix, -iy)
 

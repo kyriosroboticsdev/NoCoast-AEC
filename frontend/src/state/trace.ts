@@ -35,6 +35,10 @@ const LEGACY: Record<string, { phase: Phase; title: string }> = {
   edit: { phase: "plan", title: "Working out the edit" },
   apply: { phase: "validate", title: "Applying the operations" },
   solve: { phase: "build", title: "Solving the layout" },
+  research: { phase: "plan", title: "Researching the brick library" },
+  tool: { phase: "plan", title: "Looking up bricks and skills" },
+  coordinate: { phase: "validate", title: "Coordinating clashes, services and structure" },
+  look: { phase: "validate", title: "Looking at the model" },
 };
 
 export interface Preview {

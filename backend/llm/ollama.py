@@ -10,11 +10,19 @@ from llm.base import LLMError, LLMRequest, OnNote, OnText, parse_reply
 from llm.schema import strict_schema
 
 
+def user_message(request: LLMRequest) -> dict:
+    """Ollama attaches images to the message as base64 strings; their captions go in the text."""
+    if not request.images:
+        return {"role": "user", "content": request.user}
+    return {"role": "user", "content": request.captioned_text(), "images": [im.b64() for im in request.images]}
+
+
 class OllamaLLM:
     name = "ollama"
 
-    def __init__(self, model: str, base_url: str = "http://127.0.0.1:11434", timeout: float = 600):
+    def __init__(self, model: str, base_url: str = "http://127.0.0.1:11434", timeout: float = 600, vision: bool = False):
         self.model = model
+        self.vision = vision  # a multimodal model (llava, llama3.2-vision, qwen2.5vl …); set LLM_VISION=1
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
@@ -24,7 +32,7 @@ class OllamaLLM:
             "stream": True,
             "format": strict_schema(request.schema),  # constrained decoding: the reply is guaranteed to parse
             "options": {"temperature": 0, "num_ctx": 16384},
-            "messages": [{"role": "system", "content": request.system}, {"role": "user", "content": request.user}],
+            "messages": [{"role": "system", "content": request.system}, user_message(request)],
         }
         text = ""
         try:

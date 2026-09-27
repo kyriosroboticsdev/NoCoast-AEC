@@ -13,11 +13,14 @@ import json
 import re
 
 from agents import shapes
-from agents.template_planner import parse_requirements, template_steps
+from agents.brick_words import mentioned_bricks
+from agents.template_planner import brick_steps, parse_requirements, template_steps
 from core.derive import DesignError, analyze
 from llm.base import LLMRequest, OnNote, OnText
 from schemas.bim import FixtureKind
 from schemas.design import Design, RoomDef, slug
+from schemas.research import MAX_CALLS
+from skills import skillbook
 from solver.layout import place_rooms
 
 NUM = r"(\d+(?:\.\d+)?)"
@@ -36,13 +39,18 @@ def _custom_parts(item: str) -> list[dict]:
 
 class MockLLM:
     name = "mock"
+    vision = True
 
     def complete(self, request: LLMRequest, on_text: OnText | None = None, on_note: OnNote | None = None) -> dict:
         prompt: str = request.meta.get("prompt", request.user)
         if request.schema_name == "requirements":
             reply = {"summary": prompt[:80], "requirements": [r.model_dump(exclude_none=True) for r in parse_requirements(prompt)]}
+        elif request.schema_name == "research":
+            reply = self._research(prompt, request.meta)
+        elif request.schema_name == "look":
+            reply = self._look(request.meta)
         elif request.schema_name == "build":
-            if request.meta.get("problems") or request.meta.get("unmet"):
+            if any(request.meta.get(k) for k in ("problems", "unmet", "issues", "seen")):
                 reply = {"steps": self._fix(prompt, request.meta)}
             elif request.meta.get("editing"):
                 reply = {"steps": self._edit(prompt, Design.model_validate(request.meta["design"]), request.meta.get("focus"))}
@@ -56,11 +64,41 @@ class MockLLM:
                 on_text(text[: len(text) * i // STREAM_STEPS])
         return reply
 
+    # --- research --------------------------------------------------------------
+
+    def _research(self, prompt: str, meta: dict) -> dict:
+        """Read the matching skills, then the card of every brick the prompt names, then search for each —
+        MAX_CALLS per turn, continuing where the previous turn stopped (one log entry per call)."""
+        mentions = mentioned_bricks(prompt)
+        text = prompt + " " + " ".join(meta.get("checklist") or [])
+        calls = [{"tool": "get_skill", "id": s.name} for s in skillbook().match(text, limit=2)] if mentions else []
+        calls += [{"tool": "get_brick", "id": m.brick} for m in mentions]
+        calls += [{"tool": "search_bricks", "query": m.phrase} for m in mentions]
+        todo = calls[len(meta.get("log") or []):]
+        return {"calls": todo[:MAX_CALLS], "done": len(todo) <= MAX_CALLS}
+
+    # --- look ----------------------------------------------------------------
+
+    def _look(self, meta: dict) -> dict:
+        """Take one closer look at the first placed brick, then call it done; the mock cannot judge an image."""
+        bricks = [b["id"] for b in (meta.get("design") or {}).get("bricks", [])]
+        if meta.get("turn", 1) == 1 and bricks:
+            return {"views": [{"target": bricks[0], "azimuth": 200, "elevation": 35, "note": f"a closer look at {bricks[0]}"}]}
+        return {"done": True}
+
     # --- fix rounds ----------------------------------------------------------
 
     def _fix(self, prompt: str, meta: dict) -> list[dict]:
-        """The mock cannot reason about its mistakes; it adds nothing (the pipeline reports the rest)."""
-        return []
+        """The mock cannot reason about its mistakes, but coordination issues come with steps that fix them:
+        it applies those (once each) and leaves the rest for the pipeline to report."""
+        steps, seen = [], set()
+        for issue in meta.get("issues") or []:
+            for s in issue.get("suggestions") or []:
+                key = json.dumps(s, sort_keys=True)
+                if key not in seen:
+                    seen.add(key)
+                    steps.append(s)
+        return steps
 
     # --- edits -----------------------------------------------------------------
 
@@ -87,6 +125,12 @@ class MockLLM:
                 return [{"step": "door", "room": room, "to": "outside", "side": side or "S"}]
             if item and re.match(r"^(remove|delete|drop)( this| it| that| the selected \w+)?$", text):
                 return [{"step": "remove", "id": item}]
+
+        mentions = mentioned_bricks(prompt)
+        if mentions and re.search(r"\b(add|put|install|place|fit|give)\b", text):
+            found = brick_steps(mentions, design)
+            if found:
+                return found
 
         m = re.search(r"\b(rename|call|name) (the )?(building|house|project) (to )?['\"]?([^'\"]+?)['\"]?$", text)
         if m:

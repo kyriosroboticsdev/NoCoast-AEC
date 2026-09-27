@@ -24,6 +24,8 @@ RequirementKind = Literal[
     "door",         # a door connects room and room2 ('outside' allowed)
     "stair",        # a stair exists (in room if given)
     "furniture",    # item (furniture kind) exists (in room if given), value = count
+    "asset",        # item (a library brick id, or words naming one) is placed (in room if given), value = count
+    "structure",    # the structure works: no unsupported spans or overhangs (core/structure.py)
     "roof",         # roof kind == item
     "feature",      # item in: garage, porch, balcony, open_plan
     "dimension",    # footprint about value x value2 metres
@@ -42,7 +44,7 @@ class Requirement(BaseModel):
     room2: Optional[str] = Field(None, description="adjacent/door: the other room, or 'outside'")
     level: Optional[str] = Field(None, description="'L1', 'L2' … when the requirement names a storey")
     side: Optional[str] = Field(None, description="N|S|E|W when the requirement names a side")
-    item: Optional[str] = Field(None, description="furniture kind, roof kind, feature name or material")
+    item: Optional[str] = Field(None, description="furniture kind, brick id, roof kind, feature name or material")
     value: Optional[float] = Field(None, description="count, area, storeys or width")
     value2: Optional[float] = Field(None, description="dimension: depth")
     supported: bool = Field(True, description="false when the system cannot honour it")

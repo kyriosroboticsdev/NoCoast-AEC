@@ -1,9 +1,14 @@
 """The stateful project API end to end, through the mock LLM."""
 
+import json
+
 import ifcopenshell
 from fastapi.testclient import TestClient
 
+from core import pipeline
+from llm.mock import MockLLM
 from main import app
+from store.db import Store
 from tests.sse import done, events
 
 client = TestClient(app)
@@ -122,3 +127,39 @@ def test_ops_revert_and_import():
 
     bad = client.post(f"/projects/{pid2}/import", files={"file": ("x.ifc", b"ISO-10303-21;\nHEADER;ENDSEC;DATA;ENDSEC;END-ISO-10303-21;", "application/x-step")})
     assert bad.status_code == 422
+
+
+class _BridgeLLM(MockLLM):
+    """A model that builds a span from free elements and never emits a room."""
+
+    def complete(self, request, on_text=None, on_note=None):
+        if request.schema_name == "requirements":
+            reply = {"summary": "a short bridge", "requirements": [
+                {"text": "a bridge", "kind": "feature", "item": "bridge", "supported": True},
+            ]}
+        elif request.schema_name == "research":
+            reply = {"calls": [], "done": True}
+        elif request.schema_name == "look":
+            reply = {"done": True}
+        elif request.schema_name == "build":
+            reply = {"steps": [
+                {"step": "building", "name": "River Bridge", "description": "A short span"},
+                {"step": "element", "kind": "slab", "name": "deck", "poly": [[0, 0], [20, 0], [20, 4], [0, 4]]},
+                {"step": "element", "kind": "column", "name": "pier-west", "position": [4, 2], "width": 0.8, "height": 5},
+                {"step": "element", "kind": "column", "name": "pier-east", "position": [16, 2], "width": 0.8, "height": 5},
+            ]}
+        else:
+            return super().complete(request, on_text, on_note)
+        if on_text:
+            on_text(json.dumps(reply))
+        return reply
+
+
+def test_bridge_without_rooms_compiles(tmp_path):
+    store = Store(tmp_path / "db.sqlite3", tmp_path / "projects")
+    project = store.create_project("bridge")
+    version = pipeline.run_prompt(store, _BridgeLLM(), project.id, "build a bridge over the river")
+    assert version.design is not None and not version.design.rooms
+    assert version.design.elements and version.spec.elements
+    assert {e.type for e in version.spec.elements} >= {"slab", "column"}
+    assert "no rooms" not in " ".join(version.notes).lower()
