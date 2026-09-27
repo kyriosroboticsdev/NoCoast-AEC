@@ -1,7 +1,9 @@
 import { Box, X } from "lucide-react";
 import type { RefObject } from "react";
+import type { Facts } from "../state/design";
 import type { LegacyViewer, Picked, PropertySet } from "../viewer/LegacyViewer";
-import { AxisGizmo, InfoCard, ViewControls } from "./ViewerOverlays";
+import type { SectionView } from "../viewer/section";
+import { AxisGizmo, InfoCard, SectionBar, Showing, ViewControls } from "./ViewerOverlays";
 
 interface Props {
   hostRef: RefObject<HTMLDivElement | null>;
@@ -9,16 +11,22 @@ interface Props {
   fileName: string | null;
   schema: string;
   status: string | null; // overlay text while there's nothing to show
-  progress: number | null;
+  /** What the viewer currently shows (a preview while the model works, or a final version). */
+  shown: { label: string; preview: boolean } | null;
+  section: SectionView | null;
+  onSection: (tenths: number) => void;
+  onFollow: (on: boolean) => void;
   onClose: () => void;
   picked: Picked | null;
+  facts: Facts | null;
   properties: PropertySet[];
+  onClearPick: () => void;
   roomsVisible: boolean;
   onRooms: () => void;
 }
 
 export function Workspace(p: Props) {
-  const hasModel = !!p.fileName && p.progress === null;
+  const hasModel = !!p.shown;
   return (
     <section className="workspace">
       <div className="file-tabs">
@@ -33,16 +41,18 @@ export function Workspace(p: Props) {
       <div className="ws-body">
         <div className="model-area">
           <div className="viewport" ref={p.hostRef} />
-          {p.status && (
+          {p.status && !hasModel && (
             <div className="viewport-status">
               <div>{p.status}</div>
-              {p.progress !== null && <div className="bar"><i style={{ width: `${p.progress * 100}%` }} /></div>}
             </div>
           )}
+          {p.status && hasModel && <div className="viewport-toast">{p.status}</div>}
           {hasModel && p.viewer && (
             <>
+              <Showing label={p.shown!.label} preview={p.shown!.preview} />
               <ViewControls viewer={p.viewer} roomsVisible={p.roomsVisible} onRooms={p.onRooms} />
-              <InfoCard fileName={p.fileName!} schema={p.schema} picked={p.picked} properties={p.properties} />
+              <InfoCard fileName={p.fileName ?? ""} schema={p.schema} picked={p.picked} facts={p.facts} properties={p.properties} onClear={p.onClearPick} />
+              {p.section && <SectionBar section={p.section} onValue={p.onSection} onFollow={p.onFollow} />}
               <div className="gizmo-wrap"><AxisGizmo viewer={p.viewer} /></div>
             </>
           )}

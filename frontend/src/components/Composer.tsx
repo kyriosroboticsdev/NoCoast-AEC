@@ -1,4 +1,4 @@
-import { ArrowUp, Check, ChevronDown, LoaderCircle, Plus, Sparkles } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, Crosshair, LoaderCircle, Plus, Sparkles, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 export interface PlannerOption {
@@ -25,9 +25,12 @@ interface Props {
   onSubmit: (text: string) => void;
   onAttach: () => void;
   placeholder?: string;
+  /** Viewer selection the next prompt is about, shown as a removable chip. */
+  focus?: { id: string; label: string } | null;
+  onClearFocus?: () => void;
 }
 
-export function Composer({ size, busy, planners, planner, setPlanner, onSubmit, onAttach, placeholder }: Props) {
+export function Composer({ size, busy, planners, planner, setPlanner, onSubmit, onAttach, placeholder, focus, onClearFocus }: Props) {
   const [text, setText] = useState("");
   const [menu, setMenu] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
@@ -59,6 +62,13 @@ export function Composer({ size, busy, planners, planner, setPlanner, onSubmit, 
 
   return (
     <div className={`composer ${size}`}>
+      {focus && (
+        <div className="focus-chip" title={`The next prompt is about ${focus.id}`}>
+          <Crosshair size={14} />
+          <span>{focus.label}</span>
+          {onClearFocus && <button onClick={onClearFocus} aria-label="Clear selection"><X size={13} /></button>}
+        </div>
+      )}
       <textarea
         ref={area}
         value={text}

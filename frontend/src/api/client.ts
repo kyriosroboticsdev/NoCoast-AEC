@@ -1,4 +1,5 @@
 // Backend API. The UI knows prompt → plan → IFC URL, nothing about how planning works.
+import type { Design } from "../state/design";
 
 let BACKEND = "http://127.0.0.1:8765";
 
@@ -50,6 +51,14 @@ export interface Version {
   summary: { schema?: string; counts: Record<string, number>; elements: number; storeys: string[]; spaces: string[] };
   ifc_url: string;
   created: number;
+  /** Requirement checks from the design layer (met | unmet | unsupported | skipped). */
+  checks?: RequirementCheck[];
+}
+
+export interface RequirementCheck {
+  text: string;
+  status: "met" | "unmet" | "unsupported" | "skipped" | string;
+  detail?: string;
 }
 
 export interface ProjectDetail {
@@ -63,6 +72,9 @@ export interface StageEvent {
   stage: string;
   message: string;
   data: Record<string, unknown> | null;
+  /** Sequence number and seconds since the request started. */
+  seq?: number;
+  t?: number;
 }
 
 async function getJson<T>(path: string): Promise<T> {
@@ -117,10 +129,11 @@ const jsonPost = (body: unknown): RequestInit => ({
 /** New design (no base) or an edit of `baseVersion`. `planner` picks an LLM provider (backend default if omitted). */
 export const sendPrompt = (
   id: string, prompt: string, baseVersion: number | null, onEvent: (e: StageEvent) => void, planner?: string,
-) => stream(`/projects/${id}/prompt`, jsonPost({ prompt, base_version: baseVersion, planner }), onEvent);
+  focus?: string | null,
+) => stream(`/projects/${id}/prompt`, jsonPost({ prompt, base_version: baseVersion, planner, focus: focus ?? undefined }), onEvent);
 
-/** The structured BIM instructions behind a version. */
-export const getSpec = (id: string, n: number) => getJson<{ spec: unknown }>(`/projects/${id}/versions/${n}/spec`);
+/** The structured BIM instructions behind a version, and its design record (null for imports and pre-design-layer versions). */
+export const getSpec = (id: string, n: number) => getJson<{ spec: unknown; design: Design | null }>(`/projects/${id}/versions/${n}/spec`);
 
 /** Make an older version the new head (recorded as a new version). */
 export const revert = (id: string, to: number, onEvent: (e: StageEvent) => void) =>

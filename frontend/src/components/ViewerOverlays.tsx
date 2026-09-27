@@ -1,7 +1,9 @@
-import { BedDouble, RotateCcw } from "lucide-react";
+import { BedDouble, RotateCcw, X } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
+import type { Facts } from "../state/design";
 import type { LegacyViewer, Picked, PropertySet, ViewName } from "../viewer/LegacyViewer";
+import type { SectionView } from "../viewer/section";
 
 // --- floating view panel (top-right) ----------------------------------------
 
@@ -28,16 +30,44 @@ export function ViewControls({ viewer, roomsVisible, onRooms }: { viewer: Legacy
   );
 }
 
+// --- what the viewer shows (top-left): "preview 3 · 39 elements" or "v4 · final · 120 elements" -----------
+
+export function Showing({ label, preview }: { label: string; preview: boolean }) {
+  return <div className={`showing ${preview ? "preview" : ""}`}>{label}</div>;
+}
+
+// --- cross-section slider + follow build (bottom, between the info card and the gizmo) -------------------
+
+export function SectionBar({ section, onValue, onFollow }: { section: SectionView; onValue: (tenths: number) => void; onFollow: (on: boolean) => void }) {
+  return (
+    <div className="float section-bar" title="Cross-section: hide everything above a height">
+      <span className="muted">section</span>
+      <input type="range" min={section.min} max={section.max} step={1} value={section.value} list="section-snaps" disabled={!section.enabled}
+        onChange={(e) => onValue(Number(e.target.value))} />
+      <datalist id="section-snaps">
+        {section.snaps.map((s) => <option key={`${s.z}-${s.label}`} value={Math.round(s.z * 10)} label={s.label} />)}
+      </datalist>
+      <span className="section-label">{section.label}</span>
+      <label title="While a request runs, cut the view just under the ceiling of the storey being worked on">
+        <input type="checkbox" checked={section.follow} onChange={(e) => onFollow(e.target.checked)} /> follow build
+      </label>
+    </div>
+  );
+}
+
 // --- model / selection card (bottom-left) -----------------------------------
+// The inspector: what the selected element is in design terms first, then its IFC attributes and property sets.
 
 interface InfoProps {
   fileName: string;
   schema: string;
   picked: Picked | null;
+  facts: Facts | null;
   properties: PropertySet[];
+  onClear: () => void;
 }
 
-export function InfoCard({ fileName, schema, picked, properties }: InfoProps) {
+export function InfoCard({ fileName, schema, picked, facts, properties, onClear }: InfoProps) {
   return (
     <div className="float info-card">
       <div className="info-title" title={fileName}>{fileName}</div>
@@ -45,23 +75,31 @@ export function InfoCard({ fileName, schema, picked, properties }: InfoProps) {
       <div className="info-sep" />
       {picked ? (
         <>
-          <div className="info-sub" title={picked.name || picked.type}>{picked.name || picked.type}</div>
-          <dl className="kv">
-            <dt>Class</dt><dd>{picked.type}</dd>
-            {picked.tag && <><dt>Tag</dt><dd>{picked.tag}</dd></>}
-          </dl>
+          <div className="info-head">
+            <div className="info-sub" title={facts?.title ?? picked.name ?? picked.type}>{facts?.title ?? `${picked.type.replace(/^Ifc/, "")} ${picked.tag || picked.name}`}</div>
+            <button className="icon-btn tiny" title="Clear selection" onClick={onClear}><X size={14} /></button>
+          </div>
+          {facts && facts.rows.length > 0 && (
+            <dl className="kv facts">
+              {facts.rows.map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}
+            </dl>
+          )}
+          <details className="info-ifc">
+            <summary>IFC properties</summary>
+            {properties.map((ps) => (
+              <div key={ps.name} className="info-pset">
+                <div className="info-pset-title">{ps.name}</div>
+                <dl className="kv facts">
+                  {ps.props.map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}
+                </dl>
+              </div>
+            ))}
+            {!properties.length && <div className="muted small">No property sets.</div>}
+          </details>
           <div className="guid">{picked.globalId}</div>
-          {properties.slice(1).map((ps) => (
-            <div key={ps.name} className="info-pset">
-              <div className="info-pset-title">{ps.name}</div>
-              <dl className="kv">
-                {ps.props.map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}
-              </dl>
-            </div>
-          ))}
         </>
       ) : (
-        <div className="muted small">Click an element to inspect it.</div>
+        <div className="muted small">Click an element to inspect it and to make the next prompt about it. Clicking a floor picks the room.</div>
       )}
     </div>
   );

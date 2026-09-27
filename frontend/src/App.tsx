@@ -7,20 +7,29 @@ import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { Workspace } from "./components/Workspace";
 import * as platform from "./platform";
+import { describeElement, roomAt, type Design, type Facts } from "./state/design";
 import {
   addMessage, patchRun, SESSIONS_KEY, uid, upsertStep, useSessions, type Session, type TraceStep,
 } from "./state/sessions";
-import { stageTracer } from "./state/trace";
+import { stageTracer, type Preview } from "./state/trace";
 import { runtime, toTurn, turnId } from "./turns";
 import { LegacyViewer, type Picked, type PropertySet } from "./viewer/LegacyViewer";
+import { SectionControl, type SectionView } from "./viewer/section";
 
 const SAMPLE_URL = "samples/sample-house.ifc";
 
 const versionName = (v: api.Version) => `v${v.number}.ifc`;
+const versionLabel = (v: api.Version) => `v${v.number} · final · ${v.summary.elements} elements`;
 
 /** Register a version's turn card once (addTurn re-renders an existing turn). */
 const ensureTurn = (v: api.Version) => {
   if (!runtime.getTurn(turnId(v))) void runtime.addTurn(toTurn(v));
+};
+
+/** Project id and version number behind a backend IFC url, if it is one. */
+const versionOf = (url: string | undefined) => {
+  const m = url?.match(/\/projects\/([\w-]+)\/versions\/(\d+)\/ifc/);
+  return m ? { project: m[1], number: Number(m[2]) } : null;
 };
 
 interface Loaded {
@@ -28,6 +37,12 @@ interface Loaded {
   name: string;
   schema: string;
   bytes: Uint8Array;
+}
+
+/** What the viewer currently shows: a preview while the model works, or a final version. */
+interface Shown {
+  label: string;
+  preview: boolean;
 }
 
 export default function App() {
@@ -40,14 +55,27 @@ export default function App() {
   // --- viewer ---------------------------------------------------------------
   const hostRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<LegacyViewer | null>(null);
+  const sectionRef = useRef<SectionControl | null>(null);
   const [viewerReady, setViewerReady] = useState(false);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const loadedKey = useRef<string | null>(null); // sync copy, avoids double loads
-  const [progress, setProgress] = useState<number | null>(null);
+  const [shown, setShown] = useState<Shown | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [picked, setPicked] = useState<Picked | null>(null);
-  const [properties, setProperties] = useState<PropertySet[]>([]);
+  const [section, setSection] = useState<SectionView | null>(null);
   const [roomsVisible, setRoomsVisible] = useState(false);
+  // The camera is framed on the first model of a session and then left alone: previews and new versions
+  // load into the same view so the building grows in place — unless it clearly outgrows the view.
+  const framed = useRef(0);
+
+  // --- selection --------------------------------------------------------------
+  // One element at a time. Clicking a wall, door, window, stair or piece of furniture selects it; clicking a
+  // floor selects the room under the click. The selection is highlighted, explained in the info card (design
+  // facts first, IFC property sets underneath) and sent with the next prompt as `focus`.
+  const designRef = useRef<Design | null>(null); // the shown version's design record (null for imports)
+  const [picked, setPicked] = useState<Picked | null>(null);
+  const [facts, setFacts] = useState<Facts | null>(null);
+  const [properties, setProperties] = useState<PropertySet[]>([]);
+  const [focus, setFocus] = useState<{ id: string; label: string } | null>(null);
 
   // --- chrome ---------------------------------------------------------------
   const [options, setOptions] = useState<platform.LaunchOptions | null>(null);
@@ -60,21 +88,47 @@ export default function App() {
   const [assistantOpen, setAssistantOpen] = useState(true);
   const localFiles = useRef(new Map<string, Uint8Array>()); // session id → bytes of a file opened from disk
 
+  const onPick = useCallback((p: Picked | null) => {
+    const v = viewerRef.current!;
+    setPicked(p);
+    if (!p) {
+      setFocus(null);
+      setFacts(null);
+      setProperties([]);
+      v.highlight(null);
+      return;
+    }
+    let id = p.tag || p.name;
+    // A click on a floor slab selects the room under it.
+    const slab = id.match(/^(\w+?)-(floor|slab)(-\d+)?$/);
+    if (slab) {
+      const room = roomAt(designRef.current, slab[1], p.point.x, p.point.y);
+      if (room) id = `${slab[1]}-space-${room.id}`;
+    }
+    const f = describeElement(designRef.current, id);
+    setFacts(f);
+    setFocus(id ? { id, label: f?.title ?? id } : null);
+    v.highlight(id || null);
+    v.properties(p.expressID).then(setProperties, () => setProperties([]));
+  }, []);
+
   useEffect(() => {
     if (!hostRef.current || viewerRef.current) return;
     const viewer = new LegacyViewer(hostRef.current);
     viewerRef.current = viewer;
-    (window as unknown as { __viewer: LegacyViewer }).__viewer = viewer; // debug / smoke-test handle
-    viewer.onSelect = async (sel) => {
-      setPicked(sel);
-      setProperties(sel ? await viewer.properties(sel.expressID) : []);
-    };
+    const sectionCtl = new SectionControl(viewer, setSection);
+    sectionRef.current = sectionCtl;
+    // Debug / smoke-test handles.
+    (window as unknown as { __viewer: LegacyViewer; nocoast: unknown }).__viewer = viewer;
+    (window as unknown as { nocoast: unknown }).nocoast = { viewer, section: sectionCtl };
+    viewer.onSelect = onPick;
     setViewerReady(true);
     platform.launchOptions().then((o) => {
       api.setBackendUrl(o.backendUrl);
+      if (o.planner) setPlanner(o.planner);
       setOptions(o);
     });
-  }, []);
+  }, [onPick]);
 
   useEffect(() => {
     if (!options) return;
@@ -100,28 +154,60 @@ export default function App() {
 
   // --- loading models into the viewer -----------------------------------------
 
-  const showModel = useCallback(async (bytes: Uint8Array, name: string, key: string, onProgress?: (p: number) => void) => {
+  /** Parse and draw. With `keepCamera` the change is animated in place (fade in/out of what changed). */
+  const loadIntoViewer = useCallback(async (bytes: Uint8Array, keepCamera: boolean) => {
+    const v = viewerRef.current!;
+    await v.loadIfc(bytes, undefined, undefined, keepCamera);
+    const extent = v.extent();
+    if (!keepCamera) framed.current = extent;
+    else if (extent > framed.current * 1.4) { framed.current = extent; v.fit(); } // a lone first preview is not the building
+    const s = sectionRef.current!;
+    s.refresh(); // the section cut survives reloads; the range follows the new model's extent
+    s.applyFollow();
+  }, []);
+
+  const showModel = useCallback(async (
+    bytes: Uint8Array, name: string, key: string,
+    opts: { keepCamera?: boolean; label: string; preview: boolean; design?: Design | null },
+  ) => {
     const v = viewerRef.current!;
     loadedKey.current = key;
     setLoadError(null);
-    setProgress(0);
-    setPicked(null);
-    setProperties([]);
-    await v.loadIfc(bytes, name, (p) => { setProgress(p); onProgress?.(p); });
+    if (opts.design !== undefined) designRef.current = opts.design;
+    if (!opts.preview) v.clearSelection();
+    await loadIntoViewer(bytes, !!opts.keepCamera);
     const head = new TextDecoder().decode(bytes.subarray(0, 4000));
     const schema = head.match(/FILE_SCHEMA\s*\(\s*\(\s*'([^']+)'/i)?.[1] ?? "";
     setLoaded({ key, name, schema, bytes });
-    setProgress(null);
+    setShown({ label: opts.label, preview: opts.preview });
     return { levels: v.storeys().length };
+  }, [loadIntoViewer]);
+
+  const clearModel = useCallback(() => {
+    loadedKey.current = null;
+    designRef.current = null;
+    setLoaded(null);
+    setShown(null);
+    viewerRef.current?.clear();
+    sectionRef.current?.refresh();
   }, []);
 
-  const clearModel = useCallback(async () => {
-    loadedKey.current = null;
-    setLoaded(null);
-    setPicked(null);
-    setProperties([]);
-    viewerRef.current?.clear();
-  }, []);
+  const fetchDesign = async (project: string, number: number): Promise<Design | null> => {
+    try {
+      return (await api.getSpec(project, number)).design;
+    } catch {
+      return null; // imports and old versions have no design record; the inspector then shows IFC data only
+    }
+  };
+
+  /** Whether the viewer currently shows something of this session (then the camera is kept across loads). */
+  const inSession = (sid: string) => activeRef.current === sid && !!loadedKey.current?.startsWith(`${sid}:`);
+
+  const loadVersion = useCallback(async (sid: string, v: api.Version) => {
+    const design = await fetchDesign(v.project_id, v.number);
+    const bytes = await api.fetchBytes(v.ifc_url);
+    return showModel(bytes, versionName(v), `${sid}:${versionName(v)}`, { keepCamera: inSession(sid), label: versionLabel(v), preview: false, design });
+  }, [showModel]);
 
   // Switching sessions loads that session's model and registers its version turn cards.
   useEffect(() => {
@@ -139,14 +225,16 @@ export default function App() {
     const local = localFiles.current.get(active.id);
     (async () => {
       try {
-        if (model.url) await showModel(await api.fetchBytes(model.url), model.name, key);
-        else if (local) await showModel(local, model.name, key);
+        if (model.url) {
+          const ver = versionOf(model.url);
+          const design = ver ? await fetchDesign(ver.project, ver.number) : null;
+          await showModel(await api.fetchBytes(model.url), model.name, key, { label: ver ? `v${ver.number} · final` : model.name, preview: false, design });
+        } else if (local) await showModel(local, model.name, key, { label: model.name, preview: false, design: null });
         else {
-          await clearModel();
+          clearModel();
           setLoadError(`${model.name} was opened from disk in an earlier run. Open it again to view it.`);
         }
       } catch (e) {
-        setProgress(null);
         setLoadError(`Couldn't load ${model.name}: ${e instanceof Error ? e.message : e}`);
       }
     })();
@@ -166,6 +254,15 @@ export default function App() {
     const aid = uid();
     update(sid, addMessage({ id: aid, role: "assistant", text, run: { stage: "planning", steps: [], startedAt: Date.now() } }));
     setBusy(true);
+    // A session created for this prompt becomes active on the next render, so "is this the session on
+    // screen" is decided when events arrive, not now.
+    const forActive = () => activeRef.current === sid;
+    let runStarted = false;
+    const ensureRun = () => {
+      if (runStarted || !forActive()) return;
+      runStarted = true;
+      sectionRef.current?.startRun();
+    };
 
     // Client-side steps join the backend's trace so the user sees the whole journey.
     const step = (title: string, detail: string | null = null) => {
@@ -178,7 +275,34 @@ export default function App() {
         fail: (msg: string) => update(sid, upsertStep(aid, { ...base, status: "error", error: msg, ms: Math.round(performance.now() - t0) })),
       };
     };
-    const tracer = stageTracer((s) => update(sid, upsertStep(aid, s)));
+
+    // Previews stream in while the model works (`partial` events carry a geometry-checked IFC of what
+    // exists so far). Loads are serialised, only the newest pending preview is loaded, nothing is loaded
+    // once the final version has arrived, and the camera is kept so the building grows in place.
+    let finalArrived = false;
+    let pending: Preview | null = null;
+    let chain = Promise.resolve();
+    const queuePreview = (p: Preview) => {
+      pending = p;
+      chain = chain.then(async () => {
+        const next = pending;
+        pending = null;
+        if (!next || finalArrived || !forActive()) return;
+        ensureRun();
+        try {
+          const bytes = await api.fetchBytes(next.url);
+          if (finalArrived || !forActive()) return;
+          await showModel(bytes, "preview.ifc", `${sid}:preview`, { keepCamera: inSession(sid), label: next.label.toLowerCase(), preview: true });
+        } catch {
+          // A preview is best effort: the final version replaces it anyway.
+        }
+      });
+    };
+    const tracer = stageTracer((s) => update(sid, upsertStep(aid, s)), {
+      onPreview: queuePreview,
+      // Follow build: the section cut tracks the storey the accepted steps are working on.
+      onStep: (st, ok) => { ensureRun(); if (ok && forActive()) sectionRef.current?.learnStep(st); },
+    });
 
     let current: ReturnType<typeof step> | null = null;
     try {
@@ -199,8 +323,12 @@ export default function App() {
 
       const version = await call(project, (e) => {
         tracer.event(e);
-        if (e.stage === "apply" || e.stage === "solve" || e.stage === "compile") update(sid, patchRun(aid, { stage: "building" }));
+        if (e.stage === "build" || e.stage === "step" || e.stage === "compile" || e.stage === "apply" || e.stage === "solve") {
+          update(sid, patchRun(aid, { stage: "building" }));
+        }
       });
+      finalArrived = true;
+      await chain; // let an in-flight preview finish before the final model replaces it
       update(sid, (s) => ({
         ...patchRun(aid, { version, stage: "loading" })(s),
         project: { id: version.project_id, head: version.number },
@@ -208,14 +336,10 @@ export default function App() {
       ensureTurn(version);
 
       const name = versionName(version);
-      if (activeRef.current === sid) {
-        current = step("Downloading the IFC", version.ifc_url);
-        const bytes = await api.fetchBytes(version.ifc_url);
-        current.done(`${name} · ${Math.round(bytes.length / 1024)} KB`);
-
-        current = step("Loading into the 3D viewer", "parsing IFC with web-ifc");
-        const loaded = await showModel(bytes, name, `${sid}:${name}`);
-        current.done(`${loaded.levels} levels`);
+      if (forActive()) {
+        current = step("Loading the finished model", version.ifc_url);
+        const shownNow = await loadVersion(sid, version);
+        current.done(`${name} · ${shownNow.levels} storey${shownNow.levels === 1 ? "" : "s"} · ${version.summary.elements} elements`);
         current = null;
       }
       update(sid, (s) => ({ ...patchRun(aid, { stage: "done", endedAt: Date.now() })(s), model: { name, url: version.ifc_url } }));
@@ -224,20 +348,22 @@ export default function App() {
       const msg = e instanceof Error ? e.message : String(e);
       if (current) current.fail(msg);
       else tracer.fail(msg);
-      setProgress(null);
       update(sid, patchRun(aid, { stage: "error", error: msg, endedAt: Date.now() }));
       platform.report({ status: "error", error: msg });
       return false;
     } finally {
+      finalArrived = true;
       setBusy(false);
+      if (runStarted) sectionRef.current?.finishRun();
     }
-  }, [showModel, update]);
+  }, [loadVersion, showModel, update]);
 
-  /** First prompt in a session designs a building; later prompts edit its head version. */
-  const generate = useCallback((sid: string, prompt: string) => {
-    update(sid, addMessage({ id: uid(), role: "user", text: prompt }));
+  /** First prompt in a session designs a building; later prompts edit its head version — about `target` if one is selected. */
+  const generate = useCallback((sid: string, prompt: string, target: { id: string; label: string } | null = null) => {
+    update(sid, addMessage({ id: uid(), role: "user", text: target ? `${prompt}\n\n↳ ${target.label}` : prompt }));
+    setFocus(null);
     return execute(sid, "", (project, onEvent) =>
-      api.sendPrompt(project.id, prompt, project.head, onEvent, planner ?? undefined));
+      api.sendPrompt(project.id, prompt, project.head, onEvent, planner ?? undefined, target?.id));
   }, [execute, planner, update]);
 
   /** Make an older version the head again (recorded as a new version). */
@@ -249,12 +375,11 @@ export default function App() {
   const viewVersion = useCallback(async (v: api.Version) => {
     if (!active) return;
     try {
-      await showModel(await api.fetchBytes(v.ifc_url), versionName(v), `${active.id}:${versionName(v)}`);
+      await loadVersion(active.id, v);
     } catch (e) {
-      setProgress(null);
       setLoadError(`Couldn't load ${versionName(v)}: ${e instanceof Error ? e.message : e}`);
     }
-  }, [active, showModel]);
+  }, [active, loadVersion]);
 
   const removeSession = (id: string) => {
     const s = sessionsRef.current.find((x) => x.id === id);
@@ -271,7 +396,9 @@ export default function App() {
     const sid = create(name);
     if (!url) localFiles.current.set(sid, bytes);
     update(sid, addMessage({ id: uid(), role: "assistant", text: `Opened ${name}. Explore it in the viewer, or describe a new building below.` }));
-    await showModel(bytes, name, `${sid}:${name}`);
+    const ver = versionOf(url);
+    const design = ver ? await fetchDesign(ver.project, ver.number) : null;
+    await showModel(bytes, name, `${sid}:${name}`, { label: ver ? `v${ver.number} · final` : name, preview: false, design });
     update(sid, (s) => ({ ...s, model: { name, url } }));
   };
 
@@ -280,7 +407,6 @@ export default function App() {
       const file = await platform.openIfc();
       if (file) await openSessionWithModel(file.name, file.data);
     } catch (e) {
-      setProgress(null);
       setLoadError(String(e instanceof Error ? e.message : e));
     }
   };
@@ -289,7 +415,6 @@ export default function App() {
     try {
       await openSessionWithModel("sample-house.ifc", await api.fetchBytes(SAMPLE_URL), SAMPLE_URL);
     } catch (e) {
-      setProgress(null);
       setLoadError(String(e instanceof Error ? e.message : e));
     }
   };
@@ -323,7 +448,7 @@ export default function App() {
       await new Promise((r) => setTimeout(r, 800));
       platform.report({
         status: "ready",
-        model: document.querySelector(".ws-file")?.textContent,
+        model: document.querySelector(".file-tab span")?.textContent,
         info: document.querySelector(".info-card")?.textContent?.slice(0, 160),
       });
     })().catch((e) => platform.report({ status: "error", error: String(e) }));
@@ -333,10 +458,11 @@ export default function App() {
 
   const running = active?.messages.some((m) => m.run && !["done", "error"].includes(m.run.stage));
   const status = loadError
-    ?? (progress !== null ? `Loading model… ${Math.round(progress * 100)}%` : null)
-    ?? (!loaded && running ? "Generating model…" : null)
-    ?? (!loaded && active ? "No model in this session yet." : null);
+    ?? (!shown && running ? "Generating model… the first preview appears after the first room." : null)
+    ?? (!shown && active ? "No model in this session yet." : null);
   const v = viewerRef.current;
+  // The selection is only meaningful as prompt context when the workspace shows a version of this session.
+  const focusFor = active?.project && loaded?.key.startsWith(`${active.id}:v`) ? focus : null;
 
   return (
     <IfcViewerProvider runtime={runtime}>
@@ -350,18 +476,20 @@ export default function App() {
         <TopBar title={active?.title ?? null} sidebarOpen={sidebarOpen} assistantOpen={assistantOpen}
           showAssistantToggle={!!active} onHome={() => setActiveId(null)}
           onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} onToggleAssistant={() => setAssistantOpen(!assistantOpen)}
-          onExport={loaded ? () => platform.saveIfc(loaded.name, loaded.bytes) : null}
+          onExport={loaded && !shown?.preview ? () => platform.saveIfc(loaded.name, loaded.bytes) : null}
           onDelete={active ? () => removeSession(active.id) : null} />
         <div className="content">
           <Workspace hostRef={hostRef} viewer={viewerReady ? v : null}
             fileName={loaded?.name ?? (active?.model?.name ?? null)} schema={loaded?.schema ?? ""}
-            status={status} progress={progress}
+            status={status} shown={shown}
+            section={section} onSection={(t) => sectionRef.current?.setValue(t)} onFollow={(on) => sectionRef.current?.setFollow(on)}
             onClose={() => { if (active) update(active.id, (s) => ({ ...s, model: undefined })); clearModel(); }}
-            picked={picked} properties={properties}
+            picked={picked} facts={facts} properties={properties} onClearPick={() => v?.clearSelection()}
             roomsVisible={roomsVisible} onRooms={toggleRooms} />
           {active && assistantOpen && (
             <Assistant session={active} busy={busy} planners={planners} planner={planner} setPlanner={setPlanner}
-              onSubmit={(t) => generate(active.id, t)} onAttach={openFile}
+              onSubmit={(t) => generate(active.id, t, focusFor)} onAttach={openFile}
+              focus={focusFor} onClearFocus={() => v?.clearSelection()}
               viewing={loaded?.key ?? null} onView={viewVersion} onRestore={(n) => restore(active.id, n)} />
           )}
           {!active && (

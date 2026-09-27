@@ -1,5 +1,5 @@
 import { IfcTurnCard } from "@nocoast/ifc-viewer";
-import { ChevronDown, ChevronUp, Code, Database, Eye, RotateCcw, Sparkles, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Code, Database, Eye, ListChecks, RotateCcw, Sparkles, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { getSpec, type Version } from "../api/client";
 import type { Message, Session } from "../state/sessions";
@@ -15,6 +15,9 @@ interface Props {
   setPlanner: (p: string) => void;
   onSubmit: (text: string) => void;
   onAttach: () => void;
+  /** Viewer selection that the next prompt will be about. */
+  focus: { id: string; label: string } | null;
+  onClearFocus: () => void;
   /** Key of the model in the workspace (`<session>:v<n>.ifc`). */
   viewing: string | null;
   onView: (v: Version) => void;
@@ -73,6 +76,8 @@ function AssistantMessage({ m, head, busy, latest, viewing, onView, onRestore }:
       {m.text && <p>{m.text}</p>}
       <Reasoning run={run} />
 
+      {v && v.checks && v.checks.length > 0 && <Checklist checks={v.checks} />}
+
       {v && v.notes.length > 0 && (
         <Collapsible icon={<Sparkles size={16} />} title={`Interpreted by ${v.llm ?? v.mode}`}>
           <ul className="notes">{v.notes.map((n) => <li key={n}>{n}</li>)}</ul>
@@ -127,6 +132,28 @@ function AssistantMessage({ m, head, busy, latest, viewing, onView, onRestore }:
       )}
       {run.stage === "error" && <div className="error-card"><X size={15} /> {run.error}</div>}
     </div>
+  );
+}
+
+const CHECK_MARK: Record<string, string> = { met: "✓", unmet: "✗", unsupported: "–", skipped: "?" };
+
+/** The design layer's requirement checks: what was asked for, and whether the model has it. */
+function Checklist({ checks }: { checks: NonNullable<Version["checks"]> }) {
+  const met = checks.filter((c) => c.status === "met").length;
+  const checkable = checks.filter((c) => c.status === "met" || c.status === "unmet").length;
+  const unmet = checks.filter((c) => c.status === "unmet").length;
+  return (
+    <Collapsible icon={<ListChecks size={16} />}
+      title={`Requirements: ${met} of ${checkable} met${unmet ? ` · ${unmet} missing` : ""}`}>
+      <ul className="req-list">
+        {checks.map((c, i) => (
+          <li key={i} className={c.status}>
+            <span className="mark">{CHECK_MARK[c.status] ?? "?"}</span>
+            <span>{c.text}{c.detail && c.status !== "met" ? <small className="muted"> — {c.detail}</small> : null}</span>
+          </li>
+        ))}
+      </ul>
+    </Collapsible>
   );
 }
 
