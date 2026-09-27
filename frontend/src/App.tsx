@@ -6,6 +6,7 @@ import { Home } from "./components/Home";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { Workspace } from "./components/Workspace";
+import type { FocusItem } from "./components/Composer";
 import * as platform from "./platform";
 import type { Attachment } from "./state/attachments";
 import { describeElement, roomAt, type Design, type Facts } from "./state/design";
@@ -74,14 +75,16 @@ export default function App() {
   const framed = useRef(0);
 
   // --- selection --------------------------------------------------------------
-  // One element at a time. Clicking a wall, door, window, stair or piece of furniture selects it; clicking a
-  // floor selects the room under the click. The selection is highlighted, explained in the info card (design
-  // facts first, IFC property sets underneath) and sent with the next prompt as `focus`.
+  // Clicking a wall, door, window, stair or piece of furniture selects it; clicking a floor selects the room
+  // under the click. Shift-click (or Ctrl/Cmd) adds an element to the selection, or removes it if it is already
+  // selected. The selection is highlighted, the last element clicked is explained in the info card (design
+  // facts first, IFC property sets underneath), and all of it is sent with the next prompt as `focus`.
   const designRef = useRef<Design | null>(null); // the shown version's design record (null for imports)
   const [picked, setPicked] = useState<Picked | null>(null);
   const [facts, setFacts] = useState<Facts | null>(null);
   const [properties, setProperties] = useState<PropertySet[]>([]);
-  const [focus, setFocus] = useState<{ id: string; label: string } | null>(null);
+  const [focus, setFocus] = useState<FocusItem[]>([]);
+  const selection = useRef<(FocusItem & { picked: Picked })[]>([]); // focus, plus each item's pick for the info card
 
   // --- chrome ---------------------------------------------------------------
   const [options, setOptions] = useState<platform.LaunchOptions | null>(null);
@@ -93,16 +96,21 @@ export default function App() {
   // Bytes of a file opened from disk, by session id: a memory cache in front of IndexedDB (state/files.ts).
   const localFiles = useRef(new Map<string, Uint8Array>());
 
-  const onPick = useCallback((p: Picked | null) => {
+  /** Make `items` the selection: highlight all of them and show the last one in the info card. */
+  const select = useCallback((items: (FocusItem & { picked: Picked })[]) => {
     const v = viewerRef.current!;
-    setPicked(p);
-    if (!p) {
-      setFocus(null);
-      setFacts(null);
-      setProperties([]);
-      v.highlight(null);
-      return;
-    }
+    selection.current = items;
+    setFocus(items.map(({ id, label }) => ({ id, label })));
+    v.highlight(items.map((i) => i.id));
+    const last = items.at(-1);
+    setPicked(last?.picked ?? null);
+    setFacts(last ? describeElement(designRef.current, last.id) : null);
+    if (last) v.properties(last.picked.expressID).then(setProperties, () => setProperties([]));
+    else setProperties([]);
+  }, []);
+
+  const onPick = useCallback((p: Picked | null) => {
+    if (!p) return select([]);
     let id = p.tag || p.name;
     // A click on a floor slab selects the room under it.
     const slab = id.match(/^(\w+?)-(floor|slab)(-\d+)?$/);
@@ -110,12 +118,15 @@ export default function App() {
       const room = roomAt(designRef.current, slab[1], p.point.x, p.point.y);
       if (room) id = `${slab[1]}-space-${room.id}`;
     }
-    const f = describeElement(designRef.current, id);
-    setFacts(f);
-    setFocus(id ? { id, label: f?.title ?? id } : null);
-    v.highlight(id || null);
-    v.properties(p.expressID).then(setProperties, () => setProperties([]));
-  }, []);
+    if (!id) return p.additive ? undefined : select([]);
+    const item = { id, label: describeElement(designRef.current, id)?.title ?? id, picked: p };
+    const current = selection.current;
+    if (!p.additive) return select([item]);
+    select(current.some((x) => x.id === id) ? current.filter((x) => x.id !== id) : [...current, item]);
+  }, [select]);
+
+  /** Drop one element from the selection (the × on its chip). */
+  const unselect = useCallback((id: string) => select(selection.current.filter((x) => x.id !== id)), [select]);
 
   useEffect(() => {
     if (!hostRef.current || viewerRef.current) return;
@@ -419,20 +430,20 @@ export default function App() {
     }
   }, [loadVersion, showModel, update]);
 
-  /** First prompt in a session designs a building; later prompts edit its head version — about `target` if one is
-   *  selected. Attached images travel with this prompt only; the version keeps them. */
-  const generate = useCallback((sid: string, prompt: string, target: { id: string; label: string } | null = null,
+  /** First prompt in a session designs a building; later prompts edit its head version — about `targets` if any
+   *  are selected. Attached images travel with this prompt only; the version keeps them. */
+  const generate = useCallback((sid: string, prompt: string, targets: FocusItem[] = [],
                                 images: Attachment[] = []) => {
     const mid = uid();
     update(sid, addMessage({
-      id: mid, role: "user", text: target ? `${prompt}\n\n↳ ${target.label}` : prompt,
+      id: mid, role: "user", text: targets.length ? `${prompt}\n\n↳ ${targets.map((t) => t.label).join(", ")}` : prompt,
       images: images.map((i) => ({ name: i.name, mediaType: i.mediaType, size: i.size, dataUrl: i.dataUrl })),
     }));
-    setFocus(null);
+    select([]);
     return execute(sid, "", (project, onEvent) =>
-      api.sendPrompt(project.id, prompt, project.head, onEvent, planner ?? undefined, target?.id,
+      api.sendPrompt(project.id, prompt, project.head, onEvent, planner ?? undefined, targets.map((t) => t.id),
         images.map((i) => ({ name: i.name, media_type: i.mediaType, data: i.data }))), mid);
-  }, [execute, planner, update]);
+  }, [execute, planner, select, update]);
 
   /** Make an older version the head again (recorded as a new version). */
   const restore = useCallback((sid: string, number: number) =>
@@ -475,7 +486,7 @@ export default function App() {
 
   const startSession = (prompt: string, images: Attachment[] = []) => {
     const title = prompt.length > 48 ? `${prompt.slice(0, 46).trimEnd()}…` : prompt;
-    return generate(create(title), prompt, null, images);
+    return generate(create(title), prompt, [], images);
   };
 
   const openSessionWithModel = async (name: string, bytes: Uint8Array, url?: string) => {
@@ -555,7 +566,7 @@ export default function App() {
     ?? (!shown && active ? "No model in this session yet." : null);
   const v = viewerRef.current;
   // The selection is only meaningful as prompt context when the workspace shows a version of this session.
-  const focusFor = active?.project && loaded?.key.startsWith(`${active.id}:v`) ? focus : null;
+  const focusFor = active?.project && loaded?.key.startsWith(`${active.id}:v`) ? focus : [];
 
   return (
     <IfcViewerProvider runtime={runtime}>
@@ -579,7 +590,7 @@ export default function App() {
             status={status} shown={shown}
             section={section} onSection={(t) => sectionRef.current?.setValue(t)} onFollow={(on) => sectionRef.current?.setFollow(on)}
             onClose={() => { if (active) update(active.id, (s) => ({ ...s, model: undefined })); clearModel(); }}
-            picked={picked} facts={facts} properties={properties} onClearPick={() => v?.clearSelection()}
+            picked={picked} facts={facts} properties={properties} selectedCount={focus.length} onClearPick={() => v?.clearSelection()}
             roomsVisible={roomsVisible} onRooms={toggleRooms}
             inspector={{ width: size.inspectorW, height: size.inspectorH }}
             onResizeInspector={({ width, height }) => {
@@ -592,7 +603,7 @@ export default function App() {
           {active && layout.assistantOpen && (
             <Assistant session={active} busy={busy} planners={planners} planner={planner} setPlanner={setPlanner}
               onSubmit={(t, images) => generate(active.id, t, focusFor, images)} onAttach={openFile}
-              focus={focusFor} onClearFocus={() => v?.clearSelection()}
+              focus={focusFor} onClearFocus={() => v?.clearSelection()} onRemoveFocus={unselect}
               viewing={loaded?.key ?? null} onView={viewVersion} onRestore={(n) => restore(active.id, n)}
               width={size.assistant} onResize={(w) => resize("assistant", w)} onResetWidth={() => resetPanel("assistant")}
               cardHeight={size.turnCard} onResizeCard={(h) => resize("turnCard", h)} onResetCard={() => resetPanel("turnCard")} />

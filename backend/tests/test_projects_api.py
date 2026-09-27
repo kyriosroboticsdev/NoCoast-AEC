@@ -1,6 +1,7 @@
 """The stateful project API end to end, through the mock LLM."""
 
 import json
+import re
 
 import ifcopenshell
 from fastapi.testclient import TestClient
@@ -168,3 +169,19 @@ def test_bridge_without_rooms_compiles(tmp_path):
     assert version.design.elements and version.spec.elements
     assert {e.type for e in version.spec.elements} >= {"slab", "column"}
     assert "no rooms" not in " ".join(version.notes).lower()
+
+
+def test_prompt_with_several_selected_elements():
+    """Shift-click selection: `focus` as a list reaches the model as one numbered description, and the
+    request applies to every selected element."""
+    pid = new_project()
+    v1, _ = prompt(pid, "Two storey house with a kitchen, living room and three bedrooms")
+    exterior = sorted(t for t in guids_by_tag(pid, v1["number"]) if re.fullmatch(r"L1-wall-[a-z0-9-]+-[NSEW]", t))
+    walls = [exterior[0], next(t for t in exterior if t.rsplit("-", 1)[0] != exterior[0].rsplit("-", 1)[0])]  # two rooms
+    assert len(walls) == 2, walls
+    r = client.post(f"/projects/{pid}/prompt", json={"prompt": "add a window", "base_version": v1["number"], "focus": walls})
+    assert r.status_code == 200, r.text
+    v2, evs = done(r.text), events(r.text)
+    focus = next(e for e in evs if e["stage"] == "focus")
+    assert focus["data"]["ids"] == walls and focus["data"]["text"].startswith("2 elements:\n1. ")
+    assert v2["summary"]["counts"]["IfcWindow"] == v1["summary"]["counts"].get("IfcWindow", 0) + 2

@@ -193,9 +193,9 @@ const jsonPost = (body: unknown): RequestInit => ({
 /** New design (no base) or an edit of `baseVersion`. `planner` picks an LLM provider (backend default if omitted). */
 export const sendPrompt = (
   id: string, prompt: string, baseVersion: number | null, onEvent: (e: StageEvent) => void, planner?: string,
-  focus?: string | null, images?: PromptImage[],
+  focus?: string | string[] | null, images?: PromptImage[],
 ) => stream(`/projects/${id}/prompt`,
-  jsonPost({ prompt, base_version: baseVersion, planner, focus: focus ?? undefined, images: images?.length ? images : undefined }),
+  jsonPost({ prompt, base_version: baseVersion, planner, focus: (Array.isArray(focus) ? (focus.length ? focus : undefined) : focus) ?? undefined, images: images?.length ? images : undefined }),
   onEvent);
 
 /** The structured BIM instructions behind a version, and its design record (null for imports and pre-design-layer versions). */

@@ -20,6 +20,8 @@ interface Props {
   picked: Picked | null;
   facts: Facts | null;
   properties: PropertySet[];
+  /** How many elements are selected (shift-click selects several; the info card explains the last one). */
+  selectedCount: number;
   onClearPick: () => void;
   roomsVisible: boolean;
   onRooms: () => void;
@@ -59,7 +61,7 @@ export function Workspace(p: Props) {
               <Showing label={p.shown!.label} preview={p.shown!.preview} />
               <ViewControls viewer={p.viewer} roomsVisible={p.roomsVisible} onRooms={p.onRooms}
                 width={p.viewTools} onResize={p.onResizeViewTools} onResetSize={p.onResetViewTools} />
-              <InfoCard fileName={p.fileName ?? ""} schema={p.schema} picked={p.picked} facts={p.facts} properties={p.properties}
+              <InfoCard fileName={p.fileName ?? ""} schema={p.schema} picked={p.picked} facts={p.facts} properties={p.properties} selectedCount={p.selectedCount}
                 onClear={p.onClearPick} width={p.inspector.width} height={p.inspector.height}
                 onResize={p.onResizeInspector} onResetSize={p.onResetInspector} />
               {p.section && <SectionBar section={p.section} onValue={p.onSection} onFollow={p.onFollow} />}

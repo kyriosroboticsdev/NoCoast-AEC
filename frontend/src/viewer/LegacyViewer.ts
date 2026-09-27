@@ -17,6 +17,7 @@ export interface Picked {
   tag: string; // spec element id (the IFC Tag, or the Name for spaces)
   globalId: string;
   point: { x: number; y: number; z: number }; // hit point in IFC coordinates (metres, z up)
+  additive: boolean; // shift/ctrl/cmd-click: add to (or remove from) the selection instead of replacing it
 }
 
 export interface PropertySet { name: string; props: [string, string][] }
@@ -90,6 +91,14 @@ export class LegacyViewer {
     ro.observe(container);
     this.resize();
     canvas.addEventListener("pointerdown", (e) => (this.downAt = [e.clientX, e.clientY]));
+    // Shift/Ctrl/Cmd-click adds to the selection; without this the browser also extends a text selection
+    // across the page (the info card lights up blue).
+    canvas.addEventListener("mousedown", (e) => {
+      if (e.shiftKey || e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        window.getSelection()?.removeAllRanges();
+      }
+    });
     canvas.addEventListener("pointerup", (e) => {
       const [x, y] = this.downAt;
       if (Math.hypot(e.clientX - x, e.clientY - y) < 4) this.pick(e);
@@ -158,7 +167,7 @@ export class LegacyViewer {
         m.userData.tag = tagOf(line);
         m.userData.opacity = w;
         m.visible = typeCode !== WebIFC.IFCSPACE || this.roomsVisible;
-        if (this.highlighted && m.userData.tag === this.highlighted) this.applyHighlight(m, true);
+        if (this.highlighted.has(m.userData.tag)) this.applyHighlight(m, true);
         this.root.add(m);
         const list = this.byGuid.get(guid);
         if (list) list.push(m); else this.byGuid.set(guid, [m]);
@@ -226,12 +235,16 @@ export class LegacyViewer {
     for (const m of this.live()) if (m.userData.typeCode !== WebIFC.IFCSPACE) this.box.union(bb.setFromObject(m));
   }
 
-  private highlighted: string | null = null;
+  private highlighted = new Set<string>();
 
-  highlight(tag: string | null) {
-    if (this.highlighted) for (const m of this.live()) if (m.userData.tag === this.highlighted) this.applyHighlight(m, false);
-    this.highlighted = tag;
-    if (tag) for (const m of this.live()) if (m.userData.tag === tag) this.applyHighlight(m, true);
+  /** Highlight one element, several (multi-selection), or none, by spec tag. */
+  highlight(tags: string | string[] | null) {
+    const next = new Set((tags === null ? [] : Array.isArray(tags) ? tags : [tags]).filter(Boolean));
+    for (const m of this.live()) {
+      const tag = m.userData.tag as string;
+      if (this.highlighted.has(tag) !== next.has(tag)) this.applyHighlight(m, next.has(tag));
+    }
+    this.highlighted = next;
   }
 
   private applyHighlight(m: THREE.Mesh, on: boolean) {
@@ -410,7 +423,7 @@ export class LegacyViewer {
         const line = this.ifc.GetLine(this.modelID!, id) as Record<string, { value?: string } | undefined>;
         this.onSelect({
           expressID: id, type, name: line.Name?.value ?? line.LongName?.value ?? "",
-          tag: tagOf(line), globalId: line.GlobalId?.value ?? "", point: { x: 0, y: 0, z: 0 },
+          tag: tagOf(line), globalId: line.GlobalId?.value ?? "", point: { x: 0, y: 0, z: 0 }, additive: false,
         });
         return;
       }
@@ -425,7 +438,8 @@ export class LegacyViewer {
     const hits = this.raycaster.intersectObjects(this.live())
       .filter((h) => h.object.visible && (h.object.userData.opacity as number) > 0.5 && h.point.y <= this.clipPlane.constant);
     const hit = hits[0];
-    if (!hit) return this.onSelect(null);
+    const additive = e.shiftKey || e.ctrlKey || e.metaKey;
+    if (!hit) return additive ? undefined : this.onSelect(null); // a shift-click on empty space keeps the selection
     const id = hit.object.userData.expressID as number;
     const line = this.ifc.GetLine(this.modelID, id) as Record<string, { value?: string } | undefined>;
     const p = hit.point;
@@ -436,6 +450,7 @@ export class LegacyViewer {
       tag: tagOf(line),
       globalId: line.GlobalId?.value ?? "",
       point: { x: p.x, y: -p.z, z: p.y },
+      additive,
     });
   }
 }

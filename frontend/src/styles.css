@@ -396,3 +396,8 @@ pre.code { margin: 8px 0 0; max-height: 320px; overflow: auto; font-size: 12px; 
 .focus-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .focus-chip button { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: inherit; }
 .focus-chip button:hover { background: rgba(0, 0, 0, 0.06); }
+.focus-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-height: 96px; overflow-y: auto; }
+.focus-chips .focus-chip { max-width: 240px; }
+.focus-clear { font-size: 12px; color: var(--muted); padding: 2px 6px; border-radius: 6px; }
+.focus-clear:hover { background: var(--hover); color: var(--text); }
+.info-more { margin: -2px 0 6px; }

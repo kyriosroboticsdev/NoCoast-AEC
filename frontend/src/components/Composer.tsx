@@ -17,6 +17,12 @@ export const PLANNER_INFO: Record<string, Omit<PlannerOption, "id">> = {
   openai: { label: "OpenAI-compatible", description: "Any /v1 endpoint set in backend/.env." },
 };
 
+/** A viewer selection the next prompt is about: a spec element id and its readable label. */
+export interface FocusItem {
+  id: string;
+  label: string;
+}
+
 interface Props {
   size: "hero" | "dock";
   busy: boolean;
@@ -26,9 +32,10 @@ interface Props {
   onSubmit: (text: string, images: Attachment[]) => void;
   onAttach: () => void;
   placeholder?: string;
-  /** Viewer selection the next prompt is about, shown as a removable chip. */
-  focus?: { id: string; label: string } | null;
+  /** Viewer selection the next prompt is about (shift-click selects several), shown as removable chips. */
+  focus?: FocusItem[];
   onClearFocus?: () => void;
+  onRemoveFocus?: (id: string) => void;
 }
 
 /** Close a popover on the next mousedown outside it. */
@@ -43,7 +50,7 @@ function useDismiss(open: boolean, setOpen: (v: boolean) => void) {
   return ref;
 }
 
-export function Composer({ size, busy, planners, planner, setPlanner, onSubmit, onAttach, placeholder, focus, onClearFocus }: Props) {
+export function Composer({ size, busy, planners, planner, setPlanner, onSubmit, onAttach, placeholder, focus = [], onClearFocus, onRemoveFocus }: Props) {
   const [text, setText] = useState("");
   // Images go with the next prompt: pick them from the + menu, drop them on the composer, or paste them.
   const [images, setImages] = useState<Attachment[]>([]);
@@ -94,11 +101,22 @@ export function Composer({ size, busy, planners, planner, setPlanner, onSubmit, 
         setDropping(false);
         void attach(imageFiles(e.dataTransfer.files));
       }}>
-      {focus && (
-        <div className="focus-chip" title={`The next prompt is about ${focus.id}`}>
-          <Crosshair size={14} />
-          <span>{focus.label}</span>
-          {onClearFocus && <button onClick={onClearFocus} aria-label="Clear selection"><X size={13} /></button>}
+      {focus.length > 0 && (
+        <div className="focus-chips">
+          {focus.map((f) => (
+            <div key={f.id} className="focus-chip" title={`The next prompt is about ${f.id}. Shift-click in the model to add or remove elements.`}>
+              <Crosshair size={14} />
+              <span>{f.label}</span>
+              {(onRemoveFocus || onClearFocus) && (
+                <button onClick={() => (onRemoveFocus ? onRemoveFocus(f.id) : onClearFocus!())} aria-label={`Remove ${f.label} from the selection`}>
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+          ))}
+          {focus.length > 1 && onClearFocus && (
+            <button className="focus-clear" onClick={onClearFocus}>Clear {focus.length}</button>
+          )}
         </div>
       )}
       {images.length > 0 && (

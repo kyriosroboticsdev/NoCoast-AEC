@@ -9,6 +9,7 @@ endpoint and for raw element ops.
 from __future__ import annotations
 
 import re
+from typing import Sequence
 
 from shapely.ops import unary_union
 
@@ -206,6 +207,16 @@ def describe_focus(design: Design, focus: str) -> str:
             where = f"in {room_name(b.ref)}" if design.room(b.ref) else f"on {b.ref}" if b.ref else f"on {b.level or 'L1'}"
             return f"the {what} {fid} (brick {b.brick}) {where}"
     return f"the element {fid}"
+
+
+def describe_selection(design: Design, focus: str | Sequence[str]) -> str:
+    """One or more viewer selections in words. A single element reads as `describe_focus`; several
+    (shift-click in the viewer) become "N elements:" followed by one numbered line each."""
+    ids = [focus] if isinstance(focus, str) else list(focus)
+    ids = list(dict.fromkeys(i.strip() for i in ids if i and i.strip()))
+    if len(ids) == 1:
+        return describe_focus(design, ids[0])
+    return f"{len(ids)} elements:\n" + "\n".join(f"{n}. {describe_focus(design, i)}" for n, i in enumerate(ids, 1))
 
 
 def describe_design(design: Design, derived: Derived | None = None) -> str:
