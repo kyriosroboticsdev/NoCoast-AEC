@@ -185,7 +185,10 @@ the area the checks measure. Everything else refers to rooms and walls; a wall i
 on or next to it (any shape; required when a room has two walls facing the same way). `roofed: false`
 (courtyard, terrace) and `enclosed: false` (carport, pergola) are set by the room kind and can be
 overridden. `elements` holds free-standing walls (polylines, arcs allowed), slabs, roofs, columns and
-beams outside the room system; a door or window can sit in a free wall via `wall: <id>`.
+beams outside the room system; a door or window can sit in a free wall via `wall: <id>`, and `elevation`
+raises an element above its level (a bridge deck on piers). A design may hold no rooms at all: a footbridge
+is a level with piers, girders, a deck and parapets, and the pipeline accepts it (`agents/shapes.py::bridge_steps`
+is the template's version).
 
 ```jsonc
 {
@@ -570,11 +573,11 @@ shows each reason (usually an edit request the model could not map onto existing
 
 ## 5. Tests
 
-`cd backend && python -m pytest` — 104 tests on the mock LLM, no network: derivation (walls from shared
+`cd backend && python -m pytest` — 107 tests on the mock LLM, no network: derivation (walls from shared
 and free edges, opening placement, stairs and wells, roofs over partial footprints, id stability when a
 room moves, basements) · polygons (L-shaped rooms and their wall ids, ambiguous sides, curved walls as one
 faceted wall with a window, open edges and carports, courtyards, `near` errors, free elements with a gate
-in a garden wall, the template and mock vocabulary) · steps (application, rejection messages, cascades, the streaming runner rejecting an
+in a garden wall, a room-less footbridge through the pipeline, the template and mock vocabulary) · steps (application, rejection messages, cascades, the streaming runner rejecting an
 overlapping room mid-stream) · checks against a template design and the eval fixtures · raw ops
 semantics · partial-JSON parsing of every prefix · compile→lift round trip incl. the design · GlobalId
 survival across edits, ops, revert · the SSE project API end to end (design with streamed steps and
@@ -608,7 +611,7 @@ compiling. `python tools/eval.py` measures accuracy on the real model.
 - **Pitched roofs over non-rectangular footprints** (decompose into rectangles, or a straight-skeleton hip).
 - **L-shaped / two-flight stairs**; ramps; doors in `layout` steps.
 - **Bridges and civil structures as first-class kinds** (deck, span, pier, abutment with their own checks);
-  today they are free-standing elements.
+  today a bridge is a room-less design of free-standing elements, checked only by name.
 - **Lightwells** for basement windows; split levels.
 - **Incremental viewer updates** by GlobalId from the step list (today the whole model reloads and the
   change is animated).

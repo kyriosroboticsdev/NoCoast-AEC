@@ -249,6 +249,16 @@ export class LegacyViewer {
     mat.needsUpdate = true;
   }
 
+  /** Drop the selection: its highlight goes and onSelect hears null. */
+  clearSelection() {
+    this.highlight(null);
+    this.onSelect(null);
+  }
+
+  hasModel() {
+    return this.modelID !== null;
+  }
+
   /** Show or hide IfcSpace room volumes. */
   setRoomsVisible(visible: boolean) {
     this.roomsVisible = visible;

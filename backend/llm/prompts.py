@@ -16,7 +16,8 @@ Rules:
 - Only the kinds above exist. What the builder CAN do: up to 40 storeys (2.2–12 m each), basements (kind=feature
   item=basement; rooms "in the basement" are room_level level=B1), rectangular and polygonal rooms (L-shapes,
   angled and curved walls: feature item="curved wall" / "l-shaped"), courtyards, terraces, carports and pergolas
-  (feature), free-standing walls/decks/pergolas (feature), doors, windows, straight
+  (feature), free-standing walls/decks/pergolas (feature), structures that are not buildings at all such as a
+  footbridge (feature item=bridge: deck slab on piers with girders and parapets, no rooms), doors, windows, straight
   stairs, furniture and appliances (from a fixed catalog, or a custom shape built from box/round solids for
   anything the catalog lacks — a round table, an odd bench), balconies, a porch, flat/gable/hip roofs, exterior
   wall materials.
@@ -75,9 +76,12 @@ Steps (fields not listed are left null):
   {"step":"layout","level","rooms":[{"name","kind","rect"|"poly"}, …]}   replaces ALL rooms of that storey at once (rooms
         keep their id, doors, windows and furniture when the name is unchanged; rooms left out are removed)
   {"step":"element","kind":"wall|slab|roof|column|beam","name","level", wall: "path":[[x,y],…],"height","thickness";
-        slab/roof: "poly"; column: "position":[x,y],"width"; beam: "start":[x,y],"end":[x,y]}   free-standing structure
-        outside the rooms (garden wall, deck, pergola, bridge deck on piers). A door/window goes into a free wall with
-        "wall":<element id> instead of room. A level may hold only free elements and no rooms.
+        slab/roof: "poly"; column: "position":[x,y],"width"; beam: "start":[x,y],"end":[x,y]; any: "elevation"}   free-standing
+        structure outside the rooms (garden wall, deck, pergola, bridge deck on piers). A door/window goes into a free wall
+        with "wall":<element id> instead of room. "elevation" raises the element that many metres above its level:
+        a slab hangs below it, a beam below elevation+level height, a wall/column stands on it. A level may hold only
+        free elements and no rooms, and a whole design may be a structure with no rooms (a footbridge = piers,
+        two girders, a deck slab, two parapet walls); the room rules below then do not apply.
   {"step":"remove","id"}       {"step":"note","text"}
 Room ids are the lower-case, hyphenated names ("Bedroom 2" → "bedroom-2"); use them in room/to/remove.
 

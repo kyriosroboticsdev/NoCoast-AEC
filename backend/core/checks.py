@@ -218,6 +218,21 @@ def _check_one(design: Design, d: Derived, req: Requirement) -> CheckResult:
                 if rooms or named:
                     return CheckResult(req, "met", f"{kind} present" + (f" ({rooms[0].name})" if rooms else f" ({named[0].name})"))
                 return CheckResult(req, "unmet", f"no {kind} room or element")
+        if "bridge" in item or "viaduct" in item or "walkway" in item:
+            decks = [e for e in design.elements if e.kind in ("slab", "roof")]
+            supports = [e for e in design.elements if e.kind in ("column", "beam")]
+            named = [e for e in design.elements if e.name and any(w in e.name.lower() for w in ("bridge", "deck", "span"))]
+            if (decks and supports) or named:
+                return CheckResult(req, "met", f"{len(decks)} deck(s) on {len(supports)} pier(s)/girder(s)" if decks and supports
+                                   else f"free element '{named[0].name}'")
+            return CheckResult(req, "unmet", "no deck slab on piers or girders")
+        if "rail" in item or "parapet" in item or "balustrade" in item:
+            rails = [e for e in design.elements if e.kind == "wall" and e.height and e.height <= 1.5]
+            named = [e for e in design.elements if e.name and any(w in e.name.lower() for w in ("rail", "parapet", "balustrade"))]
+            unroofed = [r for r in design.rooms if not r.roofed]
+            if rails or named or unroofed or design.balconies:
+                return CheckResult(req, "met", f"{len(rails or named)} parapet wall(s)" if rails or named else "railings on open edges")
+            return CheckResult(req, "unmet", "no parapet or railing")
         if "curved" in item or "round" in item or "arc" in item:
             arcs = [r for r in design.rooms if r.poly and any(e.through for e in r.poly)] + [e for e in design.elements if e.kind == "wall" and e.path and any(x.through for x in e.path)]
             return CheckResult(req, "met" if arcs else "unmet", f"{len(arcs)} curved wall(s)" if arcs else "no curved walls")

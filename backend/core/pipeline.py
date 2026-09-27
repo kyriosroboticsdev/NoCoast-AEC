@@ -232,8 +232,8 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
 
         if accepted_total == 0:
             raise PipelineError("the model produced no applicable steps" + (": " + stream.rejected[0][2] if stream.rejected else ""))
-        if not design.rooms:
-            raise PipelineError("the design has no rooms")
+        if not (design.rooms or design.elements or design.custom_shapes):
+            raise PipelineError("the design has no rooms and no free-standing elements")
 
         emit("compile", "deriving geometry and compiling the final IFC")
         spec, derive_notes = derive(design)

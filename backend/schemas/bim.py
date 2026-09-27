@@ -52,6 +52,7 @@ class Wall(_Element):
     end: Point
     path: Optional[list[Point]] = Field(None, min_length=2, description="Polyline axis for faceted (curved) walls")
     height: Optional[float] = Field(None, gt=0, description="Defaults to the level height")
+    elevation: float = Field(0.0, ge=0, description="Offset above the level (a bridge deck on piers)")
     thickness: float = Field(0.2, gt=0)
     external: bool = False
     material: Optional[WallMaterial] = None
@@ -94,6 +95,7 @@ class Slab(_Element):
     level: str
     outline: list[Point] = Field(min_length=3)
     thickness: float = Field(0.2, gt=0)
+    elevation: float = Field(0.0, ge=0, description="Offset above the level (a bridge deck on piers)")
 
 
 class Roof(_Element):
@@ -104,6 +106,7 @@ class Roof(_Element):
     shape: RoofShape = "flat"
     pitch: float = Field(30.0, ge=5, le=60, description="Degrees; gable/hip only")
     ridge: Optional[Literal["x", "y"]] = Field(None, description="Ridge direction for a gable; default: the long side")
+    elevation: float = Field(0.0, ge=0, description="Offset above the level (a bridge deck on piers)")
 
 
 class Door(_Element):
@@ -131,6 +134,7 @@ class Column(_Element):
     width: float = Field(0.3, gt=0)
     depth: float = Field(0.3, gt=0)
     height: Optional[float] = Field(None, gt=0)
+    elevation: float = Field(0.0, ge=0, description="Offset above the level (a bridge deck on piers)")
 
 
 class Beam(_Element):
@@ -140,6 +144,7 @@ class Beam(_Element):
     end: Point
     width: float = Field(0.2, gt=0)
     depth: float = Field(0.3, gt=0, description="Vertical size; the beam hangs below the top of the level")
+    elevation: float = Field(0.0, ge=0, description="Offset above the level (a bridge deck on piers)")
 
 
 class Space(_Element):

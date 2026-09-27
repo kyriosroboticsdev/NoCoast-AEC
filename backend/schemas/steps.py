@@ -92,6 +92,7 @@ class Step(BaseModel):
     width: Optional[float] = None
     height: Optional[float] = None
     depth: Optional[float] = None
+    elevation: Optional[float] = Field(None, description="element: metres above the level (a bridge deck on piers)")
     sill: Optional[float] = Field(None, description="window sill height")
     to_level: Optional[str] = Field(None, description="stair: level it reaches (null = the one above)")
     below_ground: Optional[bool] = Field(None, description="level: a basement (id B1, B2 …)")
@@ -573,7 +574,7 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
         try:
             e = FreeDef(id=eid, kind=kind, level=level, name=step.name, path=step.path, poly=step.poly,
                         at=_pt_or_none(step.position or step.near), start=_pt_or_none(step.start), end=_pt_or_none(step.end),
-                        height=step.height, thickness=step.thickness, width=size, depth=step.depth)
+                        height=step.height, thickness=step.thickness, width=size, depth=step.depth, elevation=step.elevation or 0.0)
         except ValueError as exc:
             raise StepError(f"element '{eid}': {_fmt(exc)}") from exc
         d.elements = [x for x in d.elements if x.id != eid]

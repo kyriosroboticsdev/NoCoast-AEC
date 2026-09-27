@@ -47,7 +47,7 @@ interface Open {
   t0: number;
 }
 
-export function stageTracer(push: (step: TraceStep) => void, hooks: { onPreview?: (p: Preview) => void } = {}) {
+export function stageTracer(push: (step: TraceStep) => void, hooks: { onPreview?: (p: Preview) => void; onStep?: (step: Step, ok: boolean) => void } = {}) {
   const rooms: Record<string, string> = {}; // room id / slug → display name, learned from the steps
   const roomLevel: Record<string, string> = {};
   let top: Open | null = null; // the running top-level step
@@ -141,6 +141,8 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: { onPreview?
       case "roof": return `${cap(String(step.kind ?? "flat"))} roof${step.pitch ? ` at ${step.pitch}°` : ""}`;
       case "material": return `${cap(String(step.material ?? step.kind ?? ""))} exterior walls`;
       case "column": return `A column on ${levelName(step.level)}`;
+      case "element": return `${cap(kindName(step.name ?? step.kind ?? "element"))}${step.name ? ` (free ${kindName(step.kind)})` : ""} on ${levelName(step.level)}${step.elevation ? `, ${step.elevation} m up` : ""}`;
+      case "mep": case "plumbing": case "electrical": return message || "Routing services";
       case "remove": return `Removing ${roomName(step.id)}`;
       case "note": return String(step.text ?? "");
       default: return message || "A step";
@@ -164,6 +166,7 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: { onPreview?
     const step = (d.step as Step) ?? {};
     const ok = d.ok !== false;
     if (ok) learn(step);
+    hooks.onStep?.(step, ok);
     const what = describe(step, e.message);
     // Steps before the first storey (building, levels) gather under one build step; after that they
     // nest under their storey's layer, so no extra top-level step is needed.

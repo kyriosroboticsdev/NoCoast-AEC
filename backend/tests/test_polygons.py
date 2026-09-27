@@ -174,6 +174,50 @@ def test_template_and_mock_cover_the_new_vocabulary():
     assert steps[0]["kind"] == "courtyard"
 
 
+def test_a_design_with_no_rooms_derives_and_compiles():
+    """A footbridge: piers, girders, a raised deck and parapets on a level that holds no room at all."""
+    from agents.shapes import bridge_steps
+    d = Design(levels=[LevelDef(id="L1")])
+    for s in bridge_steps(d):
+        d, _ = apply_step(d, Step.model_validate(s))
+    assert not d.rooms and len(d.elements) == 9
+    der = analyze(d)
+    assert {e.type for e in der.spec.elements} == {"column", "beam", "slab", "wall"}
+    deck = _els(der, "slab")[0]
+    assert deck.elevation == 3.3 and _els(der, "column")[0].height == 2.4 and _els(der, "wall")[0].elevation == 3.3
+    model, _ = compile_ifc(der.spec, {}, None)
+    assert not model.by_type("IfcSpace") and len(model.by_type("IfcColumn")) == 4 and model.by_type("IfcSlab")
+    # The deck really sits above the piers: its placement is the level's elevation plus its own.
+    slab = model.by_type("IfcSlab")[0]
+    assert abs(slab.ObjectPlacement.RelativePlacement.Location.Coordinates[2] - 3.0) < 1e-6
+
+
+def test_bridge_prompt_builds_without_rooms(tmp_path):
+    """'Build a bridge' through the whole pipeline on the mock: no rooms, and no 'design has no rooms' error."""
+    from core.pipeline import run_prompt
+    from llm.mock import MockLLM
+    from store.db import Store
+    store = Store(tmp_path / "bridge.db", tmp_path / "out")
+    pid = store.create_project("bridge").id
+    v = run_prompt(store, MockLLM(), pid, "build a bridge")
+    assert v.design is not None and not v.design.rooms and len(v.design.elements) == 9
+    assert {e.type for e in v.spec.elements} == {"column", "beam", "slab", "wall"}
+    assert any("bridge" in r["text"] and r["status"] == "met" for r in v.checks)
+
+
+def test_bridge_check_needs_a_deck_on_supports():
+    from core.checks import check
+    from schemas.requirements import Requirement
+    reqs = [Requirement(text="a bridge", kind="feature", item="bridge"), Requirement(text="railings", kind="feature", item="railing")]
+    d = Design(levels=[LevelDef(id="L1")], elements=[FreeDef(id="deck", kind="slab", name="Platform", poly=[[0, 0], [20, 0], [20, 3], [0, 3]], elevation=4.0)])
+    status = {r.requirement.item: r.status for r in check(d, analyze(d), reqs)}
+    assert status == {"bridge": "unmet", "railing": "unmet"}
+    d.elements += [FreeDef(id="pier-1", kind="column", name="Pier 1 South", at=[2, 1.5], height=4.0),
+                   FreeDef(id="south-parapet", kind="wall", name="South Parapet", path=[[0, 0.1], [20, 0.1]], height=1.1, elevation=4.0)]
+    status = {r.requirement.item: r.status for r in check(d, analyze(d), reqs)}
+    assert status == {"bridge": "met", "railing": "met"}
+
+
 def test_orientation_check_counts_open_sides():
     from core.checks import check
     from schemas.requirements import Requirement
