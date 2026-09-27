@@ -217,7 +217,7 @@ def _narrate(raw: dict, design: Design) -> str:  # noqa: PLR0911, PLR0912 - one 
     if kind == "window":
         glazing = str(raw.get("kind") or "standard")
         label = {"standard": "Window", "large": "Picture window", "floor": "Floor-to-ceiling glazing",
-                 "small": "High-level window"}.get(glazing, f"{glazing} window")
+                 "small": "High-level window"}.get(glazing, f"{glazing.replace('_', ' ').capitalize()} window")
         where = f"the {side_name(raw['side'])} elevation of " if raw.get("side") else ""
         return f"{label} to {where}{room_name(design, raw.get('room'))}"
 

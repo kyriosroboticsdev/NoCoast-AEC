@@ -1,9 +1,9 @@
 // Turns the backend's pipeline stream into the assistant's reasoning trace: a design log, grouped
 // the way a project actually runs — brief, massing, floor plates, circulation, envelope, structure,
-// fit-out, review, issue.
+// fit-out, review, IFC, code review, cost and carbon, drawing issue.
 //
 // Stages (backend README §4.5): requirements · focus · approach · build · llm · stream · draft ·
-// step · partial · verify · compile · done · error.
+// step · partial · verify · compile · code · estimate · deliver · done · error.
 //
 // The backend does the narration now: a `step` event carries `headline` (a sentence about the
 // building), `why` (the model's own reasoning) and `facts` (areas, dimensions, running totals), and
@@ -26,6 +26,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 export const PHASE_TITLES: Record<string, string> = {
   brief: "Reading the brief",
   research: "Looking up parts and precedents",
+  concept: "Design thinking",
   massing: "Massing and storey heights",
   plan: "Planning the floor plates",
   circulation: "Circulation and access",
@@ -33,9 +34,22 @@ export const PHASE_TITLES: Record<string, string> = {
   structure: "Structure and site works",
   fitout: "Fit-out and equipment",
   review: "Checking the model against the brief",
-  output: "Issuing the model",
+  output: "Compiling the IFC model",
+  code: "Code review",
+  cost: "Cost and carbon",
+  issue: "Issuing the drawing set",
 };
+
+type Tone = NonNullable<TraceStep["tone"]>;
+interface Finding {
+  title: string; reference: string; status: Tone; value: string; target: string; detail: string; advice: string;
+  fix?: number;
+}
+
+const money = (v: number) => (v >= 1e6 ? `$${(v / 1e6).toFixed(2)}M` : `$${Math.round(v / 1e3).toLocaleString()}k`);
 const PHASE_ORDER = Object.keys(PHASE_TITLES);
+/** Phases whose groups collect the build's moves, and so carry its running tally. */
+const BUILDING = new Set<string>(["massing", "plan", "circulation", "envelope", "structure", "fitout"]);
 
 export function levelName(id: unknown): string {
   if (typeof id !== "string") return "the ground floor";
@@ -88,12 +102,54 @@ function metricOf(kind: string, facts: Record<string, unknown> | undefined): str
   return bits.join(" · ") || null;
 }
 
+/**
+ * A research call as a line in the design log: "Specified the school desk — 1.2 × 0.55 × 0.75 m"
+ * rather than the raw call and the brick card it returned. Returns the title and any detail worth
+ * keeping (a check's findings); the full card is for the model, not the reader.
+ */
+export function narrateTool(tool: string, args: Record<string, unknown>, result: string): { title: string; detail: string | null; failed: boolean } {
+  const first = result.split("\n")[0] ?? "";
+  const failed = result.startsWith("error:") || /^(no |not valid|invalid)/.test(first);
+  const id = kindName(args.id);
+  switch (tool) {
+    case "get_brick": {
+      if (failed) return { title: `No ${id} in the library — to be modelled as a purpose-made part`, detail: null, failed: false };
+      const name = /—\s*([^[]+?)\s*\[/.exec(first)?.[1] ?? id;
+      const size = /(\d[\d.]*)x(\d[\d.]*)x(\d[\d.]*) m/.exec(first);
+      const inSentence = name.replace(/[\w-]+/g, (w) => (w === w.toUpperCase() ? w : w.toLowerCase()));
+      return { title: `Specified the ${inSentence}` + (size ? ` — ${size[1]} × ${size[2]} × ${size[3]} m` : ""), detail: null, failed };
+    }
+    case "get_skill": {
+      const topic = /^SKILL [\w-]+:\s*(.+)$/.exec(first)?.[1]?.replace(/\s*\([^)]*\)\s*$/, "");
+      return { title: topic ? `Consulted the guidance on ${topic.replace(/^\w/, (c) => c.toLowerCase())}` : `Consulted the ${id} guidance`, detail: null, failed };
+    }
+    case "search_bricks": {
+      const hits = failed ? 0 : result.split("\n").filter(Boolean).length;
+      return { title: `Searched the parts library for “${String(args.query ?? args.tag ?? "")}” — ${hits ? `${hits} ${hits === 1 ? "match" : "matches"}` : "nothing suitable"}`, detail: null, failed: false };
+    }
+    case "list_skills":
+      return { title: "Reviewed the index of design guidance", detail: null, failed };
+    case "check_asset":
+      return { title: failed ? "A purpose-made part failed its check and was redrawn" : "Checked a purpose-made part builds", detail: failed ? first : null, failed };
+    case "check_design":
+    case "structure_report": {
+      const what = tool === "check_design" ? "Coordination check" : "Structural check";
+      const lines = result.split("\n").filter(Boolean);
+      const clean = lines.length === 0 || /^no issues|nothing to check/.test(first);
+      return { title: clean ? `${what}: no issues` : `${what}: ${plural(lines.length, "finding")}`, detail: clean ? null : lines.slice(0, 3).join("\n"), failed: false };
+    }
+    default:
+      return { title: cap(`${tool.replace(/_/g, " ")}${id ? ` ${id}` : ""}`), detail: first.slice(0, 200) || null, failed };
+  }
+}
+
 export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) {
   const rooms: Record<string, string> = {}; // room id / slug → display name, learned from the steps
   const roomLevel: Record<string, string> = {};
   const groups: Record<string, Open> = {}; // phase → its group step
   const layerOf: Record<string, Open> = {}; // storey id → its floor-plate step inside the plan group
   let lastGroup: Open | null = null;
+  const tally: Record<string, { applied: number; skipped: number }> = {}; // phase → its moves
   let applied = 0;
   let skipped = 0;
   let previews = 0;
@@ -231,8 +287,10 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
     if (ok) learn(step);
     hooks.onStep?.(step, ok);
     hooks.onLive?.(null);
-    const what = typeof d.headline === "string" && d.headline ? d.headline : describe(step, e.message);
-    const phase = String(d.phase ?? facts?.phase ?? phaseOf(kind));
+    const what = (typeof d.headline === "string" && d.headline ? d.headline : describe(step, e.message))
+      .replace(/^\p{Ll}/u, (c) => c.toUpperCase());
+    // A note is the model's own commentary on the design, not part of reading the brief.
+    const phase = kind === "note" ? "concept" : String(d.phase ?? facts?.phase ?? phaseOf(kind));
     const why = typeof d.why === "string" ? d.why : null;
     if (typeof facts?.gfa === "number") gfa = facts.gfa;
 
@@ -248,6 +306,7 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
         layerOf[step.level] = open("plan", what, null, { layer: true, parent: plan.step.id, why, metric: metricOf(kind, facts) });
       }
       applied++;
+      (tally.plan ??= { applied: 0, skipped: 0 }).applied++;
       return;
     }
     if (ok && kind !== "room") for (const l of Object.values(layerOf)) finish(l);
@@ -256,6 +315,9 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
     const level = typeof step.level === "string" ? step.level
       : typeof step.room === "string" ? roomLevel[step.room] : undefined;
     const parent = (kind === "room" && level && layerOf[level]) || group(phase);
+    const count = (tally[parent.step.phase] ??= { applied: 0, skipped: 0 });
+    if (ok) count.applied++;
+    else count.skipped++;
 
     if (ok) {
       applied++;
@@ -265,7 +327,7 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
       child(parent, what, pruned, "done", { why, metric: metricOf(kind, facts) });
     } else {
       skipped++;
-      child(parent, `Could not ${what.replace(/^\w/, (c) => c.toLowerCase())}`, reason(d.error), "error");
+      child(parent, `${what} — set aside`, reason(d.error), "error");
     }
   }
 
@@ -298,17 +360,19 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
             const bricks = (d.bricks as string[] | undefined) ?? [];
             const skills = (d.skills as string[] | undefined) ?? [];
             if (d.chars !== undefined) {
-              finish(g, { title: `Read ${plural(bricks.length, "part")} and ${plural(skills.length, "playbook")}` });
+              finish(g, { title: `Read ${plural(bricks.length, "part")} and ${plural(skills.length, "playbook")}`, detail: null });
               return;
             }
           }
           setDetail(g, e.message);
           return;
         }
-        case "tool":
-          child(group("research"), cap(e.message), (d.result as string | undefined)?.slice(0, 400) ?? null,
-                String(d.result ?? "").startsWith("error:") ? "error" : "done");
+        case "tool": {
+          const args = (d.args as Record<string, unknown> | undefined) ?? {};
+          const line = narrateTool(String(d.tool ?? args.tool ?? ""), args, String(d.result ?? ""));
+          child(group("research"), line.title, line.detail, line.failed ? "error" : "done");
           return;
+        }
         case "coordinate": {
           const g = group("review", "Coordinating clashes, services and structure");
           const issues = (d.issues as { message?: string; level?: string }[] | undefined) ?? [];
@@ -345,9 +409,33 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
           }
           return;
         }
+        case "think": {
+          // The model's own reasoning (Claude's summarised thinking, or an open model's <think> block).
+          if (typeof d.live === "string") {
+            hooks.onLive?.(`Thinking · ${d.live}`);
+            return;
+          }
+          const purpose = String(d.purpose ?? "");
+          const phase = purpose === "requirements" ? "brief" : purpose === "research" ? "research"
+            : purpose === "build" && !applied ? "concept" : "review";
+          const g = group(phase);
+          const text = typeof d.text === "string" ? d.text : "";
+          const heading = typeof d.title === "string" && d.title ? d.title : null;
+          // Without a heading the title is the paragraph's first sentence; don't say it twice.
+          const flat = text.replace(/\s+/g, " ").trim();
+          const lead = /^(.{12,320}?[.!?])(?:\s+(.*))?$/.exec(flat);
+          const [title, body] = heading ? [heading, text]
+            : lead ? [lead[1], lead[2] ?? ""]
+            : flat.length <= 320 ? [flat || e.message, ""]
+            : [e.message, text];
+          child(g, title, null, "done", { why: body && body !== title ? body : null, tone: null, badge: null });
+          return;
+        }
         case "llm":
           if (d.usage_total) hooks.onUsage?.(d.usage_total as TokenUsage);
-          if (d.provider && lastGroup) setDetail(lastGroup, `${d.provider}${d.model ? ` ${d.model}` : ""} is drawing…`);
+          if (d.provider && lastGroup && BUILDING.has(lastGroup.step.phase)) {
+            setDetail(lastGroup, `${d.provider}${d.model ? ` ${d.model}` : ""} is drawing…`);
+          }
           return;
         case "stream":
           if (d.waiting) hooks.onLive?.(e.message);
@@ -357,8 +445,9 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
           return;
         case "step":
           onStep(e);
-          if (lastGroup) {
-            setDetail(lastGroup, [plural(applied, "move"), skipped ? `${skipped} skipped` : "",
+          if (lastGroup && BUILDING.has(lastGroup.step.phase)) {
+            const t = tally[lastGroup.step.phase] ?? { applied: 0, skipped: 0 };
+            setDetail(lastGroup, [plural(t.applied, "move"), t.skipped ? `${t.skipped} skipped` : "",
               gfa ? `${Math.round(gfa)} m² so far` : "", previews ? `preview ${previews}` : ""].filter(Boolean).join(" · "));
           }
           return;
@@ -385,9 +474,76 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
           hooks.onLive?.(null);
           for (const l of Object.values(layerOf)) finish(l);
           for (const [name, g] of Object.entries(groups)) if (name !== "output") finish(g);
-          group("output", "Issuing the model");
-          setDetail(groups.output, "walls, slabs, openings and roof → IFC");
+          group("output");
+          setDetail(groups.output, "walls, slabs, openings and roof → IFC4");
           return;
+        case "code": {
+          const g = group("code");
+          if (d.error) {
+            finish(g, { title: "Code review unavailable", detail: String(d.error) });
+            return;
+          }
+          const score = (d.score ?? {}) as Record<string, number>;
+          const occ = (d.occupancy ?? {}) as Record<string, unknown>;
+          for (const c of (d.checks as Finding[] | undefined) ?? []) {
+            const measured = c.value && c.target ? `${c.value} · required ${c.target}` : c.value || c.target || null;
+            child(g, c.title, c.status === "pass" ? measured : [measured, c.detail].filter(Boolean).join("\n"),
+                  "done", { badge: c.reference, tone: c.status, why: c.advice || null });
+          }
+          finish(g, {
+            title: `Code review · ${d.code ?? ""}: ${score.pass ?? 0} of ${score.total ?? 0} clauses pass`,
+            detail: `Occupancy ${occ.group ?? "?"} · ${occ.load ?? "?"} occupants · ${score.fail ? `${score.fail} to fix` : "nothing failing"}${score.warn ? ` · ${score.warn} to review` : ""}`,
+            tone: score.fail ? "fail" : score.warn ? "warn" : "pass",
+          });
+          return;
+        }
+        case "precheck": {
+          // The code screen before issue: failures go back to the model as a fix round.
+          const score = (d.score ?? {}) as Record<string, number>;
+          const failing = (d.checks as Finding[] | undefined) ?? [];
+          const g = group("review", failing.length ? "Code screen before issue" : undefined);
+          if (!failing.length) {
+            child(g, `Code screen before issue: ${score.pass ?? 0} of ${score.total ?? 0} clauses pass`, null, "done", { badge: String(d.code ?? "").split(" ")[0] || null, tone: "pass" });
+            return;
+          }
+          for (const c of failing) {
+            const proposed = c.fix ? ` · ${c.fix} buildable fix step${c.fix === 1 ? "" : "s"} proposed` : "";
+            child(g, `${c.title}: ${c.value} (required ${c.target})`, null, "done",
+                  { badge: c.reference, tone: "fail", why: c.advice || proposed ? `Sent back to the model: ${c.advice}${proposed}` : null });
+          }
+          setDetail(g, `${failing.length} clause${failing.length === 1 ? "" : "s"} failing · the model is fixing them before the drawings are issued`);
+          return;
+        }
+        case "estimate": {
+          const g = group("cost");
+          const cost = (d.cost ?? {}) as Record<string, number | string>;
+          const carbon = (d.carbon ?? {}) as Record<string, unknown>;
+          const best = d.best as { move: string; saving_kg: number; per_m2: number } | null | undefined;
+          if (typeof cost.total === "number") {
+            child(g, `Construction cost ${money(cost.total)} · $${Number(cost.per_sf).toLocaleString()}/sf`,
+                  `${money(Number(cost.low))} – ${money(Number(cost.high))} range · ${String(cost.class ?? "")}`,
+                  "done", { badge: "UniFormat II", tone: "info", why: String(cost.basis ?? "") || null });
+          }
+          if (typeof carbon.per_m2 === "number") {
+            const meets = carbon.meets_2030 === true;
+            child(g, `Upfront carbon ${carbon.per_m2} kgCO₂e/m² (A1–A5)`,
+                  `LETI ${carbon.typology} · 2020 target ${carbon.target_2020} · 2030 target ${carbon.target_2030}`,
+                  "done", { badge: `LETI ${carbon.band}`, tone: meets ? "pass" : "warn",
+                            why: best ? `${best.move} would save ${(best.saving_kg / 1000).toFixed(1)} tCO₂e, taking it to ${best.per_m2} kgCO₂e/m².` : null });
+          }
+          finish(g, { title: cap(e.message) });
+          return;
+        }
+        case "deliver": {
+          const g = group("issue");
+          const sheets = (d.sheets as { number: string; title: string }[] | undefined) ?? [];
+          for (const s of sheets) child(g, s.title, null, "done", { badge: s.number });
+          child(g, "Plans in model space on NCS layers, one storey per sheet of CAD", null, "done", { badge: "DXF" });
+          child(g, "Area, room, door, window and equipment schedules with live totals", null, "done", { badge: "XLSX" });
+          child(g, "Open issues exported as BCF 2.1, linked to IFC GlobalIds", null, "done", { badge: "BCF" });
+          finish(g, { title: `Issued ${plural(sheets.length, "sheet")}, CAD plans, schedules, BCF issues and the cost plan`, detail: null });
+          return;
+        }
         case "done":
           hooks.onLive?.(null);
           closeAll();

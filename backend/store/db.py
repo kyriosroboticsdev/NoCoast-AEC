@@ -122,8 +122,8 @@ class Store:
 
     # --- projects --------------------------------------------------------
 
-    def create_project(self, name: str) -> Project:
-        project = Project(id=uuid.uuid4().hex[:12], name=name, created=time.time())
+    def create_project(self, name: str, *, project_id: str | None = None, created: float | None = None) -> Project:
+        project = Project(id=project_id or uuid.uuid4().hex[:12], name=name, created=created or time.time())
         with self._lock:
             self._conn.execute("INSERT INTO projects VALUES (?, ?, ?)", (project.id, project.name, project.created))
             self._conn.commit()

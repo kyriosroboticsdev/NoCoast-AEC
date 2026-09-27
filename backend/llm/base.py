@@ -18,6 +18,7 @@ from typing import Callable, Protocol
 
 OnText = Callable[[str], None]
 OnNote = Callable[[str], None]  # provider remarks worth surfacing to the user ("retrying without grammar…")
+OnThinking = Callable[[str], None]  # the model's accumulated reasoning, for providers that expose it
 
 _THINK = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$")
@@ -101,6 +102,16 @@ def clean_reply(text: str) -> str:
     if "<think>" in text and "</think>" not in text:  # still thinking: nothing usable yet
         return ""
     return _FENCE.sub("", text.strip())
+
+
+def thinking_of(text: str) -> str:
+    """The reasoning inside `<think>` blocks of a (possibly still streaming) reply, for the
+    open-weight models that think inline rather than in a separate channel."""
+    start = text.find("<think>")
+    if start < 0:
+        return ""
+    end = text.find("</think>", start)
+    return text[start + 7:end if end >= 0 else None].strip()
 
 
 def body(text: str) -> str:
