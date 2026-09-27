@@ -182,7 +182,7 @@ class Stair(_Element):
     width: float = Field(1.0, gt=0)
     rise: Optional[float] = Field(None, gt=0, description="Total rise; defaults to the level height")
     riser: float = Field(0.18, gt=0)
-    going: float = Field(0.25, gt=0)
+    going: float = Field(0.28, gt=0)
     to_level: Optional[str] = Field(None, description="Level whose floor slab gets the stair opening")
 
     def steps(self, rise: float) -> int:

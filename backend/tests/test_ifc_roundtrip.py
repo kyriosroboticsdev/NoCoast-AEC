@@ -32,7 +32,7 @@ def test_lift_roundtrip(tmp_path):
 def test_guids_survive_edits(tmp_path):
     spec = TemplatePlanner().plan("one storey cabin").spec
     model1, guids1 = compile_ifc(spec, {})
-    spec2, _ = apply_ops(spec, [ModifyElement(id="L1-wall-hall-S", set={"thickness": 0.4}), DeleteElement(id="win-kitchen-W")])
+    spec2, _ = apply_ops(spec, [ModifyElement(id="L1-wall-hall-S", set={"thickness": 0.4}), DeleteElement(id="win-kitchen-E")])
     model2, guids2 = compile_ifc(spec2, guids1)
     guids2 = prune_guids(spec2, guids2)
 
@@ -41,7 +41,7 @@ def test_guids_survive_edits(tmp_path):
 
     assert gid(model1, "L1-wall-hall-S") == gid(model2, "L1-wall-hall-S")  # modified in place, same GlobalId
     assert gid(model1, "L1-floor") == gid(model2, "L1-floor")              # untouched
-    assert key_for_element("win-kitchen-W") not in guids2                    # deleted ids are dropped
+    assert key_for_element("win-kitchen-E") not in guids2                    # deleted ids are dropped
     assert model1.by_type("IfcProject")[0].GlobalId == model2.by_type("IfcProject")[0].GlobalId
     ids2 = [p.GlobalId for p in model2.by_type("IfcRoot")]
     assert len(ids2) == len(set(ids2))

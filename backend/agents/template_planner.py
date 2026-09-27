@@ -6,13 +6,14 @@ fallback when an LLM is unavailable.
 
 from __future__ import annotations
 
+import math
 import re
 
 from agents import shapes
 from agents.base import PlanResult
 from agents.brick_words import mentioned_bricks
 from bricks import library
-from core.derive import DesignError, analyze
+from core.derive import WINDOW_SIZES, DesignError, analyze
 from core.placement import candidates, first_fit
 from core.rooms import compass
 from schemas.design import Design, Edge, LevelDef, RoomDef, slug
@@ -84,7 +85,8 @@ NON_DOMESTIC = [
     (r"\b(workshops?|maker ?spaces?|machine shops?|fabrication)\b", "workshop", 6.0, "shed"),
     (r"\b(barns?|stables?|farm building|granary)\b", "barn", 6.0, "gable"),
     (r"\b(car ?parks?|parking (deck|structure|garage))\b", "parking", 2.8, "flat"),
-    (r"\b(office (block|building|tower)|headquarters|hq)\b", "office", 3.6, "flat"),
+    (r"\b(office (block|building|tower)|headquarters|hq|stor(e)?y offices?(?! room)|(small|new) offices?(?! room))\b",
+     "office", 3.6, "flat"),
     (r"\b(schools?|colleges?|academy|classroom block)\b", "school", 3.6, "flat"),
     (r"\b(clinics?|surgery|health ?(centre|center)|hospital|ward block)\b", "clinic", 3.3, "flat"),
     (r"\b(shops?|retail|stores?|supermarkets?|showrooms?|caf[eé]s?|restaurants?)\b", "retail", 4.5, "flat"),
@@ -217,6 +219,13 @@ def _assign_rooms(text: str, storeys: int, building: str | None = None) -> list[
             floors[i] = [(f"{name} {i + 1}", kind)]
         else:
             floors[i] = [(f"Office {i + 1}", "office"), (f"Meeting Room {i + 1}", "meeting")]
+    # A brief rarely lists the WC, but a building people occupy cannot go without one (IRC R306 / IBC 2902).
+    occupied = [kind for rooms in floors for _, kind in rooms if kind not in UNSERVED]
+    if occupied and not any(kind == "bathroom" for rooms in floors for _, kind in rooms):
+        if building:
+            floors[0].append(("WC", "bathroom"))
+        else:
+            floors[-1].append(("Bathroom", "bathroom"))
     k = 0
     for rooms in floors:
         for j, (r, kind) in enumerate(rooms):
@@ -224,6 +233,14 @@ def _assign_rooms(text: str, storeys: int, building: str | None = None) -> list[
                 k += 1
                 rooms[j] = (f"Bedroom {k}", kind)
     return floors
+
+
+SIDE_NAMES = {"N": "north", "S": "south", "E": "east", "W": "west"}
+UNSERVED = {"garage", "carport", "courtyard", "terrace", "pergola", "parking", "barn", "stable", "plant", "storage",
+            "warehouse", "hall", "other"}
+GLAZING_AREA = {"standard": 1.44, "large": 3.2, "ribbon": 8.4, "clerestory": 2.7, "floor": 4.4, "small": 0.36}
+DAYLIT = {"living", "kitchen", "dining", "bedroom", "office", "classroom", "meeting", "ward", "clinic", "reception",
+          "cafe", "lab", "retail", "gym", "auditorium", "workshop"}
 
 
 def typology(text: str) -> tuple[str, float, str] | None:
@@ -345,7 +362,10 @@ def template_steps(prompt: str) -> list[dict]:
         if level == "L1":
             side = "S" if "S" in derived.rooms[hall].sides else derived.rooms[hall].sides[0]
             steps.append({"step": "door", "room": hall, "to": "outside", "side": side,
-                          "why": "the entrance opens straight into the hall, so the circulation starts at the front door"})
+                          **({"kind": "double"} if kind_of_building else {}), **({"at": 0.7} if storeys > 1 else {}),
+                          "why": ("a pair of 915 mm leaves at the entrance gives an accessible 32 in clear opening "
+                                  "and the exit width for the whole occupant load" if kind_of_building else
+                                  "the entrance opens straight into the hall, so the circulation starts at the front door")})
     # A room that takes vehicles or pallets gets a shutter straight to the outside, not a single leaf.
     for r in design.rooms:
         if r.kind in ("warehouse", "workshop", "parking", "barn") and derived.rooms[r.id].sides:
@@ -362,11 +382,23 @@ def template_steps(prompt: str) -> list[dict]:
             glazing = ("clerestory" if r.kind in ("warehouse", "workshop", "auditorium", "gym", "barn")
                        else "ribbon" if r.kind in ("retail", "office", "reception", "cafe") and design.level(r.level).height >= 3.5
                        else "large" if big else "standard")
-            if r.poly:  # polygons name walls by a point: the middle of the longest wall on that side
-                wall = max(info.exterior[sides[0]], key=lambda w: w.length)
-                steps.append({"step": "window", "room": r.id, "near": list(wall.mid), "kind": glazing})
-            else:
-                steps.append({"step": "window", "room": r.id, "side": sides[0], "kind": glazing})
+            # Habitable rooms get enough glass for 10 % of their floor area (above the 8 % of IBC 1204.2).
+            need = max(1, math.ceil(0.10 * info.polygon.area / GLAZING_AREA[glazing])) if r.kind in DAYLIT else 1
+            width = WINDOW_SIZES[glazing][0]
+            for side in sides:
+                if need <= 0:
+                    break
+                wall = max(info.exterior[side], key=lambda w: w.length)
+                n = min(need, max(1, int(wall.length // (width + 0.9))))
+                need -= n
+                for j in range(n):
+                    at = {} if n == 1 else {"at": round((j + 1) / (n + 1), 3)}
+                    why = ({"why": f"{n} windows on the {SIDE_NAMES[side]} wall bring the glazing to about 10 % of "
+                                   f"the floor area, clear of the 8 % daylight minimum"} if j == 0 and n > 1 else {})
+                    if r.poly:  # polygons name walls by a point: the middle of the longest wall on that side
+                        steps.append({"step": "window", "room": r.id, "near": list(wall.mid), "kind": glazing, **why})
+                        break
+                    steps.append({"step": "window", "room": r.id, "side": side, "kind": glazing, **at, **why})
     # No side: the flight takes the hall's longest straight wall, which is where it actually fits.
     if storeys > 1:
         steps.append({"step": "stair", "room": "hall",

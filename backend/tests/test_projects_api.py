@@ -66,8 +66,8 @@ def test_design_then_edit_keeps_guids():
     assert "L1-space-garage" in g1 and "L1-space-garage" not in g2 and "car-garage" not in g2
     assert g1["L1-wall-hall-W"] == g2["L1-wall-hall-W"] and g1["L2-floor"] == g2["L2-floor"]
 
-    v3, evs = prompt(pid, "add a window to the kitchen on the north")
-    assert v3["mode"] == "edit" and any("Window to the north elevation of the kitchen" in e["message"]
+    v3, evs = prompt(pid, "add a window to the living room on the east")
+    assert v3["mode"] == "edit" and any("Window to the east elevation of the living room" in e["message"]
                                         for e in evs if e["stage"] == "step")
     assert v3["summary"]["counts"]["IfcWindow"] == v2["summary"]["counts"]["IfcWindow"] + 1
 
@@ -104,7 +104,7 @@ def test_ops_revert_and_import():
     pid = new_project()
     prompt(pid, "a one storey cabin")
     r = client.post(f"/projects/{pid}/ops", json={"ops": [{"op": "set_building", "set": {"name": "Hut"}},
-                                                          {"op": "delete_element", "id": "L1-wall-hall+kitchen"}]})
+                                                          {"op": "delete_element", "id": "L1-wall-bathroom+hall"}]})
     v2 = done(r.text)
     assert v2["mode"] == "ops" and any("door" in n for n in v2["notes"])  # cascade note for the door in that wall
     spec2 = client.get(f"/projects/{pid}/versions/2/spec").json()
@@ -112,14 +112,14 @@ def test_ops_revert_and_import():
     assert len(spec2["design"]["overrides"]) == 2
 
     # A design edit after raw ops replays the overrides.
-    v3, _ = prompt(pid, "add a window to the kitchen on the north")
+    v3, _ = prompt(pid, "add a window to the living room on the east")
     spec3 = client.get(f"/projects/{pid}/versions/3/spec").json()
     assert spec3["spec"]["building"]["name"] == "Hut"
-    assert "L1-wall-hall+kitchen" not in {e["id"] for e in spec3["spec"]["elements"]}
+    assert "L1-wall-bathroom+hall" not in {e["id"] for e in spec3["spec"]["elements"]}
 
     v4 = done(client.post(f"/projects/{pid}/revert/1").text)
     assert v4["mode"] == "revert" and v4["number"] == 4
-    assert guids_by_tag(pid, 4)["L1-wall-hall+kitchen"] == guids_by_tag(pid, 1)["L1-wall-hall+kitchen"]
+    assert guids_by_tag(pid, 4)["L1-wall-bathroom+hall"] == guids_by_tag(pid, 1)["L1-wall-bathroom+hall"]
 
     ifc = client.get(f"/projects/{pid}/versions/2/ifc").content
     pid2 = new_project("imported")
