@@ -1,9 +1,9 @@
 // Turns the backend's pipeline stream into the assistant's reasoning trace: a design log, grouped
 // the way a project actually runs — brief, massing, floor plates, circulation, envelope, structure,
-// fit-out, review, issue.
+// fit-out, review, IFC, code review, cost and carbon, drawing issue.
 //
 // Stages (backend README §4.5): requirements · focus · approach · build · llm · stream · draft ·
-// step · partial · verify · compile · done · error.
+// step · partial · verify · compile · code · estimate · deliver · done · error.
 //
 // The backend does the narration now: a `step` event carries `headline` (a sentence about the
 // building), `why` (the model's own reasoning) and `facts` (areas, dimensions, running totals), and
@@ -33,8 +33,18 @@ export const PHASE_TITLES: Record<string, string> = {
   structure: "Structure and site works",
   fitout: "Fit-out and equipment",
   review: "Checking the model against the brief",
-  output: "Issuing the model",
+  output: "Compiling the IFC model",
+  code: "Code review",
+  cost: "Cost and carbon",
+  issue: "Issuing the drawing set",
 };
+
+type Tone = NonNullable<TraceStep["tone"]>;
+interface Finding {
+  title: string; reference: string; status: Tone; value: string; target: string; detail: string; advice: string;
+}
+
+const money = (v: number) => (v >= 1e6 ? `$${(v / 1e6).toFixed(2)}M` : `$${Math.round(v / 1e3).toLocaleString()}k`);
 const PHASE_ORDER = Object.keys(PHASE_TITLES);
 
 export function levelName(id: unknown): string {
@@ -382,9 +392,57 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
           hooks.onLive?.(null);
           for (const l of Object.values(layerOf)) finish(l);
           for (const [name, g] of Object.entries(groups)) if (name !== "output") finish(g);
-          group("output", "Issuing the model");
-          setDetail(groups.output, "walls, slabs, openings and roof → IFC");
+          group("output");
+          setDetail(groups.output, "walls, slabs, openings and roof → IFC4");
           return;
+        case "code": {
+          const g = group("code");
+          if (d.error) {
+            finish(g, { title: "Code review unavailable", detail: String(d.error) });
+            return;
+          }
+          const score = (d.score ?? {}) as Record<string, number>;
+          const occ = (d.occupancy ?? {}) as Record<string, unknown>;
+          for (const c of (d.checks as Finding[] | undefined) ?? []) {
+            const measured = c.value && c.target ? `${c.value} · required ${c.target}` : c.value || c.target || null;
+            child(g, c.title, c.status === "pass" ? measured : [measured, c.detail].filter(Boolean).join("\n"),
+                  "done", { badge: c.reference, tone: c.status, why: c.advice || null });
+          }
+          finish(g, {
+            title: `Code review · ${d.code ?? ""}: ${score.pass ?? 0} of ${score.total ?? 0} clauses pass`,
+            detail: `Occupancy ${occ.group ?? "?"} · ${occ.load ?? "?"} occupants · ${score.fail ? `${score.fail} to fix` : "nothing failing"}${score.warn ? ` · ${score.warn} to review` : ""}`,
+            tone: score.fail ? "fail" : score.warn ? "warn" : "pass",
+          });
+          return;
+        }
+        case "estimate": {
+          const g = group("cost");
+          const cost = (d.cost ?? {}) as Record<string, number | string>;
+          const carbon = (d.carbon ?? {}) as Record<string, unknown>;
+          const best = d.best as { move: string; saving_kg: number; per_m2: number } | null | undefined;
+          if (typeof cost.total === "number") {
+            child(g, `Construction cost ${money(cost.total)} · $${Number(cost.per_sf).toLocaleString()}/sf`,
+                  `${money(Number(cost.low))} – ${money(Number(cost.high))} range · ${String(cost.class ?? "")}`,
+                  "done", { badge: "UniFormat II", tone: "info", why: String(cost.basis ?? "") || null });
+          }
+          if (typeof carbon.per_m2 === "number") {
+            const meets = carbon.meets_2030 === true;
+            child(g, `Upfront carbon ${carbon.per_m2} kgCO₂e/m² (A1–A5)`,
+                  `LETI ${carbon.typology} · 2020 target ${carbon.target_2020} · 2030 target ${carbon.target_2030}`,
+                  "done", { badge: `LETI ${carbon.band}`, tone: meets ? "pass" : "warn",
+                            why: best ? `${best.move} would save ${(best.saving_kg / 1000).toFixed(1)} tCO₂e, taking it to ${best.per_m2} kgCO₂e/m².` : null });
+          }
+          finish(g, { title: cap(e.message) });
+          return;
+        }
+        case "deliver": {
+          const g = group("issue");
+          const sheets = (d.sheets as { number: string; title: string }[] | undefined) ?? [];
+          for (const s of sheets) child(g, s.title, null, "done", { badge: s.number });
+          child(g, "Open issues exported as BCF 2.1, linked to IFC GlobalIds", null, "done", { badge: "BCF" });
+          finish(g, { title: `Issued ${plural(sheets.length, "sheet")}, BCF issues and the cost plan`, detail: null });
+          return;
+        }
         case "done":
           hooks.onLive?.(null);
           closeAll();
