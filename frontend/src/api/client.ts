@@ -89,11 +89,16 @@ export interface PromptImage {
 }
 
 /** What a version can be exported as. `zip` is the whole bundle; the rest are single files. */
-export type ExportFormat = "zip" | "ifc" | "spec" | "design" | "context" | "checks" | "schedule" | "summary";
+export type ExportFormat = "zip" | "ifc" | "drawings" | "review" | "bcf" | "estimate" | "spec" | "design" | "context"
+  | "checks" | "schedule" | "summary";
 
 export const EXPORTS: { format: ExportFormat; label: string; hint: string }[] = [
-  { format: "ifc", label: "IFC model", hint: "the building, IFC4" },
-  { format: "zip", label: "Full bundle (.zip)", hint: "IFC, JSON, schedule, checks, README" },
+  { format: "ifc", label: "IFC model", hint: "IFC4 — Revit, Archicad, Navisworks, Solibri" },
+  { format: "drawings", label: "Drawing set (.pdf)", hint: "cover, code analysis, plans, elevations, section, schedules" },
+  { format: "bcf", label: "Review issues (BCF 2.1)", hint: "open the code findings in Revit, Solibri or BIMcollab" },
+  { format: "zip", label: "Full bundle (.zip)", hint: "IFC, PDF set, SVG sheets, BCF, schedules, estimate, README" },
+  { format: "review", label: "Design review (.md)", hint: "code screen, cost plan and upfront carbon" },
+  { format: "estimate", label: "Cost & carbon (.csv)", hint: "UniFormat II cost plan, A1–A5 carbon by element" },
   { format: "summary", label: "Design summary", hint: "brief, approach and checks, Markdown" },
   { format: "schedule", label: "Schedule (.csv)", hint: "rooms, walls, openings, equipment" },
   { format: "spec", label: "BIM spec (.json)", hint: "every element the IFC was compiled from" },
@@ -107,6 +112,7 @@ export const exportUrl = (id: string, n: number, format: ExportFormat = "zip") =
 const EXPORT_EXTENSION: Record<ExportFormat, string> = {
   zip: "zip", ifc: "ifc", spec: "spec.json", design: "design.json",
   context: "context.txt", checks: "checks.json", schedule: "schedule.csv", summary: "summary.md",
+  drawings: "drawings.pdf", review: "review.md", bcf: "issues.bcfzip", estimate: "estimate.csv",
 };
 
 export const exportName = (id: string, n: number, format: ExportFormat) =>
@@ -118,6 +124,71 @@ export async function fetchExport(id: string, n: number, format: ExportFormat = 
   if (!res.ok) throw new Error(`export failed: ${res.status} ${await res.text()}`);
   return new Uint8Array(await res.arrayBuffer());
 }
+
+// --- Design review, estimate and drawings (GET /projects/{id}/versions/{n}/analysis) ----------------
+
+export type CheckStatus = "pass" | "warn" | "fail" | "info";
+
+export interface CodeCheck {
+  id: string;
+  category: string;
+  title: string;
+  reference: string;
+  status: CheckStatus;
+  value: string;
+  target: string;
+  detail: string;
+  elements: string[];
+  advice: string;
+}
+
+export interface RoomRow {
+  id: string; number: string; name: string; kind: string; level: string; level_name: string; area: number;
+  perimeter: number; min_dimension: number; clear_height: number; glazing: number; window_floor_ratio: number;
+  windows: number; doors: number; occupants: number;
+}
+
+export interface LevelRow {
+  id: string; name: string; elevation: number; height: number; gia: number; nia: number; circulation: number;
+  efficiency: number; rooms: number; occupants: number;
+}
+
+export interface DesignReview {
+  code: string;
+  occupancy: { group: string; name: string; load: number; mixed: string[]; construction: string; sprinklered: boolean };
+  totals: { gia: number; nia: number; gia_sf: number; efficiency: number; rooms: number; storeys: number; height: number };
+  levels: LevelRow[];
+  rooms: RoomRow[];
+  checks: CodeCheck[];
+  score: { pass: number; warn: number; fail: number; info: number; total: number };
+  assumptions: string[];
+}
+
+export interface CostLine { group: string; group_name: string; element: string; quantity: number; unit: string; rate: number; total: number }
+export interface CarbonOption { move: string; saving_kg: number; saving_pct: number; per_m2: number }
+
+export interface Estimate {
+  quantities: Record<string, number | Record<string, number>>;
+  cost: {
+    basis: string; class: string; currency: string; lines: CostLine[]; direct: number; general_conditions: number;
+    contingency: number; total: number; low: number; high: number; per_m2: number; per_sf: number;
+  };
+  carbon: {
+    basis: string; rows: { element: string; kg: number }[]; total_kg: number; per_m2: number; typology: string;
+    target_2020: number; target_2030: number; band: string; meets_2030: boolean; options: CarbonOption[];
+  };
+}
+
+export interface SheetInfo { number: string; title: string; kind: string; scale: string; url: string }
+
+export interface Analysis {
+  review: DesignReview;
+  estimate: Estimate;
+  sheets: SheetInfo[];
+  exports: Record<string, string>;
+}
+
+export const getAnalysis = (id: string, n: number) => getJson<Analysis>(`/projects/${id}/versions/${n}/analysis`);
 
 export interface RequirementCheck {
   text: string;
