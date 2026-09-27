@@ -371,6 +371,7 @@ export default function App() {
       // Follow build: the section cut tracks the storey the accepted steps are working on.
       onStep: (st, ok) => { ensureRun(); if (ok && forActive()) sectionRef.current?.learnStep(st); },
       onApproach: (approach) => update(sid, patchRun(aid, { approach })),
+      onUsage: (usage) => update(sid, patchRun(aid, { usage })),
       onLive: (drafting) => update(sid, patchRun(aid, { drafting })),
     });
 

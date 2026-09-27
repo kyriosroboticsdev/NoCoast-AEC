@@ -6,7 +6,7 @@ import json
 
 import httpx
 
-from llm.base import LLMError, LLMRequest, OnNote, OnText, parse_reply
+from llm.base import LLMError, LLMRequest, OnNote, OnText, Usage, parse_reply
 from llm.schema import strict_schema
 
 
@@ -53,6 +53,9 @@ class OllamaLLM:
                         if on_text:
                             on_text(text)
                     if chunk.get("done"):
+                        if chunk.get("prompt_eval_count") is not None:
+                            request.usage = Usage(input_tokens=int(chunk["prompt_eval_count"]),
+                                                  output_tokens=int(chunk.get("eval_count") or 0))
                         break
         except httpx.HTTPError as exc:
             raise LLMError(f"ollama request failed: {exc}") from exc

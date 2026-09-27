@@ -26,7 +26,7 @@ import os
 import anthropic
 import httpx
 
-from llm.base import LLMError, LLMRequest, OnNote, OnText, OnThinking, parse_reply
+from llm.base import LLMError, LLMRequest, OnNote, OnText, OnThinking, Usage, parse_reply
 from llm.schema import strict_schema
 from logsetup import log
 
@@ -61,6 +61,13 @@ def user_content(request: LLMRequest) -> str | list[dict]:
         parts.append({"type": "text", "text": f"Image {i}: {image.caption}"})
         parts.append({"type": "image", "source": {"type": "base64", "media_type": image.media_type, "data": image.b64()}})
     return parts
+
+
+def usage_of(response) -> Usage:
+    """Anthropic counts uncached input, cache writes and cache reads separately; together they are what was read."""
+    u = response.usage
+    written, read = u.cache_creation_input_tokens or 0, u.cache_read_input_tokens or 0
+    return Usage(input_tokens=u.input_tokens + written + read, output_tokens=u.output_tokens, cached_tokens=read)
 
 
 class ClaudeLLM:
@@ -161,6 +168,7 @@ class ClaudeLLM:
             raise LLMError(f"cannot reach the Anthropic API: {exc}") from exc
         except httpx.HTTPError as exc:  # the SDK lets a stream cut mid-body through as a raw httpx error
             raise _Dropped(f"{type(exc).__name__}: {exc}", received=bool(text)) from exc
+        request.usage = (request.usage or Usage()) + usage_of(response)   # a retry without a grammar adds to the first try
         if response.stop_reason == "refusal":
             raise LLMError("the model declined this request")
         if response.stop_reason == "max_tokens":

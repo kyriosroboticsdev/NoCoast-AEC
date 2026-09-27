@@ -45,6 +45,7 @@ from core.ops import OpError, apply_ops
 from core.remedy import remedies
 from core.review import review
 from core.stream import StepStream, ThoughtStream
+from core.usage import Tally, usage_of
 from ifc.builder import GeometryError, compile_ifc, summarize
 from llm import LLM, LLMError, LLMRequest
 from llm.base import EmptyReply, Image, thinking_of
@@ -152,8 +153,12 @@ def _call(llm: LLM, request: LLMRequest, emit: Emit = _noop, stream: StepStream 
     extra = ""
     if stream:
         extra = f": {len(stream.accepted)} move(s) applied, {len(stream.rejected)} rejected, {stream.count} preview(s)"
+    used = usage_of(request, text)
+    log.info("LLM %s used %d input and %d output tokens%s", llm.name, used.input_tokens, used.output_tokens,
+             " (estimated)" if used.estimated else "")
     emit("llm", f"{llm.name} finished in {time.perf_counter() - t:.1f}s{extra}",
-         {"seconds": round(time.perf_counter() - t, 2), "chars": len(text), "previews": stream.count if stream else 0,
+         {"seconds": round(time.perf_counter() - t, 2), "chars": len(text), "usage": used.as_dict(),
+          "previews": stream.count if stream else 0,
           "accepted": len(stream.accepted) if stream else 0, "rejected": len(stream.rejected) if stream else 0,
           "reply": json.dumps(raw, indent=1)[:30000]})
     return raw
@@ -322,7 +327,7 @@ def follow_up(*args, **kwargs) -> StepStream | None:
 def _persist(store: Store, project_id: str, spec: BuildingSpec, guids: GuidMap, *, mode: str, prompt: str | None,
              llm: str | None, ops: list[dict], notes: list[str], design: Design | None, emit: Emit,
              model: ifcopenshell.file | None = None, checks: list[dict] | None = None,
-             images: list[dict] | None = None, approach: str | None = None) -> VersionData:
+             images: list[dict] | None = None, approach: str | None = None, usage: dict | None = None) -> VersionData:
     if model is None:
         model, guids = compile_ifc(spec, guids, design.model_dump_json() if design else None)
     guids = prune_guids(spec, guids)
@@ -334,7 +339,7 @@ def _persist(store: Store, project_id: str, spec: BuildingSpec, guids: GuidMap, 
     log.info("project %s: wrote %s (%d elements, mode=%s)", project_id, path.name, len(spec.elements), mode)
     version = store.add_version(project_id, spec=spec, guids=guids, mode=mode, summary=summarize(model), ifc_path=path,
                                 prompt=prompt, llm=llm, ops=ops, notes=notes, design=design, checks=checks or [],
-                                images=images or [], approach=approach)
+                                images=images or [], approach=approach, usage=usage)
     analysis_url = _issue(version, emit)
     emit("done", f"version {version.number} ready",
          version.as_version().model_dump() | {"ifc_url": version.ifc_url, "export_url": version.export_url,
@@ -385,6 +390,7 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
                emit: Emit = _noop, focus: str | None = None, attached: Sequence[ImageAttachment] = ()) -> VersionData:
     if not prompt.strip():
         raise PipelineError("prompt is empty")
+    emit = tally = Tally(emit, llm.name, getattr(llm, "model", None))   # counts the tokens of every call in this run
     head = store.head(project_id)
     log.info("project %s: prompt %r (head=%s, base=%s, llm=%s, focus=%s)", project_id, prompt[:120], head.number if head else None, base_version, llm.name, focus)
     if base_version is not None and head is not None and head.number != base_version:
@@ -505,7 +511,7 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
         return _persist(store, project_id, spec, guids, mode="edit" if editing else "design", prompt=prompt, llm=llm.name,
                         ops=[{"step": s} for s in []], notes=notes, design=design, emit=emit, model=model,
                         checks=[{"text": r.requirement.text, "status": r.status, "detail": r.detail} for r in results],
-                        images=stored_images, approach=approach)
+                        images=stored_images, approach=approach, usage=tally.total())
     except LLMError as exc:
         raise PipelineError(f"language model unavailable: {exc}") from exc
     except (DesignError, GeometryError) as exc:

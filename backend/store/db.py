@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS versions (
     checks TEXT,
     images TEXT,
     approach TEXT,
+    usage TEXT,
     guids TEXT NOT NULL,
     ops TEXT NOT NULL,
     notes TEXT NOT NULL,
@@ -55,7 +56,8 @@ CREATE TABLE IF NOT EXISTS versions (
 """
 MIGRATIONS = ["ALTER TABLE versions ADD COLUMN design TEXT", "ALTER TABLE versions ADD COLUMN checks TEXT",
               "ALTER TABLE versions ADD COLUMN images TEXT",
-              "ALTER TABLE versions ADD COLUMN approach TEXT"]
+              "ALTER TABLE versions ADD COLUMN approach TEXT",
+              "ALTER TABLE versions ADD COLUMN usage TEXT"]
 
 
 class Project(BaseModel):
@@ -77,6 +79,7 @@ class Version(BaseModel):
     checks: list[dict] = []
     images: list[dict] = []  # attachments of the prompt: {name, media_type, bytes, url}
     approach: str | None = None  # the design strategy the model wrote before it started building
+    usage: dict | None = None  # tokens the run used: input, output, cached, total, calls, estimated (core/usage.py)
     ifc_path: str
     created: float
 
@@ -166,7 +169,8 @@ class Store:
     def add_version(self, project_id: str, *, spec: BuildingSpec, guids: GuidMap, mode: str, summary: dict,
                     ifc_path: Path, prompt: str | None = None, llm: str | None = None, ops: list[dict] | None = None,
                     notes: list[str] | None = None, design: Design | None = None, checks: list[dict] | None = None,
-                    images: list[dict] | None = None, approach: str | None = None) -> VersionData:
+                    images: list[dict] | None = None, approach: str | None = None,
+                    usage: dict | None = None) -> VersionData:
         with self._lock:
             head = self._conn.execute("SELECT MAX(number) FROM versions WHERE project_id = ?", (project_id,)).fetchone()[0]
             number = (head or 0) + 1
@@ -176,11 +180,11 @@ class Store:
                 checks=json.dumps(checks or []), images=json.dumps(images or []), guids=json.dumps(guids),
                 ops=json.dumps(ops or []),
                 notes=json.dumps(notes or []), summary=json.dumps(summary), ifc_path=str(ifc_path), created=time.time(),
-                approach=approach,
+                approach=approach, usage=json.dumps(usage) if usage else None,
             )
             self._conn.execute(
-                "INSERT INTO versions (project_id, number, parent, prompt, mode, llm, spec, design, checks, images, approach, guids, ops, notes, summary, ifc_path, created)"
-                " VALUES (:project_id, :number, :parent, :prompt, :mode, :llm, :spec, :design, :checks, :images, :approach, :guids, :ops, :notes, :summary, :ifc_path, :created)",
+                "INSERT INTO versions (project_id, number, parent, prompt, mode, llm, spec, design, checks, images, approach, usage, guids, ops, notes, summary, ifc_path, created)"
+                " VALUES (:project_id, :number, :parent, :prompt, :mode, :llm, :spec, :design, :checks, :images, :approach, :usage, :guids, :ops, :notes, :summary, :ifc_path, :created)",
                 row,
             )
             self._conn.commit()
@@ -213,6 +217,7 @@ class Store:
             mode=row["mode"], llm=row["llm"], notes=json.loads(row["notes"]), summary=json.loads(row["summary"]),
             ops=json.loads(row["ops"]), checks=json.loads(row["checks"]) if row.get("checks") else [],
             images=json.loads(row["images"]) if row.get("images") else [], approach=row.get("approach"),
+            usage=json.loads(row["usage"]) if row.get("usage") else None,
             ifc_path=row["ifc_path"], created=row["created"],
             spec=BuildingSpec.model_validate_json(row["spec"]), design=design, guids=json.loads(row["guids"]),
         )

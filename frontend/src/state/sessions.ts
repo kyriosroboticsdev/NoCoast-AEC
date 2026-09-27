@@ -12,7 +12,7 @@
 //   • another window's write is merged in (newest copy of each session wins) and
 //     deletions are remembered so a merge cannot resurrect them.
 import { useCallback, useEffect, useState } from "react";
-import type { Version } from "../api/client";
+import type { TokenUsage, Version } from "../api/client";
 
 export type Stage = "planning" | "building" | "loading" | "done" | "error";
 
@@ -59,6 +59,8 @@ export interface Run {
   approach?: string;
   /** What the model is writing this instant; cleared as soon as the step lands. */
   drafting?: string | null;
+  /** Tokens used so far, counted up while the run works; the version carries the final total. */
+  usage?: TokenUsage;
   startedAt?: number;
   endedAt?: number;
   /** Seconds the backend spent on the run, from its own clock (a replay keeps the live run's time). */

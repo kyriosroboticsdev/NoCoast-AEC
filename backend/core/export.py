@@ -189,7 +189,12 @@ def summary_markdown(version: VersionData) -> str:
     if v.spec.building.description:
         lines += [v.spec.building.description, ""]
     lines += [f"- Project: `{v.project_id}`", f"- Version: {v.number}" + (f" (from v{v.parent})" if v.parent else ""),
-              f"- Created: {_when(v.created)}", f"- Produced by: {v.llm or v.mode}", ""]
+              f"- Created: {_when(v.created)}", f"- Produced by: {v.llm or v.mode}"]
+    if v.usage:
+        about = "about " if v.usage.get("estimated") else ""
+        lines.append(f"- Tokens: {about}{v.usage['input_tokens']:,} read and {v.usage['output_tokens']:,} written "
+                     f"in {v.usage.get('calls', 0)} model call(s)")
+    lines.append("")
     if v.prompt:
         lines += ["## Brief", "", f"> {v.prompt.strip()}", ""]
     if v.approach:

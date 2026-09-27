@@ -574,7 +574,17 @@ optimistic concurrency (409).
 | `GET /skills`, `GET /skills/{name}` | | skill index; one skill's markdown |
 
 SSE events: `event: <stage>` + `data: {"seq", "t", "stage", "message", "data"}`, stages as in §4.5.
-`done.data` is the version record incl. `ifc_url`, `export_url` and `checks`.
+`done.data` is the version record incl. `ifc_url`, `export_url`, `checks` and `usage`.
+
+**Token counts** (`core/usage.py`). Every model call reports what it used, on the `llm` event that ends
+it: `usage` for that call and `usage_total` for the run so far, each with `input_tokens` (everything
+the model read, cached or not), `output_tokens`, `cached_tokens`, `total_tokens` and `estimated`. The
+count is the provider's own where it gives one: Claude's `usage` (uncached input, cache writes and cache
+reads added up), the usage chunk of an OpenAI-compatible stream (`stream_options.include_usage`; a
+server that refuses the option is asked again without it), Ollama's eval counts. Otherwise it is
+estimated from the text at about four characters a token, without attached images, and marked
+`estimated`. The run's total, with the number of calls, the provider and the model, is stored with the
+version as `usage`; versions made without a model (ops, revert, import) have none.
 
 **Export** (`backend/core/export.py`). An IFC on its own loses everything around it, so `…/export`
 returns a zip holding the whole version: the IFC, a Markdown summary (the brief, the model's design
@@ -622,6 +632,11 @@ remembered so a merge cannot resurrect them). IFC files opened from disk are kep
 IndexedDB, since `localStorage` is far too small for a model, and are deleted with the session.
 Opening a session re-reads its project head from the backend, so a run that finished after the window
 went away is picked up instead of leaving the session a version behind.
+
+**Token count** (`src/state/usage.ts`). Each answer shows what its run used next to the time it took,
+counting up while the model works, and a line above the composer adds up the session: total, read,
+written and the number of runs. An estimated count is written with a `~`; the tooltip has the exact
+numbers, the cached part and the number of model calls.
 
 **Attaching images** (`src/state/attachments.ts`). The composer's **+** menu attaches images to the next
 prompt — picked, dropped onto the composer, or pasted into it. They appear as thumbnails before sending and

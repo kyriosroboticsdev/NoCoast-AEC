@@ -1,6 +1,6 @@
 import { IfcTurnCard } from "@nocoast/ifc-viewer";
 import {
-  ChevronDown, ChevronUp, Code, Compass, Database, Download, Eye, FileText, ListChecks, Package, Paperclip, RotateCcw, Sparkles, X,
+  ChevronDown, ChevronUp, Code, Coins, Compass, Database, Download, Eye, FileText, ListChecks, Package, Paperclip, RotateCcw, Sparkles, X,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { backendUrl, exportName, fetchExport, getSpec, type ExportFormat, type Version } from "../api/client";
@@ -9,6 +9,7 @@ import { formatSize, type Attachment } from "../state/attachments";
 import { PANEL_RANGE } from "../state/layout";
 import type { Message, Session } from "../state/sessions";
 import { turnId } from "../turns";
+import { describeUsage, formatTokens, sessionUsage } from "../state/usage";
 import { Composer } from "./Composer";
 import { DeliverablesSummary, type DeliverableTab } from "./Deliverables";
 import { Reasoning } from "./Reasoning";
@@ -49,6 +50,7 @@ export function Assistant({
   const latest = [...session.messages].reverse().find((m) => m.run?.version)?.id;
   const scroller = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
+  const used = sessionUsage(session);
 
   useEffect(() => {
     const el = scroller.current;
@@ -74,6 +76,15 @@ export function Assistant({
         <button className="jump" onClick={() => setAtBottom(true)} title="Jump to latest">
           <ChevronDown size={18} />
         </button>
+      )}
+      {used && (
+        <div className="session-usage" title={describeUsage(used)}>
+          <Coins size={13} />
+          <span>
+            <b>{used.estimated ? "~" : ""}{formatTokens(used.total)}</b> tokens this session
+            <span className="muted"> · {formatTokens(used.input)} read · {formatTokens(used.output)} written · {used.runs} run{used.runs === 1 ? "" : "s"}</span>
+          </span>
+        </div>
       )}
       <div className="dock">
         <Composer size="dock" busy={busy} placeholder={head ? "Describe a change…" : "Describe a building…"} {...composer} />

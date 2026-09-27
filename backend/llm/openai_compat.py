@@ -17,11 +17,21 @@ import json
 
 import httpx
 
-from llm.base import LLMError, LLMRequest, OnNote, OnText, parse_reply
+from llm.base import LLMError, LLMRequest, OnNote, OnText, Usage, parse_reply
 from llm.schema import strict_schema
 from logsetup import log
 
 TOO_LARGE_MARKERS = ("grammar is too large", "too large", "too complex")
+USAGE_MARKERS = ("stream_options", "include_usage")
+
+
+def usage_of(chunk: dict) -> Usage | None:
+    """Token counts from a streamed chunk that carries them (the last one, when `include_usage` is on)."""
+    u = chunk.get("usage")
+    if not isinstance(u, dict) or u.get("prompt_tokens") is None:
+        return None
+    cached = (u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
+    return Usage(input_tokens=int(u["prompt_tokens"]), output_tokens=int(u.get("completion_tokens") or 0), cached_tokens=int(cached))
 
 
 def user_content(request: LLMRequest) -> str | list[dict]:
@@ -48,6 +58,7 @@ class OpenAICompatibleLLM:
         self.temperature = temperature  # None = omit (Claude 5 models reject the field)
         self.schema_bounds = schema_bounds  # False for Anthropic's endpoint, which rejects minimum/maximum/…
         self.unconstrained: set[str] = set()  # schema names this server refused to compile
+        self.ask_usage = True  # ask for token counts in the stream; turned off if the server refuses the option
         self.vision = vision  # the server's model accepts image parts (LLM_VISION)
 
     def _body(self, request: LLMRequest, constrained: bool) -> dict:
@@ -64,6 +75,8 @@ class OpenAICompatibleLLM:
             }
         if self.temperature is not None:
             body["temperature"] = self.temperature
+        if self.ask_usage:
+            body["stream_options"] = {"include_usage": True}
         return body
 
     def complete(self, request: LLMRequest, on_text: OnText | None = None, on_note: OnNote | None = None) -> dict:
@@ -92,6 +105,11 @@ class OpenAICompatibleLLM:
                     detail = r.text[:400]
                     if constrained and r.status_code == 400 and any(m in detail.lower() for m in TOO_LARGE_MARKERS):
                         raise SchemaTooLarge(detail)
+                    if self.ask_usage and r.status_code in (400, 422) and any(m in detail.lower() for m in USAGE_MARKERS):
+                        # A server that does not know the option: go without counts (they are estimated instead).
+                        log.warning("this endpoint rejects stream_options; token counts will be estimated")
+                        self.ask_usage = False
+                        return self._stream(request, constrained, on_text)
                     raise LLMError(f"chat/completions returned {r.status_code}: {detail}")
                 for line in r.iter_lines():
                     if not line.startswith("data:"):
@@ -103,6 +121,7 @@ class OpenAICompatibleLLM:
                         chunk = json.loads(payload)
                     except json.JSONDecodeError:
                         continue
+                    request.usage = usage_of(chunk) or request.usage   # arrives on a chunk of its own, without choices
                     choices = chunk.get("choices") or []
                     if not choices:
                         continue

@@ -72,6 +72,22 @@ export interface Version {
   images?: VersionImage[];
   /** The design strategy the model wrote before it started building. */
   approach?: string | null;
+  /** Tokens the run used, over all its model calls. Absent for versions made without a model. */
+  usage?: TokenUsage | null;
+}
+
+export interface TokenUsage {
+  /** Everything the model read, cached or not. */
+  input_tokens: number;
+  output_tokens: number;
+  /** The part of the input that came from the provider's prompt cache. */
+  cached_tokens?: number;
+  total_tokens: number;
+  calls?: number;
+  /** Counted from the text, because the provider reported no numbers. */
+  estimated?: boolean;
+  provider?: string | null;
+  model?: string | null;
 }
 
 export interface VersionImage {
