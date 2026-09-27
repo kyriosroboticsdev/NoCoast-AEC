@@ -712,6 +712,12 @@ def _brick(b: BrickDef, design: Design, infos: dict[str, RoomInfo], site: _Site)
         if length < 0.2:
             raise DesignError(f"{what}: start and end are {length:.2f} m apart; a span needs two distinct points")
         values["length"] = length
+        if brick.rules.exterior:
+            building = unary_union(site.footprints.get(level.id) or [])
+            if not building.is_empty and LineString([b.start, b.end]).buffer(w / 2).intersects(building.buffer(-0.05)):
+                x0_, y0_, x1_, y1_ = building.bounds
+                raise DesignError(f"{what}: runs outside, but from {list(b.start)} to {list(b.end)} it crosses the building on {level.id} "
+                                  f"(footprint x {x0_:.1f}..{x1_:.1f}, y {y0_:.1f}..{y1_:.1f})")
         pos = ((x0 + x1) / 2, (y0 + y1) / 2)
         rotation = math.degrees(math.atan2(y1 - y0, x1 - x0))
         foot_w, foot_d = length, w

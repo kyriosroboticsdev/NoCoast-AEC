@@ -32,7 +32,7 @@ def _assets(design: Design) -> dict[str, Asset]:
 def _placement(brick) -> dict:
     """Arguments that place `brick` with its defaults in a roomy single-storey building."""
     if brick.host == "span":
-        return {"start": [1, 6], "end": [7, 6]}
+        return {"start": [-12, 2], "end": [-12, 8]} if brick.rules.exterior else {"start": [1, 6], "end": [7, 6]}
     if brick.host == "roof":
         return {}
     if brick.rules.exterior:

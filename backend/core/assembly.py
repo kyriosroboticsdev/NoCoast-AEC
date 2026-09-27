@@ -35,12 +35,21 @@ def _home(kind: str) -> str:
     return {"data": "data", "fire_water": "fire", "power": "energy"}.get(kind, "hvac" if kind in ("air_supply", "air_return", "heating", "refrigerant", "flue") else "plumbing")
 
 
-def candidates(brick: Brick, design: Design, derived: Derived, near_room: str | None = None, slot: int = 0) -> list[dict]:
+def candidates(brick: Brick, design: Design, derived: Derived, near_room: str | None = None, slot: int = 0,
+               room_kind: str | None = None) -> list[dict]:
     """Arguments of `brick` steps that would place it sensibly, best first (empty when nowhere fits its rules)."""
     if brick.host == "roof":
         return [{}]
+    polys = derived.footprints.get("L1") or next((p for p in derived.footprints.values() if p), [])
+    if brick.host == "span" and brick.rules.exterior:
+        if not polys:
+            return []
+        x0, y0, x1, y1 = unary_union(polys).bounds
+        g = 2.0 + slot * 1.5
+        lines = [((x0 - g, y1 + g), (x1 + g, y1 + g)), ((x1 + g, y0 - g), (x1 + g, y1 + g)),
+                 ((x0 - g, y0 - g), (x0 - g, y1 + g)), ((x0 - g, y0 - g), (x1 + g, y0 - g))]
+        return [{"start": [round(a[0], 2), round(a[1], 2)], "end": [round(b[0], 2), round(b[1], 2)]} for a, b in lines]
     if brick.rules.exterior or (brick.host == "free" and not design.rooms):
-        polys = derived.footprints.get("L1") or next((p for p in derived.footprints.values() if p), [])
         if not polys:
             return []
         x0, y0, x1, y1 = unary_union(polys).bounds
@@ -54,9 +63,11 @@ def candidates(brick: Brick, design: Design, derived: Derived, near_room: str | 
         return [{"position": [round(x, 2), round(y, 2)]} for x, y in spots]
     if brick.host == "span":
         return []
-    rooms = [r for r in design.rooms if r.enclosed and (not brick.rules.rooms or r.kind in brick.rules.rooms)]
-    if brick.rules.ground_only:
-        rooms = [r for r in rooms if r.level == "L1"]
+    enclosed = [r for r in design.rooms if r.enclosed and (not brick.rules.ground_only or r.level == "L1")]
+    if room_kind:
+        enclosed = [r for r in enclosed if r.kind == room_kind] or enclosed
+    # Rules name where a brick usually goes; with no such room, any room will do (the rule check warns).
+    rooms = [r for r in enclosed if not brick.rules.rooms or r.kind in brick.rules.rooms] or enclosed
     rooms.sort(key=lambda r: (r.id != near_room, r.kind not in PLANT_ROOMS, -r.area_m2))
     sides = [("N", "E", "S", "W")[(slot + i) % 4] for i in range(4)]
     out: list[dict] = []

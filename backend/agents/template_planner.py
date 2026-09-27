@@ -83,6 +83,10 @@ def parse_requirements(prompt: str) -> list[Requirement]:
             reqs.append(Requirement(text=label, kind="feature", item=item))
     for m in mentioned_bricks(prompt):
         name = library().get(m.brick).name.lower()
+        if m.room_kind:
+            reqs.append(Requirement(text=f"{name} in the {m.room_kind}", kind="asset", item=m.brick, room=m.room_kind,
+                                    value=m.count if not m.each else None))
+            continue
         article = "an" if name[0] in "aeiou" else "a"
         reqs.append(Requirement(text=f"{m.count} {name}s" if m.count > 1 else f"{article} {name}", kind="asset", item=m.brick, value=m.count))
     return reqs
@@ -245,12 +249,13 @@ def brick_steps(mentions, design: Design) -> list[dict]:
     slot = 0
     for m in mentions:
         brick = library().get(m.brick)
-        for _ in range(m.count):
+        targets = [r.id for r in design.rooms if r.kind == m.room_kind] if m.each else []
+        for i in range(len(targets) or m.count):
             derived = analyze(design)
-            if brick.host == "span":
+            if brick.host == "span" and not brick.rules.exterior:
                 options = [a for a in [_across_largest_room(design, derived)] if a]
             else:
-                options = candidates(brick, design, derived, slot=slot)
+                options = candidates(brick, design, derived, targets[i] if targets else None, slot, m.room_kind)
             slot += 1
             fit = first_fit(brick, design, options)
             if fit is not None:

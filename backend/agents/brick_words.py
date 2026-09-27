@@ -26,11 +26,18 @@ SINGLE_WORDS = {
 MAX_COUNT = 4
 
 
+ROOM_KINDS = {"bedroom": "bedroom", "bathroom": "bathroom", "kitchen": "kitchen", "living": "living", "lounge": "living",
+              "office": "office", "hall": "hall", "garage": "garage", "utility": "utility", "dining": "dining"}
+EACH = ("both", "all", "each", "every")
+
+
 @dataclass(frozen=True)
 class Mention:
     brick: str
     phrase: str
     count: int
+    room_kind: str | None = None     # "radiators in the bedrooms"
+    each: bool = False               # "… in both/all/each bedroom(s)": one per room of that kind
 
 
 @lru_cache(maxsize=1)
@@ -61,6 +68,8 @@ def mentioned_bricks(prompt: str) -> list[Mention]:
             brick = ids[0] if len(ids) == 1 else next((b.id for b, _ in library().search(phrase, limit=10) if b.id in ids), ids[0])
             n = m.group(1)
             count = min(MAX_COUNT, int(n) if n and n.isdigit() else NUMBERS.get(n or "a", 1))
+            where = re.match(r" in (?:the |a |an |(" + "|".join(EACH) + r") )?([a-z]+?)s? ", text[end:])
+            kind = ROOM_KINDS.get(where.group(2)) if where else None
             if brick not in found:
-                found[brick] = Mention(brick, phrase, count)
+                found[brick] = Mention(brick, phrase, count, kind, bool(kind and where.group(1)))
     return list(found.values())
