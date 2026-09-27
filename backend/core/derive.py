@@ -23,11 +23,11 @@ from dataclasses import dataclass, field
 from shapely.geometry import LineString, MultiLineString, Point as ShpPoint, Polygon
 from shapely.ops import unary_union
 
-from core.derive_bricks import ROOF_T, SLAB_T, Site, derive_brick, needs_water
+from core.derive_bricks import ROOF_T, SLAB_T, building_frames, derive_bricks, needs_water
 from core.rooms import (CLEAR, DesignError, RoomInfo, WallSeg, compass, exterior_walls, fits, pick_wall, place_piece,
                         r2, rect_at, side_name)
 from ifc.fixtures import default_size
-from schemas.bim import (Beam, BuildingSpec, Column, CustomFixture, Door, Fixture, Level, LightFixture, Outlet, Panel,
+from schemas.bim import (Asset, Beam, BuildingSpec, Column, CustomFixture, Door, Fixture, Level, LightFixture, Outlet, Panel,
                          Pipe, Railing, Roof, ShapePart, Slab, Space, Stair, Wall, Window, Wire, is_axis_rectangle)
 from schemas.design import (CustomShapeDef, Design, DoorDef, FixtureDef, FreeDef, LevelDef, Pt, RoomDef, Segment, Side,
                             StairDef, WindowDef)
@@ -38,6 +38,7 @@ MARGIN = 0.15          # openings keep this far from wall ends
 COLUMN_EVERY = 4.0     # open edges get a column at least this often
 DOOR_SIZES = {"single": (0.9, 2.1), "double": (1.6, 2.1), "sliding": (1.8, 2.1), "french": (1.6, 2.1), "garage": (2.4, 2.2)}
 WINDOW_SIZES = {"standard": (1.2, 1.2, 0.9), "large": (2.0, 1.6, 0.6), "floor": (2.0, 2.2, 0.1), "small": (0.6, 0.6, 1.5)}
+ROUGH_IN = ("water_cold", "drain", "power")   # connector kinds the derived services supply once there are rooms
 
 
 
@@ -50,6 +51,7 @@ class Derived:
     design: Design | None = None   # the design actually built (with pruned items removed) when prune=True
     pruned: list[str] = field(default_factory=list)
     sides: dict[str, Side] = field(default_factory=dict)  # opening/balcony id -> compass side of its wall
+    provided: tuple[str, ...] = ()                        # connector kinds the building itself supplies
 
 
 
@@ -527,7 +529,7 @@ def _mep(design: Design, levels: list[Level], infos: dict[str, RoomInfo], els: l
     else:
         riser_xy = (0.3, 0.3)
 
-    wet_rooms = {b.room for b in design.bricks if b.room and needs_water(b.brick)}
+    wet_rooms = {a.ref for a in els if isinstance(a, Asset) and a.ref and needs_water(design, a.brick)}
     wet_risers: list[tuple[tuple[float, float], str]] = []
     for level in levels:
         for room in design.rooms_on(level.id):
@@ -780,14 +782,15 @@ def analyze(design: Design, prune: bool = False) -> Derived:
     each("fixtures", lambda f, level: _fixture(f, design, infos, level))
     each("custom_shapes", lambda cs, level: _custom_shape(cs, design, infos, level))
     each("balconies", lambda b, level: _balcony(b, design, infos, level, els, sides))
-    top = next((l for l in reversed(levels) if footprints.get(l.id)), ground)
-    site = Site(level_by_id, footprints, ground, top, design.roof)
-    each("bricks", lambda b, level: derive_brick(b, design, infos, site))
     for c in design.columns:
         if c.level not in level_by_id:
             raise DesignError(f"column '{c.id}': unknown level '{c.level}'")
         els.append(Column(id=c.id, level=c.level, position=(r2(c.x), r2(c.y)), width=c.size, depth=c.size))
     _porch(design, footprints[ground.id], els, ground.id)
+    frames = building_frames(levels, ground, infos, footprints, els, EXT_T / 2)
+    assets, dropped = derive_bricks(design, frames, prune)
+    els.extend(assets)
+    pruned.extend(dropped)
     _mep(design, levels, infos, els)
 
     try:
@@ -804,7 +807,8 @@ def analyze(design: Design, prune: bool = False) -> Derived:
                 notes.extend(cascade)
             except (OpError, ValueError) as exc:
                 notes.append(f"override {raw.get('op')} {raw.get('id', '')} skipped: {exc}")
-    return Derived(spec, notes + pruned, infos, footprints, design if prune else None, pruned, sides)
+    return Derived(spec, notes + pruned, infos, footprints, design if prune else None, pruned, sides,
+                   ROUGH_IN if design.rooms else ())
 
 
 def derive(design: Design) -> tuple[BuildingSpec, list[str]]:

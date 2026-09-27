@@ -12,11 +12,11 @@ for constrained decoders and tolerant of unconstrained ones.
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-
-import json
 
 from bricks import Brick, library
 from schemas.bim import FixtureKind, RoofShape, WallMaterial
@@ -73,6 +73,16 @@ class BrickParamStep(BaseModel):
     model_config = ConfigDict(extra="ignore")
     name: str
     value: float
+
+
+def _coords(v, dims: tuple[int, ...]) -> list[float] | None:
+    if v is None:
+        return None
+    if isinstance(v, dict):
+        v = [v[k] for k in ("x", "y", "z") if v.get(k) is not None]
+    if not isinstance(v, (list, tuple)) or len(v) not in dims:
+        raise ValueError("a point is [x, y]" + (" or [x, y, z]" if 3 in dims else ""))
+    return [float(c) for c in v]
 
 
 class Step(BaseModel):
@@ -179,16 +189,15 @@ class Step(BaseModel):
                 out.append({"to": item})
         return out
 
-    @field_validator("near", "position", "start", "end", mode="before")
+    @field_validator("near", mode="before")
     @classmethod
     def _point(cls, v):
-        if v is None:
-            return None
-        if isinstance(v, dict):
-            v = [v.get("x"), v.get("y")]
-        if not isinstance(v, (list, tuple)) or len(v) != 2:
-            raise ValueError("a point is [x, y]")
-        return [float(v[0]), float(v[1])]
+        return _coords(v, (2,))
+
+    @field_validator("position", "start", "end", mode="before")
+    @classmethod
+    def _point3(cls, v):
+        return _coords(v, (2, 3))
 
     @field_validator("level", "to_level", mode="before")
     @classmethod
@@ -200,7 +209,6 @@ class Step(BaseModel):
         if isinstance(v, int):
             return f"L{v}"
         s = str(v).strip()
-        import re
         m = re.match(r"^\s*(?:l|level\s*|floor\s*|storey\s*)?(\d+)\s*$", s, re.IGNORECASE)
         if m:
             return f"L{int(m.group(1))}"

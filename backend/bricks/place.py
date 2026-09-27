@@ -83,10 +83,11 @@ class Side:
     line: LineString
     outward: P2
     id: Optional[str] = None
+    face: Optional[str] = None      # compass name when it is not the outward direction (the inner rim of a void)
 
     @property
     def compass(self) -> str:
-        return compass(*self.outward)
+        return self.face or compass(*self.outward)
 
 
 @dataclass
@@ -191,6 +192,8 @@ class Frames:
         self.by_id[frame.id] = frame
 
     def get(self, placement: Placement, what: str) -> Frame:
+        if placement.ref is not None and placement.ref in self.levels and placement.ref not in self.by_id:
+            placement = placement.model_copy(update={"ref": None, "level": placement.ref})
         if placement.ref is not None:
             frame = self.by_id.get(placement.ref)
             if frame is None:

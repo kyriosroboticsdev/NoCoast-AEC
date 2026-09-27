@@ -159,7 +159,9 @@ class Brick(BaseModel):
             raise ValueError(f"{self.id}: duplicate params")
         _check_ifc(self.ifc_class, self.predefined_type)
         known = set(names) | set(PLACEMENT_VARS)
-        for text, missing in unknown_names(self.geometry + self.keepout, known):
+        bad = unknown_names(self.geometry + self.keepout, known)
+        if bad:
+            text, missing = bad[0]
             raise ValueError(f"{self.id}: {text!r} uses unknown names {sorted(missing)} (params: {', '.join(names) or 'none'})")
         for text in [v for v in (*self.origin, self.elevation) if isinstance(v, str)]:
             if names_in(text) - known:
