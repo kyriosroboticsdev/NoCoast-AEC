@@ -208,8 +208,13 @@ deliverables — and the session then continues on that project, so the next pro
 building. `?replay=<project>[:<version>]&speed=` does the same from a URL. `python tools/pack_run.py
 <project> <name>` packs a run into `backend/demo/<name>.zip`; the backend restores every pack in `demo/`
 (`BIM_DEMO_DIR`) at startup, so a machine with no API key can still show a real Claude run.
-`demo/architecture-studio.zip` ships one: a 40-person studio over two floors, 366 elements, 13 of 15 code
-clauses passing, 6½ minutes live.
+Two ship with the repo:
+
+- `demo/architecture-studio.zip`: a 40-person studio over two floors, 366 elements, 13 of 15 code clauses
+  passing, 6½ minutes live.
+- `demo/primary-school.zip`: a two-storey school for 180 pupils, 504 elements. The pre-issue code screen
+  finds a clause failing, hands it back, and Claude fits out an accessible WC before the set is issued with
+  nothing failing. 8¾ minutes live, about a minute at the default replay speed.
 
 ## 4. Specifications
 
