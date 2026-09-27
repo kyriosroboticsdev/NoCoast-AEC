@@ -374,8 +374,9 @@ def _issue(version: VersionData, emit: Emit) -> str | None:
           "best": best, "gia": tot["gia"], "gia_sf": tot["gia_sf"]})
     base = f"/projects/{version.project_id}/versions/{version.number}"
     sheets = [{"number": s.number, "title": s.title, "url": f"{base}/sheets/{s.number}.svg"} for s in data["sheets"]]
-    emit("deliver", f"Drawing set issued: {len(sheets)} sheets, schedules, BCF issues and cost plan",
+    emit("deliver", f"Drawing set issued: {len(sheets)} sheets, DXF plans, Excel schedules, BCF issues and cost plan",
          {"phase": "issue", "sheets": sheets, "pdf": f"{base}/export?format=drawings",
+          "dxf": f"{base}/export?format=dxf", "xlsx": f"{base}/export?format=xlsx",
           "bcf": f"{base}/export?format=bcf", "analysis_url": f"{base}/analysis"})
     return f"{base}/analysis"
 

@@ -535,8 +535,10 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
           const g = group("issue");
           const sheets = (d.sheets as { number: string; title: string }[] | undefined) ?? [];
           for (const s of sheets) child(g, s.title, null, "done", { badge: s.number });
+          child(g, "Plans in model space on NCS layers, one storey per sheet of CAD", null, "done", { badge: "DXF" });
+          child(g, "Area, room, door, window and equipment schedules with live totals", null, "done", { badge: "XLSX" });
           child(g, "Open issues exported as BCF 2.1, linked to IFC GlobalIds", null, "done", { badge: "BCF" });
-          finish(g, { title: `Issued ${plural(sheets.length, "sheet")}, BCF issues and the cost plan`, detail: null });
+          finish(g, { title: `Issued ${plural(sheets.length, "sheet")}, CAD plans, schedules, BCF issues and the cost plan`, detail: null });
           return;
         }
         case "done":
