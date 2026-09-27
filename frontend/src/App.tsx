@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { IfcViewerProvider } from "@nocoast/ifc-viewer";
 import * as api from "./api/client";
 import { Assistant } from "./components/Assistant";
+import type { DeliverableTab } from "./components/Deliverables";
 import { Home } from "./components/Home";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
@@ -69,6 +70,7 @@ export default function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [section, setSection] = useState<SectionView | null>(null);
   const [roomsVisible, setRoomsVisible] = useState(false);
+  const [tab, setTab] = useState<DeliverableTab>("model");
   // The camera is framed on the first model of a session and then left alone: previews and new versions
   // load into the same view so the building grows in place — unless it clearly outgrows the view.
   const framed = useRef(0);
@@ -514,6 +516,16 @@ export default function App() {
     viewerRef.current?.setRoomsVisible(next);
   };
 
+  /** From a review issue back to the model: the elements it names, highlighted in 3D. */
+  const showInModel = (ids: string[]) => {
+    setTab("model");
+    if (ids.some((id) => id.includes("-space-")) && !roomsVisible) toggleRooms();
+    viewerRef.current?.highlight(ids);
+  };
+
+  // Previews and files opened from disk have no deliverables; only the model tab makes sense then.
+  const viewTab: DeliverableTab = shown?.version && !shown.preview ? tab : "model";
+
   // Smoke-test hooks (BIM_AUTOLOAD / BIM_PROMPT / BIM_SMOKE_SELECT) once everything is up.
   useEffect(() => {
     if (!viewerReady || !options) return;
@@ -536,6 +548,7 @@ export default function App() {
       } else return;
       if (select) viewerRef.current!.selectFirstOf(select);
       if (smokeTab === "trace") (document.querySelector(".reasoning-head") as HTMLElement | null)?.click();
+      if (smokeTab === "drawings" || smokeTab === "review" || smokeTab === "cost") setTab(smokeTab);
       await new Promise((r) => setTimeout(r, 800));
       platform.report({
         status: "ready",
@@ -575,6 +588,7 @@ export default function App() {
           onDelete={active ? () => removeSession(active.id) : null} />
         <div className="content">
           <Workspace hostRef={hostRef} viewer={viewerReady ? v : null}
+            tab={viewTab} onTab={setTab} onExport={(f) => void exportShown(f)} onShow={showInModel}
             fileName={loaded?.name ?? (active?.model?.name ?? null)} schema={loaded?.schema ?? ""}
             status={status} shown={shown}
             section={section} onSection={(t) => sectionRef.current?.setValue(t)} onFollow={(on) => sectionRef.current?.setFollow(on)}
@@ -594,6 +608,7 @@ export default function App() {
               onSubmit={(t, images) => generate(active.id, t, focusFor, images)} onAttach={openFile}
               focus={focusFor} onClearFocus={() => v?.clearSelection()}
               viewing={loaded?.key ?? null} onView={viewVersion} onRestore={(n) => restore(active.id, n)}
+              onOpenTab={setTab}
               width={size.assistant} onResize={(w) => resize("assistant", w)} onResetWidth={() => resetPanel("assistant")}
               cardHeight={size.turnCard} onResizeCard={(h) => resize("turnCard", h)} onResetCard={() => resetPanel("turnCard")} />
           )}
