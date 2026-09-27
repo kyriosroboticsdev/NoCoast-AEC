@@ -306,6 +306,37 @@ pre.code { margin: 8px 0 0; max-height: 320px; overflow: auto; font-size: 12px; 
   --ncv-font: inherit;
 }
 
+/* --- Design-layer additions: what the viewer shows, cross-section, inspector facts, focus chip, checklist --- */
+.showing { position: absolute; top: 14px; left: 18px; z-index: 5; padding: 3px 10px; border-radius: 999px; background: rgba(29, 29, 27, 0.72); color: #fff; font-family: "Cascadia Code", Consolas, ui-monospace, monospace; font-size: 12px; }
+.showing.preview { background: #b7791f; }
+.viewport-toast { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 6; padding: 6px 12px; border-radius: 10px; background: var(--danger-soft); color: var(--danger); font-size: 13px; max-width: 60%; }
+.section-bar { left: 18px; right: 18px; bottom: 18px; display: flex; align-items: center; gap: 10px; padding: 9px 14px; font-size: 12.5px; }
+.info-card { bottom: 78px; }
+.gizmo-wrap { bottom: 82px; }
+.section-bar input[type="range"] { flex: 1; min-width: 60px; margin: 0; accent-color: var(--accent); }
+.section-bar .section-label { min-width: 9.5em; font-variant-numeric: tabular-nums; color: var(--text-2); white-space: nowrap; }
+.section-bar label { display: flex; align-items: center; gap: 5px; white-space: nowrap; color: var(--muted); cursor: pointer; }
+.section-bar input[type="checkbox"] { margin: 0; accent-color: var(--accent); }
+.info-card { max-height: calc(100% - 96px); overflow-y: auto; }
+.info-head { display: flex; align-items: center; gap: 6px; }
+.info-head .info-sub { flex: 1; min-width: 0; margin: 0; }
+.kv.facts { gap: 5px 12px; margin-top: 8px; font-size: 13px; }
+.kv.facts dd { text-align: left; white-space: normal; word-break: break-word; }
+.info-ifc { margin-top: 10px; font-size: 13px; }
+.info-ifc summary { cursor: pointer; color: var(--muted); }
+.info-pset { margin-top: 8px; }
+.info-pset-title { font-weight: 600; font-size: 12.5px; color: var(--text-2); }
+.req-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; }
+.req-list li { display: flex; gap: 8px; align-items: baseline; }
+.req-list .mark { width: 14px; flex: none; text-align: center; font-weight: 600; }
+.req-list .met .mark { color: #2f8a55; }
+.req-list .unmet .mark { color: var(--danger); }
+.req-list .unsupported, .req-list .skipped { color: var(--muted); }
+.focus-chip { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 3px 6px 3px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12.5px; }
+.focus-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.focus-chip button { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: inherit; }
+.focus-chip button:hover { background: rgba(0, 0, 0, 0.06); }
+
 /* --- Export dialog (light theme, scoped to .modal) --- */
 .modal-backdrop { position: fixed; inset: 0; background: rgba(29, 29, 27, 0.32); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
 .modal { width: min(560px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; display: flex; flex-direction: column; gap: 16px; box-shadow: var(--shadow-lg); }
@@ -340,15 +371,3 @@ pre.code { margin: 8px 0 0; max-height: 320px; overflow: auto; font-size: 12px; 
 .modal-foot button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .modal-foot button.primary:hover:not(:disabled) { background: var(--accent-text); }
 .modal-foot button:disabled { opacity: 0.5; cursor: default; }
-
-/* --- Design-layer additions: requirement checklist, selection focus --- */
-.req-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; }
-.req-list li { display: flex; gap: 8px; align-items: baseline; }
-.req-list .mark { width: 14px; flex: none; text-align: center; font-weight: 600; }
-.req-list .met .mark { color: #2f8a55; }
-.req-list .unmet .mark { color: var(--danger); }
-.req-list .unsupported, .req-list .skipped { color: var(--muted); }
-.focus-chip { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 3px 6px 3px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12.5px; }
-.focus-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.focus-chip button { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: inherit; }
-.focus-chip button:hover { background: rgba(0, 0, 0, 0.06); }

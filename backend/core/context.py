@@ -117,7 +117,7 @@ def _where(item) -> str:
 
 
 def _free_line(e) -> str:
-    head = f"{e.kind} id={e.id}" + (f' "{e.name}"' if e.name else "") + f" {e.level}"
+    head = f"{e.kind} id={e.id}" + (f' "{e.name}"' if e.name else "") + f" {e.level}" + (f" z+{e.elevation:g}" if e.elevation else "")
     if e.kind == "wall":
         return head + f" path={_edges(e.path or [])}" + (f" h={e.height:g}" if e.height else "")
     if e.kind in ("slab", "roof"):

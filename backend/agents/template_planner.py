@@ -20,6 +20,8 @@ NUMBERS = {"one": 1, "a": 1, "an": 1, "single": 1, "two": 2, "double": 2, "three
            "five": 5, "six": 6, "seven": 7, "eight": 8}
 ORDINALS = {"first": 0, "ground": 0, "1st": 0, "lower": 0, "second": 1, "2nd": 1, "upper": -1,
             "upstairs": -1, "top": -1, "third": 2, "3rd": 2, "fourth": 3, "4th": 3}
+BRIDGE = re.compile(r"\b(foot|road|pedestrian )?bridges?\b|\bviaduct\b|\bwalkway over\b")
+
 ROOM_WORDS = [  # (regex, display name, kind)
     (r"living\s*rooms?|lounge|family\s*rooms?", "Living Room", "living"),
     (r"kitchens?", "Kitchen", "kitchen"),
@@ -75,7 +77,8 @@ def parse_requirements(prompt: str) -> list[Requirement]:
                                (r"pergola|gazebo", "pergola", "a pergola"), (r"roof terrace|terrace", "terrace", "a terrace"),
                                (r"curved|rounded|bow window|round(ed)? wall", "curved wall", "a curved wall"),
                                (r"l-shaped|l shaped", "l-shaped", "an L-shaped room"), (r"garden wall|fence", "garden wall", "a garden wall"),
-                               (r"\bdeck\b", "deck", "a deck")):
+                               (r"\bdeck\b", "deck", "a deck"), (BRIDGE.pattern, "bridge", "a bridge"),
+                               (r"railings?|parapets?|balustrades?|handrails?", "railing", "railings")):
         if re.search(words, text):
             reqs.append(Requirement(text=label, kind="feature", item=item))
     if re.search(r"\bpool\b|elevator|lift\b", text):
@@ -127,6 +130,10 @@ def template_steps(prompt: str) -> list[dict]:
     basement = bool(re.search(r"basement|cellar", text))
     floors = _assign_rooms(text, storeys)
     garage = "garage" in text
+    if BRIDGE.search(text) and not any(re.search(r"\b(?:" + p + r")\b", text) for p, _, _ in ROOM_WORDS):
+        # A structure with no rooms at all: the level exists only to carry the free elements.
+        return [{"step": "building", "name": "Footbridge", "description": "a footbridge: deck on piers"},
+                {"step": "level", "id": "L1"}] + shapes.bridge_steps(Design(levels=[LevelDef(id="L1")]))
     steps: list[dict] = [{"step": "building", "name": "Generated House", "description": f"{storeys}-storey house" + (" with a basement" if basement else "")}]
     if basement:
         steps.append({"step": "level", "id": "B1"})
@@ -227,6 +234,8 @@ def template_steps(prompt: str) -> list[dict]:
         steps += shapes.garden_wall_steps(design)
     if re.search(r"\bdeck\b", text) and not re.search(r"roof deck", text):
         steps += shapes.deck_steps(design)
+    if BRIDGE.search(text):
+        steps += shapes.bridge_steps(design)
     return steps
 
 

@@ -709,16 +709,16 @@ def _free(e: FreeDef, design: Design, levels: dict[str, Level], els: list, free_
         w = WallSeg(e.id, e.level, pts, True, (), None, any(s.arc for s in segs), height=e.height)
         free_walls[e.id] = w
         els.append(Wall(id=e.id, name=name, level=e.level, start=pts[0], end=pts[-1], path=pts if len(pts) > 2 else None,
-                        thickness=e.thickness or 0.2, height=e.height, external=True, material=design.wall_material))
+                        thickness=e.thickness or 0.2, height=e.height, external=True, material=design.wall_material, elevation=e.elevation))
     elif e.kind == "slab":
-        els.append(Slab(id=e.id, name=name, level=e.level, outline=e.outline(), thickness=e.thickness or 0.2))
+        els.append(Slab(id=e.id, name=name, level=e.level, outline=e.outline(), thickness=e.thickness or 0.2, elevation=e.elevation))
     elif e.kind == "roof":
-        els.append(Roof(id=e.id, name=name, level=e.level, outline=e.outline(), thickness=e.thickness or 0.2, shape="flat"))
+        els.append(Roof(id=e.id, name=name, level=e.level, outline=e.outline(), thickness=e.thickness or 0.2, shape="flat", elevation=e.elevation))
     elif e.kind == "column":
         size = e.width or 0.3
-        els.append(Column(id=e.id, name=name, level=e.level, position=e.at, width=size, depth=e.depth or size, height=e.height))
+        els.append(Column(id=e.id, name=name, level=e.level, position=e.at, width=size, depth=e.depth or size, height=e.height, elevation=e.elevation))
     elif e.kind == "beam":
-        els.append(Beam(id=e.id, name=name, level=e.level, start=e.start, end=e.end, width=e.width or 0.2, depth=e.depth or 0.3))
+        els.append(Beam(id=e.id, name=name, level=e.level, start=e.start, end=e.end, width=e.width or 0.2, depth=e.depth or 0.3, elevation=e.elevation))
 
 
 def _mep(design: Design, levels: list[Level], infos: dict[str, RoomInfo], els: list) -> None:

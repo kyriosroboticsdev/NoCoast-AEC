@@ -81,5 +81,5 @@ def add_roof(ctx: BuildContext, roof: Roof) -> None:
         element = ifcopenshell.api.root.create_entity(m, ifc_class="IfcRoof", predefined_type="HIP_ROOF", name=roof.name or roof.id)
         rep = body(ctx, [_hip_brep(m, roof)], "Brep")
         style = "Roof:pitched"
-    finish_element(ctx, element, rep, translate(z=level.elevation + level.height), style, roof.level,
+    finish_element(ctx, element, rep, translate(z=level.elevation + level.height + roof.elevation), style, roof.level,
                    pset=("Pset_RoofCommon", {"IsExternal": True}), item=roof)
