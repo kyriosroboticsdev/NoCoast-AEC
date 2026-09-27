@@ -9,10 +9,13 @@ from xml.etree import ElementTree
 
 from fastapi.testclient import TestClient
 
+import pytest
+
 from core.derive import derive
 from core.remedy import remedies
-from core.review import review
+from core.review import opening_width, review
 from main import app
+from schemas.bim import Door
 from schemas.design import Design
 from tests.sse import done, events
 
@@ -90,6 +93,12 @@ def test_remedies_are_buildable_and_do_not_stack_fixtures():
     steps = remedies(failing, spec, design)["plumbing.wc"]
     places = {(s["room"], s["side"], s["at"]) for s in steps}
     assert len(places) == len(steps) >= 2
+
+
+def test_a_pair_of_leaves_counts_both_towards_exit_capacity():
+    pair = Door(id="d", wall="w", offset=0, width=1.8, kind="double")
+    single = Door(id="s", wall="w", offset=0, width=1.0)
+    assert opening_width(pair) == pytest.approx(1.7) and opening_width(single) == pytest.approx(0.91)
 
 
 def test_drawing_set_sheets_are_svg_and_pdf():

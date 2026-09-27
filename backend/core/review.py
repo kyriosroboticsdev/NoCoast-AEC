@@ -70,6 +70,8 @@ TRAVEL_LIMIT = {"R-3": None, "B": (61.0, 91.4), "E": (61.0, 76.2), "I-2": (45.7,
 
 SLAB = 0.2
 MM = 1000
+LEAF_MIN = 0.813             # IBC 1010.1.1 / IRC R311.2: 32 in clear per leaf
+EXIT_PER_OCCUPANT = 0.00508  # IBC 1005.3.2: 0.2 in of exit width per occupant (unsprinklered)
 
 
 def ft(m: float) -> str:
@@ -235,6 +237,13 @@ class Model:
         return union.area
 
 
+def opening_width(d: Door) -> float:
+    """Clear width of the whole opening, for egress capacity: both leaves of a pair count."""
+    if d.kind in ("double", "french"):
+        return d.width - 0.1
+    return _clear_width(d)
+
+
 def _clear_width(d: Door) -> float:
     if d.kind in ("double", "french", "sliding"):
         return d.width / 2 - 0.05
@@ -375,16 +384,29 @@ def _checks(m: Model, group: str, load: int) -> list[dict]:
                 "A second exit stair is needed above 29 occupants per storey (IBC Table 1006.3.4(1))."))
         )
 
-    widths = [(d, _clear_width(d)) for d in ext]
-    if widths:
-        need_w = max(0.813, load * 0.005 / max(1, len(ext))) if not residential else 0.813
-        worst = min(widths, key=lambda x: x[1])
-        ok = worst[1] >= need_w - 1e-6
+    if ext:
+        # IBC 1010.1.1: every leaf clears 32 in; IBC 1005.3.2: the exits together clear 0.2 in per occupant.
+        worst = min(ext, key=_clear_width)
+        leaf_ok = _clear_width(worst) >= LEAF_MIN - 1e-6
+        capacity = sum(opening_width(d) for d in ext)
+        need_cap = 0.0 if residential else load * EXIT_PER_OCCUPANT
+        cap_ok = capacity >= need_cap - 1e-6
+        advice = []
+        if not leaf_ok:
+            advice.append(f"widen {worst.id} to a leaf of at least {(LEAF_MIN + 0.09) * MM:.0f} mm")
+        if not cap_ok:
+            advice.append(f"find {(need_cap - capacity) * MM:,.0f} mm more exit width: make the exits pairs of "
+                          f"1,800 mm leaves or add another exit")
+        narrow = [d.id for d in ext if opening_width(d) < 1.7] if not cap_ok else []
         checks.append(_check(
             "egress.door-width", "Egress", "Exit door clear width", "IRC R311.2" if residential else "IBC 1005.3.2 / 1010.1.1",
-            "pass" if ok else "fail", f"{worst[1] * MM:.0f} mm narrowest", f"≥ {need_w * MM:.0f} mm",
-            "Clear width taken as leaf width less stops and the open leaf (90 mm single, 50 mm per leaf for pairs).",
-            [worst[0].id], "" if ok else f"Widen {worst[0].id} to at least {(need_w + 0.09) * MM:.0f} mm leaf."))
+            "pass" if leaf_ok and cap_ok else "fail",
+            f"{_clear_width(worst) * MM:.0f} mm narrowest leaf" + ("" if residential else f", {capacity * MM:,.0f} mm in total"),
+            f"≥ {LEAF_MIN * MM:.0f} mm per leaf" + ("" if residential else f", ≥ {need_cap * MM:,.0f} mm total for {load} occupants"),
+            "Clear width is the leaf less stops and the open leaf (90 mm for a single leaf, 50 mm per leaf for a pair); "
+            "a pair counts both leaves towards capacity.",
+            ([worst.id] if not leaf_ok else []) + [i for i in narrow if i != worst.id] or [worst.id],
+            (advice[0][0].upper() + "; ".join(advice)[1:] + ".") if advice else ""))
 
     travel = _travel(m)
     limits = TRAVEL_LIMIT.get(group)
