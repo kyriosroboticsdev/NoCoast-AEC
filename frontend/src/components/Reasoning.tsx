@@ -51,7 +51,7 @@ export function Reasoning({ run }: { run: Run }) {
   }, [steps]);
   const top = children.get(null) ?? [];
 
-  const elapsed = ((run.endedAt ?? now) - (run.startedAt ?? now)) / 1000;
+  const elapsed = run.endedAt && run.seconds ? run.seconds : ((run.endedAt ?? now) - (run.startedAt ?? now)) / 1000;
   const current = [...steps].reverse().find((s) => s.status === "running");
   const failed = run.stage === "error";
   // What the model is writing this instant beats the last finished step as the "now" line.
