@@ -199,7 +199,7 @@ export default function App() {
 
       const version = await call(project, (e) => {
         tracer.event(e);
-        if (e.stage === "apply" || e.stage === "solve" || e.stage === "compile") update(sid, patchRun(aid, { stage: "building" }));
+        if (["apply", "solve", "compile", "build", "step"].includes(e.stage)) update(sid, patchRun(aid, { stage: "building" }));
       });
       update(sid, (s) => ({
         ...patchRun(aid, { version, stage: "loading" })(s),

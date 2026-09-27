@@ -1,4 +1,4 @@
-// Turns the pipeline's flat stage events (program | edit | apply | solve | compile | done)
+// Turns the pipeline's flat stage events (requirements | research | tool | build | step | coordinate | verify | compile | done …)
 // into reasoning-trace steps. A stage that repeats is a repair attempt after validation
 // failed; those nest under the stage with the errors being fixed as their detail.
 import type { StageEvent } from "../api/client";
@@ -10,6 +10,12 @@ const STAGES: Record<string, { phase: TraceStep["phase"]; title: string }> = {
   apply: { phase: "validate", title: "Applying the operations" },
   solve: { phase: "build", title: "Solving the layout" },
   compile: { phase: "build", title: "Compiling IFC" },
+  requirements: { phase: "plan", title: "Extracting the checklist" },
+  research: { phase: "plan", title: "Researching the brick library" },
+  tool: { phase: "plan", title: "Looking up bricks and skills" },
+  build: { phase: "build", title: "Building step by step" },
+  coordinate: { phase: "validate", title: "Coordinating clashes, services and structure" },
+  verify: { phase: "validate", title: "Checking the requirements" },
 };
 
 interface Open {
