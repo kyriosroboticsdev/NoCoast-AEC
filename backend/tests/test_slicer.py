@@ -10,7 +10,7 @@ def test_slices_are_grouped_and_ordered_by_construction_phase():
     layers = slice_model(model, layer_height=0.5)
 
     assert len(layers) > 1
-    phase_order = [label for label, _ in PHASES]
+    phase_order = list(PHASES)
     seen = [l.phase for l in layers]
     # phases appear as contiguous runs, in build order (foundation, structure, roof, spaces, details)
     runs = [p for i, p in enumerate(seen) if i == 0 or p != seen[i - 1]]

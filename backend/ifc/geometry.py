@@ -5,8 +5,6 @@ from __future__ import annotations
 
 import math
 
-import ifcopenshell
-
 from schemas.bim import Point
 
 

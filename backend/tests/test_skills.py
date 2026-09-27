@@ -5,7 +5,6 @@ import re
 import pytest
 
 from bricks import library
-from bricks.model import PortKind
 from skills import skillbook
 
 
@@ -13,13 +12,14 @@ def test_every_skill_parses_and_references_real_bricks():
     book = skillbook()
     assert len(book.all()) >= 12
     lib = library()
+    connectors = {c.kind for b in lib.bricks.values() for c in b.connectors}
     for skill in book.all():
         assert skill.title and skill.body.strip() and skill.triggers, skill.name
         for bid in skill.bricks:
             assert lib.get(bid) is not None, f"{skill.name} lists unknown brick {bid}"
         # backticked ids in the body must be real bricks too, so the model is never taught a name that fails
         for bid in re.findall(r"`([a-z0-9_]+)`", skill.body):
-            if bid in PortKind.__args__:
+            if bid in connectors:
                 continue
             if "_" in bid or bid in lib.bricks:
                 assert lib.get(bid) is not None, f"{skill.name} body mentions unknown brick {bid}"
@@ -33,6 +33,7 @@ def test_every_skill_parses_and_references_real_bricks():
     ("wheelchair accessible bungalow", "accessibility"),
     ("a garden with a swimming pool and trees", "site-and-landscape"),
     ("heat pump and underfloor heating", "hvac-systems"),
+    ("a bespoke curved reception sculpture", "writing-assets"),
 ])
 def test_match_finds_the_playbook(request_text, expected):
     assert expected in [s.name for s in skillbook().match(request_text)]

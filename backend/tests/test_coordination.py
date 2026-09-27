@@ -1,4 +1,4 @@
-"""Coordination: clashes, service ports, placement rules and the rule-of-thumb structure check."""
+"""Coordination: clashes, keep-out volumes, connectors and the rule-of-thumb structure check."""
 
 from core.checks import check
 from core.coordinate import coordinate, errors, fix_lines
@@ -32,32 +32,32 @@ ROOMS = (dict(step="room", name="Kitchen", rect=[0, 0, 5, 4]), dict(step="room",
 
 
 def test_two_bricks_in_the_same_place_clash_but_different_heights_do_not():
-    d = _design(*ROOMS, dict(step="brick", brick="fridge", room="kitchen", side="N"),
-                dict(step="brick", brick="dishwasher", id="dw", room="kitchen", side="N"))
+    d = _design(*ROOMS, dict(step="brick", brick="fridge", ref="kitchen", side="N"),
+                dict(step="brick", brick="dishwasher", id="dw", ref="kitchen", side="N"))
     clash = _issues(d, "clash")
     assert len(clash) == 1 and set(clash[0].ids) == {"fridge-kitchen", "dw"}
-    ok = _design(*ROOMS, dict(step="brick", brick="dining_table", room="kitchen"), dict(step="brick", brick="pendant_light", room="kitchen"))
+    ok = _design(*ROOMS, dict(step="brick", brick="dining_table", ref="kitchen"), dict(step="brick", brick="pendant_light", ref="kitchen"))
     assert not _issues(ok, "clash")
 
 
-def test_bricks_do_not_clash_with_legacy_furniture_pairs_or_overlap_ok_pieces():
+def test_bricks_do_not_clash_with_legacy_furniture_pairs_or_pieces_that_may_overlap():
     d = _design(*ROOMS, dict(step="furniture", room="kitchen", kind="sofa", side="N"),
                 dict(step="furniture", room="kitchen", kind="armchair", side="N"),
-                dict(step="brick", brick="rug", room="kitchen"))
+                dict(step="brick", brick="rug", ref="kitchen"))
     assert not _issues(d, "clash")
 
 
 def test_the_stream_rejects_a_brick_step_that_clashes():
     events = []
-    stream = StepStream(lambda *a: events.append(a), _design(*ROOMS, dict(step="brick", brick="fridge", room="kitchen", side="N")))
-    assert not stream.apply({"step": "brick", "brick": "washing_machine", "id": "wm", "room": "kitchen", "side": "N"})
+    stream = StepStream(lambda *a: events.append(a), _design(*ROOMS, dict(step="brick", brick="fridge", ref="kitchen", side="N")))
+    assert not stream.apply({"step": "brick", "brick": "washing_machine", "id": "wm", "ref": "kitchen", "side": "N"})
     assert "overlap" in stream.rejected[0][2]
-    assert stream.apply({"step": "brick", "brick": "washing_machine", "id": "wm", "room": "kitchen", "side": "S"})
+    assert stream.apply({"step": "brick", "brick": "washing_machine", "id": "wm", "ref": "kitchen", "side": "S"})
     stream.close()
 
 
 def test_missing_services_name_providers_and_suggestions_resolve_them():
-    d = _design(*ROOMS, dict(step="brick", brick="gas_boiler", room="utility", side="N"))
+    d = _design(*ROOMS, dict(step="brick", brick="gas_boiler", ref="utility", side="N"))
     service = _issues(d, "service")
     assert {i.message.split(" needs ")[1].split(",")[0] for i in service} == {"flue", "gas"}
     assert all(i.suggestions for i in service)
@@ -66,19 +66,24 @@ def test_missing_services_name_providers_and_suggestions_resolve_them():
 
 
 def test_hot_water_comes_from_a_heater_and_base_services_need_nothing():
-    d = _design(*ROOMS, dict(step="brick", brick="kitchen_sink", room="kitchen", side="S"))
+    d = _design(*ROOMS, dict(step="brick", brick="kitchen_sink", ref="kitchen", side="S"))
     [hot] = _issues(d, "service")
-    assert "needs hot water" in hot.message and "water_heater" in hot.message
+    assert "needs water_hot" in hot.message and "water_heater" in hot.message
     assert hot.suggestions[0]["brick"].endswith("water_heater")
     d = _apply_suggestions(d, [hot])
     assert not _issues(d, "service")
-    assert not _issues(_design(*ROOMS, dict(step="brick", brick="fridge", room="kitchen", side="N")), "service")
+    assert not _issues(_design(*ROOMS, dict(step="brick", brick="fridge", ref="kitchen", side="N")), "service")
 
 
-def test_rules_warn_about_the_wrong_room_kind():
-    d = _design(*ROOMS, dict(step="brick", brick="bathtub", room="kitchen", side="S"))
-    [rule] = _issues(d, "rule")
-    assert rule.severity == "warning" and "bathroom" in rule.message
+def test_something_standing_in_a_keep_out_volume_is_a_warning():
+    d = _design(*ROOMS, dict(step="brick", brick="fireplace", ref="kitchen", side="N"),
+                dict(step="brick", brick="coffee_table", ref="kitchen", position=[2.5, 2.4]))
+    [zone] = _issues(d, "clearance")
+    assert zone.severity == "warning" and "keep-out" in zone.message and set(zone.ids) == {"fireplace-kitchen", "coffee-table-kitchen"}
+    assert not _issues(d, "clash")
+    clear = _design(*ROOMS, dict(step="brick", brick="fireplace", ref="kitchen", side="N"),
+                    dict(step="brick", brick="coffee_table", ref="kitchen", position=[2.5, 1.2]))
+    assert not _issues(clear, "clearance")
 
 
 def test_a_wide_room_needs_a_beam_and_the_suggested_beam_fixes_it():
@@ -130,11 +135,11 @@ def test_fix_lines_carry_the_suggested_steps():
 
 
 def test_asset_structure_and_furniture_requirements():
-    d = _design(dict(step="room", name="Hall", rect=[0, 0, 12, 10]), dict(step="brick", brick="double_bed", room="hall"),
-                dict(step="brick", brick="air_source_heat_pump", position=[14, 2]))
+    d = _design(dict(step="room", name="Hall", rect=[0, 0, 12, 10]), dict(step="brick", brick="double_bed", ref="hall"),
+                dict(step="brick", brick="air_source_heat_pump", ref="site", position=[14, 2]))
     reqs = [Requirement(text="a heat pump", kind="asset", item="heat pump"),
             Requirement(text="an elevator", kind="asset", item="passenger_elevator"),
             Requirement(text="it stands up", kind="structure"),
-            Requirement(text="a double bed", kind="furniture", item="double bed", room="hall")]
+            Requirement(text="a double bed", kind="furniture", item="double bed", ref="hall")]
     status = [r.status for r in check(d, analyze(d), reqs)]
     assert status == ["met", "unmet", "unmet", "met"]

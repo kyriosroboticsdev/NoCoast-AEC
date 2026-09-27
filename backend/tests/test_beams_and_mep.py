@@ -3,7 +3,7 @@ Both are always-derived — the design never has to ask for them, same as roofs 
 
 import ifcopenshell
 
-from core.derive import analyze, derive
+from core.derive import analyze
 from ifc.builder import compile_ifc
 from ifc.lifter import lift
 from schemas.bim import Beam, LightFixture, Outlet, Panel, Pipe, Wire

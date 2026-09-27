@@ -138,10 +138,10 @@ def test_pipeline_researches_places_bricks_and_resolves_coordination_over_sse():
 def test_library_endpoints():
     r = client.get("/bricks", params={"q": "hot water"}).json()
     assert r["total"] >= 150 and r["bricks"] and "water_heater" in {b["id"] for b in r["bricks"]}
-    listing = client.get("/bricks", params={"discipline": "structure", "limit": 100}).json()["bricks"]
-    assert listing and all(b["discipline"] == "structure" for b in listing)
+    listing = client.get("/bricks", params={"tag": "structure", "limit": 100}).json()["bricks"]
+    assert listing and all("structure" in b["tags"] for b in listing)
     brick = client.get("/bricks/steel_beam").json()
-    assert brick["host"] == "span" and "card" in brick
+    assert brick["mount"] == "path" and "card" in brick
     missing = client.get("/bricks/steel_beem")
     assert missing.status_code == 404 and "steel_beam" in missing.json()["detail"]
     skills = client.get("/skills").json()
