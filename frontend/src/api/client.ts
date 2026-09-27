@@ -89,14 +89,16 @@ export interface PromptImage {
 }
 
 /** What a version can be exported as. `zip` is the whole bundle; the rest are single files. */
-export type ExportFormat = "zip" | "ifc" | "drawings" | "review" | "bcf" | "estimate" | "spec" | "design" | "context"
-  | "checks" | "schedule" | "summary";
+export type ExportFormat = "zip" | "ifc" | "drawings" | "dxf" | "xlsx" | "review" | "bcf" | "estimate" | "spec" | "design"
+  | "context" | "checks" | "schedule" | "summary";
 
 export const EXPORTS: { format: ExportFormat; label: string; hint: string }[] = [
   { format: "ifc", label: "IFC model", hint: "IFC4 — Revit, Archicad, Navisworks, Solibri" },
   { format: "drawings", label: "Drawing set (.pdf)", hint: "cover, code analysis, plans, elevations, section, schedules" },
+  { format: "dxf", label: "CAD plans (.dxf)", hint: "every storey on NCS layers — AutoCAD, Rhino, Vectorworks" },
+  { format: "xlsx", label: "Schedules (.xlsx)", hint: "areas, rooms, doors, windows, equipment, cost, carbon, code" },
   { format: "bcf", label: "Review issues (BCF 2.1)", hint: "open the code findings in Revit, Solibri or BIMcollab" },
-  { format: "zip", label: "Full bundle (.zip)", hint: "IFC, PDF set, SVG sheets, BCF, schedules, estimate, README" },
+  { format: "zip", label: "Full bundle (.zip)", hint: "IFC, PDF set, DXF plans, Excel schedules, BCF, estimate, README" },
   { format: "review", label: "Design review (.md)", hint: "code screen, cost plan and upfront carbon" },
   { format: "estimate", label: "Cost & carbon (.csv)", hint: "UniFormat II cost plan, A1–A5 carbon by element" },
   { format: "summary", label: "Design summary", hint: "brief, approach and checks, Markdown" },
@@ -113,6 +115,7 @@ const EXPORT_EXTENSION: Record<ExportFormat, string> = {
   zip: "zip", ifc: "ifc", spec: "spec.json", design: "design.json",
   context: "context.txt", checks: "checks.json", schedule: "schedule.csv", summary: "summary.md",
   drawings: "drawings.pdf", review: "review.md", bcf: "issues.bcfzip", estimate: "estimate.csv",
+  dxf: "plans.dxf", xlsx: "schedules.xlsx",
 };
 
 export const exportName = (id: string, n: number, format: ExportFormat) =>

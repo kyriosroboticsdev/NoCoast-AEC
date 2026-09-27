@@ -35,7 +35,7 @@ roof from those and compiles them to IFC after every step.
         ──► derive BuildingSpec (IR) ─► IfcOpenShell compiler (stable GlobalIds) ─► version store ─► viewer
         ──► issue: code review, US NCS drawing set (SVG/PDF), area schedule, UniFormat cost plan,
             upfront carbon (LETI band), BCF 2.1 issues
-        ──► export: IFC, drawings PDF, BCF, estimate CSV, review report, or a bundle of all of it
+        ──► export: IFC, drawings PDF, DXF plans, Excel schedules, BCF, estimate CSV, review report, or a bundle of all of it
  edit:  the same, starting from the head version's DESIGN; the model emits only the steps that change it
 ```
 
@@ -559,7 +559,7 @@ optimistic concurrency (409).
 | `POST /projects/{id}/import` | multipart `file` (.ifc) | **SSE** |
 | `GET /projects/{id}/versions/{n}/ifc` | | the IFC file |
 | `GET /projects/{id}/versions/{n}/export` | `?format=zip` (default) | the whole version as one zip — see below |
-| `GET /projects/{id}/versions/{n}/export` | `?format=ifc\|summary\|spec\|design\|context\|checks\|schedule` | one artefact on its own |
+| `GET /projects/{id}/versions/{n}/export` | `?format=ifc\|drawings\|dxf\|xlsx\|bcf\|review\|estimate\|summary\|spec\|design\|context\|checks\|schedule` | one artefact on its own |
 | `GET /projects/{id}/export` | | the head version as a bundle |
 | `GET /projects/{id}/versions/{n}/spec` | | `{version, spec, design, guids}` |
 | `GET /projects/{id}/versions/{n}/context` | | text — exactly what the LLM sees when editing |
@@ -754,10 +754,12 @@ same `BuildingSpec` the IFC is compiled from, so they never disagree with the mo
 | US NCS drawing set: cover and area schedule, floor plans, roof plan, elevations, section, door/window schedules | `core/draw/` | **Drawings** tab, `/sheets/{A-101}.svg`, `drawings.pdf` |
 | Concept cost plan (UniFormat II, AACE Class 5 range) and upfront carbon with a LETI band and the best saving | `core/estimate.py` | **Cost & carbon** tab, `estimate.csv` |
 | BCF 2.1 issues for every failing or flagged clause, with IFC GlobalIds and a viewpoint | `core/bcf.py` | `issues.bcfzip` |
+| CAD plans: every storey in model space, in metres, on NCS/AIA layers (A-WALL + poché hatch, A-DOOR swings, A-GLAZ, A-FLOR-STRS, A-AREA boundaries, A-AREA-IDEN room tags, S-GRID, A-ANNO-DIMS), same marks and room numbers as the PDF set | `core/draw/dxf.py` | `plans.dxf`, `cad/<level>.dxf` in the bundle |
+| Schedules workbook: summary, area summary by storey, room / door / window / equipment schedules, cost plan, carbon and the code review, with live SUM and conversion formulas | `core/workbook.py` | `schedules.xlsx` |
 
 `GET /projects/{id}/versions/{n}/analysis` returns the review, sheets, estimate and export links in one
-call; `…/export?format=` accepts `ifc`, `zip`, `drawings`, `review`, `bcf`, `estimate`, `spec`, `design`,
-`context`, `checks`, `schedule` and `summary`. "Show in model" on any clause highlights its elements in the
+call; `…/export?format=` accepts `ifc`, `zip`, `drawings`, `dxf`, `xlsx`, `review`, `bcf`, `estimate`, `spec`,
+`design`, `context`, `checks`, `schedule` and `summary`. "Show in model" on any clause highlights its elements in the
 3D viewer.
 
 ### 4.17 Troubleshooting

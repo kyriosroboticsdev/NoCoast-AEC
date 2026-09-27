@@ -2,7 +2,7 @@
 // backend derives from the model (GET /projects/{id}/versions/{n}/analysis). Everything here is drawn
 // from the same IFC the viewer shows, so the numbers and the geometry never disagree.
 import {
-  AlertTriangle, Building2, Check, Download, ExternalLink, FileText, Info, Leaf, LoaderCircle, Maximize2, Ruler,
+  AlertTriangle, Building2, Check, Download, ExternalLink, FileSpreadsheet, FileText, Info, Leaf, LoaderCircle, Maximize2, Ruler,
   ShieldCheck, Users, X, type LucideIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -98,6 +98,10 @@ function Drawings({ data, onExport }: { data: api.Analysis; onExport: Props["onE
           <button className="btn ghost" onClick={() => setZoom(true)}><Maximize2 size={15} /> Full screen</button>
           <a className="btn ghost" href={sheet ? api.backendUrl(sheet.url) : undefined} target="_blank" rel="noreferrer"><ExternalLink size={15} /> SVG</a>
           <button className="btn primary" onClick={() => onExport("drawings")}><Download size={15} /> PDF set</button>
+          <button className="btn ghost" title="Every floor plan on NCS layers, in metres — AutoCAD, Rhino, Vectorworks, Revit link"
+            onClick={() => onExport("dxf")}><Download size={15} /> DXF</button>
+          <button className="btn ghost" title="Area, room, door and window schedules with live totals"
+            onClick={() => onExport("xlsx")}><FileSpreadsheet size={15} /> Schedules</button>
           <button className="btn ghost" onClick={() => onExport("zip")}><Download size={15} /> Bundle</button>
         </div>
         {sheet && (
@@ -246,6 +250,7 @@ function Cost({ data, onExport }: { data: api.Analysis; onExport: Props["onExpor
           <p className="muted">Priced and measured from the model's own quantities</p>
         </div>
         <span className="grow" />
+        <button className="btn ghost" onClick={() => onExport("xlsx")}><FileSpreadsheet size={15} /> Workbook (.xlsx)</button>
         <button className="btn ghost" onClick={() => onExport("estimate")}><Download size={15} /> Cost plan (.csv)</button>
       </div>
       <div className="cost-grid">
