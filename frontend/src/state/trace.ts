@@ -100,6 +100,47 @@ function metricOf(kind: string, facts: Record<string, unknown> | undefined): str
   return bits.join(" · ") || null;
 }
 
+/**
+ * A research call as a line in the design log: "Specified the school desk — 1.2 × 0.55 × 0.75 m"
+ * rather than the raw call and the brick card it returned. Returns the title and any detail worth
+ * keeping (a check's findings); the full card is for the model, not the reader.
+ */
+export function narrateTool(tool: string, args: Record<string, unknown>, result: string): { title: string; detail: string | null; failed: boolean } {
+  const first = result.split("\n")[0] ?? "";
+  const failed = result.startsWith("error:") || /^(no |not valid|invalid)/.test(first);
+  const id = kindName(args.id);
+  switch (tool) {
+    case "get_brick": {
+      if (failed) return { title: `No ${id} in the library — to be modelled as a purpose-made part`, detail: null, failed: false };
+      const name = /—\s*([^[]+?)\s*\[/.exec(first)?.[1] ?? id;
+      const size = /(\d[\d.]*)x(\d[\d.]*)x(\d[\d.]*) m/.exec(first);
+      const inSentence = name.replace(/[\w-]+/g, (w) => (w === w.toUpperCase() ? w : w.toLowerCase()));
+      return { title: `Specified the ${inSentence}` + (size ? ` — ${size[1]} × ${size[2]} × ${size[3]} m` : ""), detail: null, failed };
+    }
+    case "get_skill": {
+      const topic = /^SKILL [\w-]+:\s*(.+)$/.exec(first)?.[1]?.replace(/\s*\([^)]*\)\s*$/, "");
+      return { title: topic ? `Consulted the guidance on ${topic.replace(/^\w/, (c) => c.toLowerCase())}` : `Consulted the ${id} guidance`, detail: null, failed };
+    }
+    case "search_bricks": {
+      const hits = failed ? 0 : result.split("\n").filter(Boolean).length;
+      return { title: `Searched the parts library for “${String(args.query ?? args.tag ?? "")}” — ${hits ? `${hits} ${hits === 1 ? "match" : "matches"}` : "nothing suitable"}`, detail: null, failed: false };
+    }
+    case "list_skills":
+      return { title: "Reviewed the index of design guidance", detail: null, failed };
+    case "check_asset":
+      return { title: failed ? "A purpose-made part failed its check and was redrawn" : "Checked a purpose-made part builds", detail: failed ? first : null, failed };
+    case "check_design":
+    case "structure_report": {
+      const what = tool === "check_design" ? "Coordination check" : "Structural check";
+      const lines = result.split("\n").filter(Boolean);
+      const clean = lines.length === 0 || /^no issues|nothing to check/.test(first);
+      return { title: clean ? `${what}: no issues` : `${what}: ${plural(lines.length, "finding")}`, detail: clean ? null : lines.slice(0, 3).join("\n"), failed: false };
+    }
+    default:
+      return { title: cap(`${tool.replace(/_/g, " ")}${id ? ` ${id}` : ""}`), detail: first.slice(0, 200) || null, failed };
+  }
+}
+
 export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) {
   const rooms: Record<string, string> = {}; // room id / slug → display name, learned from the steps
   const roomLevel: Record<string, string> = {};
@@ -324,10 +365,12 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
           setDetail(g, e.message);
           return;
         }
-        case "tool":
-          child(group("research"), cap(e.message), (d.result as string | undefined)?.slice(0, 400) ?? null,
-                String(d.result ?? "").startsWith("error:") ? "error" : "done");
+        case "tool": {
+          const args = (d.args as Record<string, unknown> | undefined) ?? {};
+          const line = narrateTool(String(d.tool ?? args.tool ?? ""), args, String(d.result ?? ""));
+          child(group("research"), line.title, line.detail, line.failed ? "error" : "done");
           return;
+        }
         case "coordinate": {
           const g = group("review", "Coordinating clashes, services and structure");
           const issues = (d.issues as { message?: string; level?: string }[] | undefined) ?? [];
