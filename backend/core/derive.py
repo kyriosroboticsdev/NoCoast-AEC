@@ -612,6 +612,10 @@ def _porch(design: Design, polys: list[Polygon], els: list, ground: str = "L1") 
 
 # --- the whole thing ----------------------------------------------------------
 
+def space_id(level_id: str, room_id: str) -> str:
+    return f"{level_id}-space-{room_id}"
+
+
 def _outline(poly: Polygon, grow: float = 0.0) -> list[tuple[float, float]]:
     if grow:
         poly = poly.buffer(grow, join_style="mitre")
@@ -714,7 +718,7 @@ def analyze(design: Design, prune: bool = False) -> Derived:
             sid = f"{level.id}-floor" if i == 1 else f"{level.id}-floor-{i}"
             els.append(Slab(id=sid, name=f"{level.name} slab", level=level.id, outline=_outline(poly, EXT_T / 2), thickness=SLAB_T))
         for r in rooms:
-            els.append(Space(id=f"{level.id}-space-{r.id}", name=r.name, level=level.id, outline=_space_outline(polys_by_room[r.id])))
+            els.append(Space(id=space_id(level.id, r.id), name=r.name, level=level.id, outline=_space_outline(polys_by_room[r.id])))
 
     for level in levels:
         for w in all_walls[level.id]:
