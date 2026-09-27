@@ -88,6 +88,13 @@ def thinking_for(schema: str, prompt: str, reply: dict, meta: dict | None = None
         return ""
     steps = reply.get("steps", [])
     meta = meta or {}
+    if meta.get("code"):
+        clauses = [re.sub(r":.*", "", str(line)) for line in meta["code"]]
+        moves = _why(steps, ("door", "stair", "furniture", "window"), 4)
+        return ("**Clearing the code review before issue**\n\n"
+                + f"{len(clauses)} clause{'s' if len(clauses) != 1 else ''} fail the screen: " + "; ".join(clauses) + ". "
+                + "None of them needs the plan reorganised, so the fixes are local and leave the parti alone.\n\n"
+                + "**The moves**\n\n" + (" ".join(moves) or "No local move clears them; they go on the issue sheet as open items."))
     problems = [re.sub(r"^step \d+ \{.*?\}: |applying this step makes the design unbuildable: ", "", str(p))
                 for k in ("problems", "unmet", "issues", "seen", "code") for p in (meta.get(k) or [])]
     if problems or meta.get("editing"):
@@ -194,15 +201,15 @@ class MockLLM:
     # --- fix rounds ----------------------------------------------------------
 
     def _fix(self, prompt: str, meta: dict) -> list[dict]:
-        """The mock cannot reason about its mistakes, but coordination issues come with steps that fix them:
-        it applies those (once each) and leaves the rest for the pipeline to report."""
+        """The mock cannot reason about its mistakes, but coordination issues and failing code clauses come with
+        steps that fix them: it applies those (once each) and leaves the rest for the pipeline to report."""
         steps, seen = [], set()
-        for issue in meta.get("issues") or []:
-            for s in issue.get("suggestions") or []:
-                key = json.dumps(s, sort_keys=True)
-                if key not in seen:
-                    seen.add(key)
-                    steps.append(s)
+        suggested = [s for issue in meta.get("issues") or [] for s in issue.get("suggestions") or []]
+        for s in suggested + list(meta.get("remedies") or []):
+            key = json.dumps(s, sort_keys=True)
+            if key not in seen:
+                seen.add(key)
+                steps.append(s)
         return steps
 
     # --- edits -----------------------------------------------------------------

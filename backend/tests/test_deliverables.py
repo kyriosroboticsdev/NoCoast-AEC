@@ -9,12 +9,17 @@ from xml.etree import ElementTree
 
 from fastapi.testclient import TestClient
 
+from core.derive import derive
+from core.remedy import remedies
+from core.review import review
 from main import app
+from schemas.design import Design
 from tests.sse import done, events
 
 client = TestClient(app)
 HOUSE = "Two storey house with a kitchen, living room and two bedrooms"
 OFFICE = "Two storey offices with an open office, two meeting rooms, reception and WCs"
+STUDIO = "An architecture studio with open studio, 2 meeting rooms, model shop, kitchen and WCs over two floors"
 
 
 def build(prompt: str = HOUSE) -> tuple[str, str]:
@@ -58,6 +63,33 @@ def test_office_is_classified_as_business_with_plumbing_and_egress():
     assert rev["occupancy"]["group"] == "B" and rev["code"].startswith("IBC")
     refs = " ".join(c["reference"] for c in rev["checks"])
     assert "1006" in refs and "2902" in refs
+
+
+def test_code_failures_go_back_to_the_model_before_issue():
+    pid, text = build(STUDIO)
+    evs = events(text)
+    pre = next(e for e in evs if e["stage"] == "precheck")
+    failing = {c["reference"] for c in pre["data"]["checks"]}
+    assert {"IBC 1006.3.3", "IBC Table 2902.1"} <= failing
+    assert all(c["fix"] >= 1 for c in pre["data"]["checks"])
+    rounds = [e["data"]["round"] for e in evs if e["stage"] == "build"]
+    assert rounds[-1] == "code"
+    rev = analysis(pid)["review"]
+    assert rev["score"]["fail"] == 0, [c for c in rev["checks"] if c["status"] == "fail"]
+
+
+def test_remedies_are_buildable_and_do_not_stack_fixtures():
+    pid, _ = build(STUDIO)
+    design = Design.model_validate(client.get(f"/projects/{pid}/versions/1/spec").json()["design"])
+    spec, _ = derive(design)
+    fixes = remedies([c for c in review(spec, design)["checks"] if c["status"] == "fail"], spec, design)
+    assert fixes == {}
+    design.fixtures = [f for f in design.fixtures if f.kind != "toilet"]
+    spec, _ = derive(design)
+    failing = [c for c in review(spec, design)["checks"] if c["status"] == "fail"]
+    steps = remedies(failing, spec, design)["plumbing.wc"]
+    places = {(s["room"], s["side"], s["at"]) for s in steps}
+    assert len(places) == len(steps) >= 2
 
 
 def test_drawing_set_sheets_are_svg_and_pdf():
