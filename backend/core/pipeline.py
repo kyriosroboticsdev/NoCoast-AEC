@@ -48,8 +48,8 @@ from core.stream import StepStream, ThoughtStream
 from ifc.builder import GeometryError, compile_ifc, summarize
 from llm import LLM, LLMError, LLMRequest
 from llm.base import EmptyReply, Image, thinking_of, transient_network
-from llm.prompts import (build_system, build_user_message, look_system, look_user_message, requirements_system,
-                         requirements_user_message, research_system, research_user_message)
+from llm.prompts import (build_system, build_user_message, look_system, look_user_message, massing_user_message,
+                         requirements_system, requirements_user_message, research_system, research_user_message)
 from render import Shot
 from logsetup import log
 from schemas.attachments import ImageAttachment
@@ -76,6 +76,11 @@ def verify_rounds() -> int:
 def code_rounds() -> int:
     """Fix rounds driven by the pre-issue code screen (0 turns the screen-and-fix loop off)."""
     return int(os.environ.get("BIM_CODE_ROUNDS", 1))
+
+
+def massing_first() -> bool:
+    """Whether a new design is blocked out in a quick first pass before the detailed build (0 = off)."""
+    return os.environ.get("BIM_MASSING", "1").strip().lower() not in ("0", "false", "off", "no")
 
 
 class PipelineError(Exception):
@@ -267,9 +272,50 @@ class Feedback:
         return "code" if self.code else "design"
 
 
+def massing_round(llm: LLM, prompt: str, design: Design, checklist: list[str], emit: Emit, *, guids: GuidMap,
+                  focus: str | None = None, attached: Sequence[ImageAttachment] = ()) -> StepStream | None:
+    """A first, deliberately shallow pass: the building, its levels and one layout per storey.
+
+    A model deliberates over the whole project before it writes anything, so on a real brief the first
+    geometry used to arrive minutes into the run. This asks for the massing alone, which it can answer
+    almost at once, and the steps stream into the viewer as usual. The detailed build round then carries
+    on from that design. It is best effort: if the pass fails, the build round starts from nothing as before."""
+    emit("build", "blocking out the massing", {"round": "massing", "editing": False})
+    stream = StepStream(emit, design, guids, 0)
+    meta = {"prompt": prompt, "design": design.model_dump(mode="json"), "round": "massing"}
+    user = massing_user_message(prompt, checklist, _context(design), focus=focus, attached=[i.name for i in attached])
+    try:
+        raw = _call(llm, LLMRequest(system=build_system(), user=user, schema=STEPS_SCHEMA, schema_name="build", meta=meta,
+                                    images=attached_images(llm, attached)), emit, stream)
+    except LLMError as exc:
+        log.warning("massing pass failed, building from nothing instead: %s", exc)
+        emit("build", f"the massing pass did not come back ({exc}); designing in one pass instead",
+             {"error": str(exc), "recovered": True})
+        return None
+    _apply_unstreamed(stream, raw)
+    if not stream.accepted:
+        return None
+    emit("build", f"massing: {len(stream.accepted)} move(s), {len(stream.design.rooms)} space(s) on "
+                  f"{len(stream.design.levels)} level(s)",
+         {"round": "massing", "accepted": len(stream.accepted), "rooms": len(stream.design.rooms)})
+    return stream
+
+
+def _apply_unstreamed(stream: StepStream, raw: dict) -> None:
+    """Anything the streaming parser did not see (non-streaming adapters, or a reply that only parsed whole)."""
+    try:
+        steps = StepsResponse.model_validate(raw).steps
+    except ValidationError as exc:
+        stream.rejected.append((stream.first_index, raw if isinstance(raw, dict) else {"raw": raw}, "; ".join(_fmt_validation(exc))))
+        return
+    while stream.applied < len(steps):
+        stream.applied += 1
+        stream.apply(steps[stream.applied - 1].model_dump(exclude_none=True))
+
+
 def build_round(llm: LLM, prompt: str, design: Design, checklist: list[str], emit: Emit, *, guids: GuidMap,
                 first_index: int, feedback: Feedback = Feedback(), editing: bool = False, focus: str | None = None,
-                toolbox: Toolbox | None = None, attached: Sequence[ImageAttachment] = ()) -> StepStream:
+                toolbox: Toolbox | None = None, attached: Sequence[ImageAttachment] = (), massing: bool = False) -> StepStream:
     context = _context(design)
     fixes = fix_lines(feedback.issues)
     emit("build", feedback.label(editing),
@@ -281,18 +327,10 @@ def build_round(llm: LLM, prompt: str, design: Design, checklist: list[str], emi
             "code": feedback.code, "remedies": feedback.remedies, "bricks": toolbox.bricks if toolbox else []}
     user = build_user_message(prompt, checklist, context, focus=focus, toolbox=toolbox.text() if toolbox else None,
                               problems=feedback.problems, unmet=feedback.unmet, issues=fixes, seen=feedback.seen,
-                              code=feedback.code, attached=[i.name for i in attached])
+                              code=feedback.code, attached=[i.name for i in attached], massing=massing)
     raw = _call(llm, LLMRequest(system=build_system(), user=user, schema=STEPS_SCHEMA, schema_name="build", meta=meta,
                                 images=attached_images(llm, attached)), emit, stream)
-    # Anything the streaming parser did not see (non-streaming adapters, or a reply that only parsed whole).
-    try:
-        steps = StepsResponse.model_validate(raw).steps
-    except ValidationError as exc:
-        steps = []
-        stream.rejected.append((first_index, raw if isinstance(raw, dict) else {"raw": raw}, "; ".join(_fmt_validation(exc))))
-    while stream.applied < len(steps):
-        stream.applied += 1
-        stream.apply(steps[stream.applied - 1].model_dump(exclude_none=True))
+    _apply_unstreamed(stream, raw)
     return stream
 
 
@@ -428,13 +466,23 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
         checklist = checklist_lines(reqs.requirements)
         notes += [f"not supported: {r.text}" for r in reqs.requirements if not r.supported]
 
+        steps_total, accepted_total = 0, 0
+        massing = None
+        # Block the volume out before the research and the detailed build, so the viewer has something
+        # to show while the model is still working the project out. An edit already has a design on screen.
+        if not editing and massing_first():
+            massing = massing_round(llm, prompt, design, checklist, emit, guids=guids, focus=focus_text, attached=attached)
+            if massing is not None:
+                design, guids = massing.design, massing.guids
+                steps_total += massing.applied
+                accepted_total += len(massing.accepted)
+
         toolbox = research_round(llm, prompt, design, checklist, emit, focus_text)
 
-        steps_total, accepted_total = 0, 0
-        stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=0, editing=editing, focus=focus_text,
-                             toolbox=toolbox, attached=attached)
+        stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=steps_total, editing=editing,
+                             focus=focus_text, toolbox=toolbox, attached=attached, massing=massing is not None)
         design, guids = stream.design, stream.guids
-        approach = stream.approach
+        approach = stream.approach or (massing.approach if massing else None)
         steps_total += stream.applied
         accepted_total += len(stream.accepted)
         for attempt in range(config.MAX_REPAIRS):

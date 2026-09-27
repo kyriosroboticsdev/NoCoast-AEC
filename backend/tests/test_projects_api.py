@@ -36,6 +36,27 @@ def guids_by_tag(pid: str, number: int) -> dict[str, str]:
     return out
 
 
+def test_a_new_design_is_blocked_out_before_the_research_and_the_detailed_build():
+    """The viewer should have the volume on screen while the model is still working the project out."""
+    pid = new_project()
+    _, evs = prompt(pid, "A two storey primary school for 180 pupils: eight classrooms, a hall and a library")
+    massing = next(e for e in evs if e["stage"] == "build" and (e["data"] or {}).get("round") == "massing")
+    research = next(e for e in evs if e["stage"] == "research")
+    drawn = next(e for e in evs if e["stage"] == "partial" and "ifc_url" in (e["data"] or {}))
+    assert massing["seq"] < drawn["seq"] < research["seq"], [e["stage"] for e in evs[:12]]
+    # It blocks out and stops: the detail belongs to the build round that follows.
+    blocked = [e for e in evs if e["stage"] == "step" and e["seq"] < research["seq"] and e["data"]["ok"]]
+    assert blocked and {e["data"]["step"]["step"] for e in blocked} <= {"building", "level", "layout"}
+    assert drawn["data"]["elements"] > 0
+
+
+def test_an_edit_skips_the_massing_pass():
+    pid = new_project()
+    prompt(pid, "A one storey house with a kitchen and a living room")
+    _, evs = prompt(pid, "Add a bedroom")
+    assert not [e for e in evs if (e["data"] or {}).get("round") == "massing"]
+
+
 def test_design_then_edit_keeps_guids():
     pid = new_project()
     v1, evs = prompt(pid, "Two storey house with a kitchen, living room and three bedrooms, plus a garage")
