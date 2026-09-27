@@ -55,6 +55,21 @@ STYLES = {
     "Light": ((1.00, 0.97, 0.80), 0.0),
     "Panel": ((0.28, 0.29, 0.31), 0.0),
     "Wire": ((0.85, 0.65, 0.13), 0.0),
+    "Asset:wood": ((0.62, 0.45, 0.30), 0.0),
+    "Asset:soft": ((0.52, 0.55, 0.62), 0.0),
+    "Asset:sanitary": ((0.95, 0.95, 0.97), 0.0),
+    "Asset:appliance": ((0.82, 0.82, 0.84), 0.0),
+    "Asset:metal": ((0.58, 0.60, 0.63), 0.0),
+    "Asset:glass": ((0.55, 0.75, 0.90), 0.5),
+    "Asset:concrete": ((0.72, 0.72, 0.72), 0.0),
+    "Asset:plant": ((0.30, 0.55, 0.28), 0.0),
+    "Asset:water": ((0.35, 0.62, 0.85), 0.35),
+    "Asset:stone": ((0.60, 0.58, 0.55), 0.0),
+    "Asset:device": ((0.90, 0.90, 0.88), 0.0),
+    "Asset:duct": ((0.70, 0.73, 0.76), 0.0),
+    "Asset:solar": ((0.12, 0.16, 0.30), 0.0),
+    "Asset:fire": ((0.80, 0.12, 0.12), 0.0),
+    "Asset:car": ((0.70, 0.15, 0.15), 0.0),
 }
 MATERIALS = {"Wall": "Masonry", "Wall:masonry": "Masonry", "Wall:concrete": "Concrete", "Wall:timber": "Timber",
              "Wall:plaster": "Plaster", "Wall:stone": "Stone", "Wall:glass": "Glass", "Slab": "Concrete",
@@ -62,7 +77,10 @@ MATERIALS = {"Wall": "Masonry", "Wall:masonry": "Masonry", "Wall:concrete": "Con
              "Beam": "Timber", "Stair": "Timber", "Railing": "Steel", "Fixture:wood": "Timber", "Fixture:soft": "Fabric",
              "Fixture:sanitary": "Ceramic", "Fixture:appliance": "Steel", "Fixture:car": "Steel", "Fixture:fire": "Stone",
              "Pipe:water": "Copper", "Pipe:electrical": "Steel", "Outlet": "Plastic", "Light": "Plastic",
-             "Panel": "Steel", "Wire": "Plastic"}
+             "Panel": "Steel", "Wire": "Plastic", "Asset:wood": "Timber", "Asset:soft": "Fabric", "Asset:sanitary": "Ceramic",
+             "Asset:appliance": "Steel", "Asset:metal": "Steel", "Asset:glass": "Glass", "Asset:concrete": "Concrete",
+             "Asset:plant": "Vegetation", "Asset:water": "Water", "Asset:stone": "Stone", "Asset:device": "Plastic",
+             "Asset:duct": "Galvanised steel", "Asset:solar": "Glass", "Asset:fire": "Steel", "Asset:car": "Steel"}
 
 
 @dataclass

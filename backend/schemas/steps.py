@@ -16,13 +16,14 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from bricks import library
 from schemas.bim import FixtureKind, RoofShape, WallMaterial
-from schemas.design import (MAX_STOREYS, UNROOFED_KINDS, UNWALLED_KINDS, BalconyDef, ColumnDef, CustomShapeDef, Design, DoorDef,
-                            DoorKind, Edge, FixtureDef, FreeDef, FreeKind, LevelDef, PorchDef, RoofDef, RoomDef, RoomKind,
+from schemas.design import (MAX_STOREYS, UNROOFED_KINDS, UNWALLED_KINDS, BalconyDef, BrickDef, ColumnDef, CustomShapeDef, Design,
+                            DoorDef, DoorKind, Edge, FixtureDef, FreeDef, FreeKind, LevelDef, PorchDef, RoofDef, RoomDef, RoomKind,
                             ShapePartDef, Side, StairDef, WindowDef, WindowKind, guess_kind, slug)
 
-StepKind = Literal["building", "level", "room", "layout", "door", "window", "stair", "furniture", "custom", "balcony", "porch",
-                   "roof", "column", "material", "element", "remove", "note"]
+StepKind = Literal["building", "level", "room", "layout", "door", "window", "stair", "furniture", "custom", "brick", "balcony",
+                   "porch", "roof", "column", "material", "element", "remove", "note"]
 
 
 class StepError(ValueError):
@@ -61,6 +62,15 @@ class ShapePartStep(BaseModel):
     w: float = Field(gt=0)
     d: float = 0.1
     h: float = Field(gt=0)
+
+
+class BrickParamStep(BaseModel):
+    """A list of {name, value} pairs rather than a free object: strict JSON schemas (every key required,
+    no additional properties) cannot describe a dict whose keys depend on the brick."""
+
+    model_config = ConfigDict(extra="ignore")
+    name: str
+    value: float
 
 
 class Step(BaseModel):
@@ -105,6 +115,15 @@ class Step(BaseModel):
     parts: Optional[list[ShapePartStep]] = Field(
         None, description="custom: 1-12 solids (box or round) that together make the shape, e.g. a round table top "
                           "plus box legs; each part's x,y,z is its own min corner in the shape's local frame")
+    brick: Optional[str] = Field(None, description="brick: id of a library brick (see search_bricks)")
+    params: Optional[list[BrickParamStep]] = Field(None, description="brick: parameters that differ from the brick's defaults")
+
+    @field_validator("params", mode="before")
+    @classmethod
+    def _params(cls, v):
+        if isinstance(v, dict):
+            return [{"name": k, "value": val} for k, val in v.items()]
+        return v
 
     @field_validator("id", "room", "to", "to_level", "name", mode="before")
     @classmethod
@@ -242,21 +261,23 @@ def _remove(design: Design, id_: str) -> str:
         for rid in gone:
             _remove(design, rid)
         design.stairs = [s for s in design.stairs if s.to_level != id_]
+        design.bricks = [b for b in design.bricks if b.level != id_]
         return f"removed level {id_}" + (f" and its rooms ({', '.join(gone)})" if gone else "")
     room = design.room(id_)
     if room is not None:
         rid = room.id
         design.rooms = [r for r in design.rooms if r.id != rid]
         n = (len(design.doors) + len(design.windows) + len(design.stairs) + len(design.fixtures)
-             + len(design.custom_shapes) + len(design.balconies))
+             + len(design.custom_shapes) + len(design.balconies) + len(design.bricks))
         design.doors = [d for d in design.doors if d.room != rid and d.to != rid]
         design.windows = [w for w in design.windows if w.room != rid]
         design.stairs = [s for s in design.stairs if s.room != rid]
         design.fixtures = [f for f in design.fixtures if f.room != rid]
         design.custom_shapes = [cs for cs in design.custom_shapes if cs.room != rid]
         design.balconies = [b for b in design.balconies if b.room != rid]
+        design.bricks = [b for b in design.bricks if b.room != rid]
         n -= (len(design.doors) + len(design.windows) + len(design.stairs) + len(design.fixtures)
-              + len(design.custom_shapes) + len(design.balconies))
+              + len(design.custom_shapes) + len(design.balconies) + len(design.bricks))
         return f"removed room {rid}" + (f" and {n} item(s) in it" if n else "")
     free = design.element(id_)
     if free is not None:
@@ -264,7 +285,7 @@ def _remove(design: Design, id_: str) -> str:
         design.doors = [x for x in design.doors if x.wall != id_]
         design.windows = [x for x in design.windows if x.wall != id_]
         return f"removed {free.kind} {id_}"
-    for attr in ("doors", "windows", "stairs", "fixtures", "custom_shapes", "balconies", "columns"):
+    for attr in ("doors", "windows", "stairs", "fixtures", "custom_shapes", "balconies", "columns", "bricks"):
         items = getattr(design, attr)
         keep = [i for i in items if i.id != id_]
         if len(keep) != len(items):
@@ -274,8 +295,65 @@ def _remove(design: Design, id_: str) -> str:
         design.porch = None
         return "removed the porch"
     known = sorted(design.all_ids())
-    raise StepError(f"remove: no room, level, door, window, stair, furniture or balcony has id '{id_}' "
+    raise StepError(f"remove: no room, level, door, window, stair, furniture, brick or balcony has id '{id_}' "
                     f"(known ids: {', '.join(known[:60])}{', …' if len(known) > 60 else ''})")
+
+
+def _apply_brick(d: Design, step: Step) -> tuple[Design, str]:
+    name = _need(step, "brick")
+    brick = library().get(name)
+    if brick is None:
+        hints = library().suggest(name.replace("_", " "))
+        raise StepError(f"brick: no brick '{name}' in the library" + (f"; closest: {', '.join(hints)}" if hints else "")
+                        + " (search_bricks finds more)")
+    given = {p.name: p.value for p in step.params or []}
+    try:
+        brick.resolve(given)
+    except ValueError as exc:
+        raise StepError(str(exc)) from exc
+    room = None
+    if step.room:
+        room = d.room(step.room)
+        if room is None:
+            raise StepError(f"brick {brick.id}: unknown room '{step.room}' (rooms: {', '.join(r.id for r in d.rooms)})")
+    if brick.host in ("floor", "wall", "ceiling") and room is None:
+        raise StepError(f"brick {brick.id} is {brick.host}-hosted: give `room`")
+    if brick.rules.exterior and room is not None:
+        raise StepError(f"brick {brick.id} stands outside the rooms: drop `room` and give `position` [x, y]")
+    if brick.host == "free" and step.position is None and room is None:
+        raise StepError(f"brick {brick.id} is free-standing: give `position` [x, y]")
+    if brick.host == "span" and (step.start is None or step.end is None):
+        raise StepError(f"brick {brick.id} spans between two points: give `start` [x, y] and `end` [x, y]")
+    level = step.level or (room.level if room else "L1")
+    if d.level(level) is None:
+        raise StepError(f"brick {brick.id}: unknown level '{level}' (levels: {', '.join(l.id for l in d.levels)})")
+    if room is not None and room.level != level:
+        raise StepError(f"brick {brick.id}: room {room.id} is on {room.level}, not {level}")
+    if brick.rules.not_below_ground and level.startswith("B"):
+        raise StepError(f"brick {brick.id} cannot go below ground")
+    if brick.rules.ground_only and level != "L1":
+        raise StepError(f"brick {brick.id} belongs on the ground floor (L1)")
+    bid = step.id or d.unique_id(f"{brick.id.replace('_', '-')}-{room.id if room else level.lower()}")
+    if brick.rules.one_per_building and any(b.brick == brick.id and b.id != bid for b in d.bricks):
+        raise StepError(f"brick {brick.id}: one per building, and there already is one")
+    if bid in d.all_ids() and not any(b.id == bid for b in d.bricks):
+        raise StepError(f"brick: id '{bid}' is already used by something else")
+    side = _literal(step, step.side or "center", ("N", "S", "E", "W", "center"), "side")
+    d.bricks = [b for b in d.bricks if b.id != bid]
+    d.bricks.append(BrickDef(id=bid, brick=brick.id, room=room.id if room else None, level=level, side=side,
+                             near=_pt_or_none(step.near), at=step.at if step.at is not None else 0.5,
+                             position=_pt_or_none(step.position), start=_pt_or_none(step.start), end=_pt_or_none(step.end),
+                             rotation=step.rotation, params=given))
+    if brick.host == "span":
+        where = f" from {step.start} to {step.end}"
+    elif step.position:
+        where = f" at {step.position}"
+    elif room is not None:
+        where = f" in {room.id}" + (f" near {step.near}" if step.near else f" against side {side}" if side != "center" else "")
+    else:
+        where = f" on {level}"
+    extra = f" ({', '.join(f'{k}={v:g}' for k, v in given.items())})" if given else ""
+    return d, f"{brick.id} {bid}: {brick.name}{where}{extra}"
 
 
 def apply_step(design: Design, step: Step) -> tuple[Design, str]:
@@ -499,6 +577,9 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
         d.custom_shapes.append(CustomShapeDef(id=cid, room=room.id, name=name, side=side, near=_pt_or_none(step.near),
                                               at=step.at if step.at is not None else 0.5, rotation=step.rotation, parts=parts))
         return d, f"custom {cid}: \"{name}\" in {room.id} ({len(parts)} part(s))"
+
+    if k == "brick":
+        return _apply_brick(d, step)
 
     if k == "balcony":
         room = d.room(_need(step, "room"))

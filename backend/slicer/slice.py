@@ -17,6 +17,9 @@ from dataclasses import dataclass
 
 import ifcopenshell
 import ifcopenshell.geom
+import ifcopenshell.util.element
+
+from ifc.assets import BRICK_PSET
 
 Point3 = tuple[float, float, float]
 Segment = tuple[float, float, float, float]  # x1, y1, x2, y2
@@ -27,10 +30,12 @@ PHASES: list[tuple[str, tuple[str, ...]]] = [
     ("structure", ("IfcWall", "IfcColumn", "IfcBeam", "IfcStair")),
     ("roof", ("IfcRoof",)),
     ("plumbing", ("IfcPipeSegment", "IfcCableCarrierSegment")),  # water riser + electrical conduit stack, both rough-in
+    ("mechanical", ()),
     ("spaces", ("IfcSpace",)),
     ("electrical", ("IfcOutlet", "IfcElectricDistributionBoard", "IfcCableSegment")),
     ("details", ("IfcDoor", "IfcWindow", "IfcRailing", "IfcFurniture", "IfcSanitaryTerminal", "IfcElectricAppliance",
                 "IfcBuildingElementProxy", "IfcLightFixture")),
+    ("site", ()),
 ]
 
 
@@ -42,6 +47,9 @@ class LayerSlice:
 
 
 def _phase_of(product: ifcopenshell.entity_instance) -> str | None:
+    brick = ifcopenshell.util.element.get_pset(product, BRICK_PSET, "Phase")
+    if brick:
+        return brick
     for label, classes in PHASES:
         if any(product.is_a(cls) for cls in classes):
             return label

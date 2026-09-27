@@ -209,6 +209,34 @@ class CustomFixture(_Element):
     parts: list[ShapePart] = Field(min_length=1, max_length=12)
 
 
+class Asset(_Element):
+    """A placed library brick (bricks/): any IFC element class, drawn from its evaluated parts.
+    `position` is the footprint centre, `rotation` turns it (back at -y before rotation, like Fixture),
+    `elevation` lifts the local frame above the level (negative for footings and piles)."""
+
+    type: Literal["asset"] = "asset"
+    level: str
+    brick: str
+    ifc_class: str
+    predefined_type: Optional[str] = None
+    discipline: str
+    phase: str = "details"
+    finish: str = "device"
+    host: str = "floor"
+    room: Optional[str] = None
+    position: Point
+    rotation: float = 0.0
+    elevation: float = 0.0
+    size: tuple[float, float, float] = Field(description="Nominal width (or length for spans), depth and height")
+    parts: list[ShapePart] = Field(min_length=1, max_length=24)
+    params: dict[str, float] = Field(default_factory=dict)
+    ports: list[str] = Field(default_factory=list, description="'<kind>:<in|out>' service connections")
+    structural: bool = False
+    overlap_ok: bool = False
+    clearance: float = 0.0
+    note: Optional[str] = None
+
+
 class Railing(_Element):
     type: Literal["railing"] = "railing"
     level: str
@@ -261,14 +289,14 @@ class Wire(_Element):
 
 
 Element = Annotated[
-    Union[Wall, Slab, Roof, Door, Window, Column, Beam, Space, Stair, Fixture, CustomFixture, Railing, Pipe,
+    Union[Wall, Slab, Roof, Door, Window, Column, Beam, Space, Stair, Fixture, CustomFixture, Asset, Railing, Pipe,
           Outlet, LightFixture, Panel, Wire],
     Field(discriminator="type"),
 ]
 
 ELEMENT_ORDER = {"wall": 0, "slab": 1, "space": 2, "column": 3, "beam": 4, "roof": 5, "pipe": 6, "door": 7,
                  "window": 8, "stair": 9, "outlet": 10, "panel": 11, "wire": 12, "fixture": 13, "custom": 13,
-                 "light": 14, "railing": 15}
+                 "asset": 13, "light": 14, "railing": 15}
 
 
 def polygon_area(outline: list[Point]) -> float:

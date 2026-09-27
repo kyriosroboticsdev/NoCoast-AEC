@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import re
 
+from shapely.ops import unary_union
+
+from bricks import library
 from core.derive import Derived
 from schemas.bim import BuildingSpec
 from schemas.design import Design
@@ -53,6 +56,11 @@ def describe_element(el) -> str:
     if el.type == "custom":
         parts = "; ".join(f"{p.shape} ({p.x:g},{p.y:g},{p.z:g}) {p.w:g}x{p.d:g}x{p.h:g}" for p in el.parts)
         return f"{head} at {_pt(el.position)} rot={el.rotation:g} parts=[{parts}]"
+    if el.type == "asset":
+        ifc = el.ifc_class + (f".{el.predefined_type}" if el.predefined_type else "")
+        w, d, h = el.size
+        return (f"{head} brick={el.brick} {ifc} at {_pt(el.position)} rot={el.rotation:g} z={el.elevation:g} "
+                f"{w:g}x{d:g}x{h:g}" + (f" ports={','.join(el.ports)}" if el.ports else ""))
     if el.type == "railing":
         return f"{head} path={_outline(el.path)} h={el.height:g}"
     if el.type == "pipe":
@@ -127,6 +135,18 @@ def _free_line(e) -> str:
     return head + f" {_pt(e.start)}->{_pt(e.end)}"
 
 
+def _brick_line(b) -> str:
+    if b.start is not None:
+        where = f" {_pt(b.start)}->{_pt(b.end)}"
+    elif b.position is not None:
+        where = f" at {_pt(b.position)}"
+    else:
+        where = _where(b) if b.near is not None or b.side != "center" else ""
+    host = f" in {b.room}" if b.room else f" {b.level}" if b.level else ""
+    params = " " + ",".join(f"{k}={v:g}" for k, v in b.params.items()) if b.params else ""
+    return f"{b.id} {b.brick}{host}{where}{params}"
+
+
 def describe_focus(design: Design, focus: str) -> str:
     """What the user has selected in the viewer, in words the model can act on. `focus` is a spec
     element id (`L1-wall-hall-W`, `door-kitchen-hall`, `L1-space-hall`, …) or a design id."""
@@ -174,6 +194,12 @@ def describe_focus(design: Design, focus: str) -> str:
     for c in design.columns:
         if c.id == fid:
             return f"the column {fid} on {c.level}"
+    for b in design.bricks:
+        if b.id == fid:
+            brick = library().get(b.brick)
+            what = brick.name.lower() if brick else b.brick
+            where = f"in {room_name(b.room)}" if b.room else f"on {b.level or 'L1'}"
+            return f"the {what} {fid} (brick {b.brick}) {where}"
     return f"the element {fid}"
 
 
@@ -218,6 +244,16 @@ def describe_design(design: Design, derived: Derived | None = None) -> str:
         lines.append("balconies: " + "; ".join(f"{b.id} {b.room}{_where(b)} depth={b.depth:g}" for b in design.balconies))
     if design.columns:
         lines.append("columns: " + "; ".join(f"{c.id} {c.level} ({c.x:g},{c.y:g})" for c in design.columns))
+    if design.bricks:
+        lines.append("bricks: " + "; ".join(_brick_line(b) for b in design.bricks))
+    if derived:
+        bounds = []
+        for level_id, polys in derived.footprints.items():
+            if polys:
+                x0, y0, x1, y1 = unary_union(polys).bounds
+                bounds.append(f"{level_id} x {x0:g}..{x1:g} y {y0:g}..{y1:g}")
+        if bounds:
+            lines.append("footprint: " + "; ".join(bounds) + " (site bricks go outside it)")
     if design.porch:
         lines.append(f"porch: side={design.porch.side} depth={design.porch.depth:g}")
     lines.append(f"roof: {design.roof.kind}" + (f" pitch={design.roof.pitch:g}" if design.roof.kind != "flat" else ""))

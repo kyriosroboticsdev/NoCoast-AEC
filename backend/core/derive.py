@@ -23,10 +23,11 @@ from dataclasses import dataclass, field
 from shapely.geometry import LineString, MultiLineString, Point as ShpPoint, Polygon
 from shapely.ops import unary_union
 
+from bricks import library
 from ifc.fixtures import default_size
-from schemas.bim import (Beam, BuildingSpec, Column, CustomFixture, Door, Fixture, Level, LightFixture, Outlet, Panel,
+from schemas.bim import (Asset, Beam, BuildingSpec, Column, CustomFixture, Door, Fixture, Level, LightFixture, Outlet, Panel,
                          Pipe, Railing, Roof, ShapePart, Slab, Space, Stair, Wall, Window, Wire, is_axis_rectangle)
-from schemas.design import (CustomShapeDef, Design, DoorDef, FixtureDef, FreeDef, LevelDef, Pt, RoomDef, Segment, Side,
+from schemas.design import (BrickDef, CustomShapeDef, Design, DoorDef, FixtureDef, FreeDef, LevelDef, Pt, RoomDef, Segment, Side,
                             StairDef, WindowDef, arc_points)
 from solver.layout import place_rooms
 
@@ -663,6 +664,160 @@ def _custom_shape(cs: CustomShapeDef, design: Design, infos: dict[str, RoomInfo]
                          rotation=cs.rotation if cs.rotation is not None else rot, parts=parts)
 
 
+CEILING_T = 0.2        # slab of the storey above, hanging below its level line
+ROOF_T = 0.25          # flat roof thickness (see the roofs pass in analyze)
+
+
+@dataclass
+class _Site:
+    """What brick placement needs to know about the building beyond one room."""
+
+    levels: dict[str, Level]
+    footprints: dict[str, list[Polygon]]
+    top: Level
+    roof: object
+
+
+def _brick(b: BrickDef, design: Design, infos: dict[str, RoomInfo], site: _Site) -> Asset:
+    """A library brick, placed by its host: against a wall or free on the floor of a room, fixed to a
+    wall at its mount height, under the ceiling, on the roof, free on the site, or spanning two points."""
+    what = f"brick '{b.id}' ({b.brick})"
+    brick = library().get(b.brick)
+    if brick is None:
+        raise DesignError(f"{what}: not in the brick library")
+    room = design.room(b.room) if b.room else None
+    if b.room and room is None:
+        raise DesignError(f"{what}: unknown room '{b.room}'")
+    level = site.levels.get(room.level if room else (b.level or "L1"))
+    if level is None:
+        raise DesignError(f"{what}: unknown level '{b.level}'")
+    if brick.host == "roof":
+        level = site.top
+    try:
+        values = brick.resolve(b.params)
+    except ValueError as exc:
+        raise DesignError(f"{what}: {exc}") from exc
+    values["level_h"] = level.height
+    if brick.full_height and "h" not in b.params:
+        values["h"] = level.height
+    w, h = values["w"], values["h"]
+    d = values.get("d", w)
+    rotation = b.rotation
+    elevation = 0.0
+    notes: list[str] = []
+
+    if brick.host == "span":
+        (x0, y0), (x1, y1) = b.start, b.end
+        length = math.hypot(x1 - x0, y1 - y0)
+        if length < 0.2:
+            raise DesignError(f"{what}: start and end are {length:.2f} m apart; a span needs two distinct points")
+        values["length"] = length
+        pos = ((x0 + x1) / 2, (y0 + y1) / 2)
+        rotation = math.degrees(math.atan2(y1 - y0, x1 - x0))
+        foot_w, foot_d = length, w
+    else:
+        foot_w, foot_d = w, d
+        if brick.host == "floor":
+            pos, rot = _brick_on_floor(what, b, room, infos[room.id], foot_w, foot_d)
+        elif brick.host == "wall":
+            if not infos[room.id].walls:
+                raise DesignError(f"{what}: room '{room.id}' has no walls to fix it to")
+            near = b.near
+            if near is None and b.side == "center":
+                straight = [s for s in infos[room.id].walls if s.straight] or infos[room.id].walls
+                near = max(straight, key=lambda s: s.length).mid
+            pos, rot = _place_piece(what, room, infos[room.id], b.side, near, b.at, foot_w, foot_d)
+        elif brick.host == "ceiling":
+            pos, rot = _brick_on_floor(what, b, room, infos[room.id], foot_w, foot_d)
+        elif brick.host == "roof":
+            pos, rot = _brick_on_roof(what, b, site, foot_w, foot_d)
+            elevation = level.height + ROOF_T
+            if site.roof.kind != "flat":
+                x0, y0, x1, y1 = unary_union(site.footprints[level.id]).bounds
+                rise = math.tan(math.radians(site.roof.pitch)) * min(x1 - x0, y1 - y0) / 2
+                notes.append(f"on a {site.roof.kind} roof: set at mid-slope")
+                elevation = level.height + 0.2 + rise / 2
+        else:
+            pos, rot = _brick_free(what, b, brick, room, infos, site, level, foot_w, foot_d)
+        rotation = rot if rotation is None else rotation
+
+    mount = brick.mount_height(values)
+    if brick.host == "ceiling" or mount is None:
+        elevation = level.height - CEILING_T - h
+        if elevation < 0:
+            raise DesignError(f"{what}: {h:g} m tall does not fit under a {level.height:g} m ceiling")
+    elif brick.host != "roof":
+        elevation = mount
+    if brick.host in ("floor", "wall") and elevation + h > level.height - CEILING_T + 0.01 and not brick.full_height:
+        raise DesignError(f"{what}: top at {elevation + h:.2f} m is above the {level.height - CEILING_T:.2f} m ceiling of {level.id}")
+
+    try:
+        solids = brick.solids(values)
+    except ValueError as exc:
+        raise DesignError(f"{what}: {exc}") from exc
+    cx, cy = foot_w / 2, foot_d / 2
+    parts = [ShapePart(shape=s, x=_r(x - cx), y=_r(y - cy), z=_r(z), w=_r(pw), d=_r(pd), h=_r(ph)) for s, x, y, z, pw, pd, ph in solids]
+    if len(parts) > 24:
+        raise DesignError(f"{what}: evaluates to {len(parts)} parts; at most 24")
+    name = brick.name + (f" in {room.name}" if room else "")
+    return Asset(id=b.id, name=name, level=level.id, brick=brick.id, ifc_class=brick.ifc_class,
+                 predefined_type=brick.predefined_type, discipline=brick.discipline, phase=brick.phase, finish=brick.finish,
+                 host=brick.host, room=room.id if room else None, position=(_r(pos[0]), _r(pos[1])), rotation=_r(rotation % 360),
+                 elevation=_r(elevation), size=(_r(foot_w), _r(foot_d), _r(h)), parts=parts,
+                 params={k: v for k, v in values.items() if k != "level_h"},
+                 ports=[f"{p.kind}:{p.direction}" for p in brick.ports], structural=brick.structural,
+                 overlap_ok=brick.rules.overlap_ok, clearance=brick.rules.clearance, note="; ".join(notes) or None)
+
+
+def _brick_on_floor(what: str, b: BrickDef, room: RoomDef, info: RoomInfo, w: float, d: float) -> tuple[Pt, float]:
+    if b.position is None:
+        return _place_piece(what, room, info, b.side, b.near, b.at, w, d)
+    rot = b.rotation or 0.0
+    if not _fits(info.polygon, _rect_at(b.position[0], b.position[1], w, d, math.radians(rot))):
+        x0, y0, x1, y1 = room.box
+        raise DesignError(f"{what}: a {w:.2f} x {d:.2f} m footprint at {list(b.position)} is not inside room '{room.id}' "
+                          f"(x {x0:g}..{x1:g}, y {y0:g}..{y1:g})")
+    return b.position, rot
+
+
+def _brick_on_roof(what: str, b: BrickDef, site: _Site, w: float, d: float) -> tuple[Pt, float]:
+    polys = site.footprints.get(site.top.id) or []
+    if not polys:
+        raise DesignError(f"{what}: there is no roof yet; add rooms first")
+    top = unary_union(polys)
+    rot = b.rotation or 0.0
+    if b.position is None:
+        c = top.centroid if top.contains(top.centroid) else top.representative_point()
+        pos = (c.x, c.y)
+    else:
+        pos = b.position
+    if not _fits(top, _rect_at(pos[0], pos[1], w, d, math.radians(rot))):
+        x0, y0, x1, y1 = top.bounds
+        raise DesignError(f"{what}: a {w:.1f} x {d:.1f} m footprint at [{pos[0]:.1f}, {pos[1]:.1f}] is off the roof of {site.top.id} "
+                          f"(x {x0:.1f}..{x1:.1f}, y {y0:.1f}..{y1:.1f}); use a smaller size or another position")
+    return pos, rot
+
+
+def _brick_free(what: str, b: BrickDef, brick, room: RoomDef | None, infos: dict[str, RoomInfo], site: _Site, level: Level,
+                w: float, d: float) -> tuple[Pt, float]:
+    if b.position is None:
+        if room is None:
+            raise DesignError(f"{what}: free-standing bricks need a position [x, y]")
+        return _brick_on_floor(what, b, room, infos[room.id], w, d)
+    rot = b.rotation or 0.0
+    footprint = Polygon(_rect_at(b.position[0], b.position[1], w, d, math.radians(rot)))
+    if brick.rules.exterior:
+        building = site.footprints.get(level.id) or []
+        hit = next((p for p in building if p.buffer(-0.05).intersects(footprint)), None)
+        if hit is not None:
+            x0, y0, x1, y1 = unary_union(building).bounds
+            raise DesignError(f"{what}: stands outside, but at {list(b.position)} it overlaps the building on {level.id} "
+                              f"(footprint x {x0:.1f}..{x1:.1f}, y {y0:.1f}..{y1:.1f}); move it clear of the rooms")
+    elif room is not None and not _fits(infos[room.id].polygon, list(footprint.exterior.coords)[:-1]):
+        raise DesignError(f"{what}: at {list(b.position)} it is not inside room '{room.id}'")
+    return b.position, rot
+
+
 def _balcony(b, design: Design, infos: dict[str, RoomInfo], level: Level, els: list, sides: dict[str, Side]) -> None:
     what = f"balcony '{b.id}'"
     room = design.room(b.room)
@@ -741,6 +896,7 @@ def _mep(design: Design, levels: list[Level], infos: dict[str, RoomInfo], els: l
     else:
         riser_xy = (0.3, 0.3)
 
+    wet_rooms = {b.room for b in design.bricks if b.room and _needs_water(b.brick)}
     wet_risers: list[tuple[tuple[float, float], str]] = []
     for level in levels:
         for room in design.rooms_on(level.id):
@@ -773,16 +929,23 @@ def _mep(design: Design, levels: list[Level], infos: dict[str, RoomInfo], els: l
                     # wire floating with no connection down to an outlet mounted near the floor.
                     els.append(Wire(id=f"{level.id}-wire-{sid}-outlet-{i}", level=level.id,
                                     path=[riser_xy, outlet.position], elevation=outlet.height))
-            if room.kind in ("kitchen", "bathroom"):
+            if room.kind in ("kitchen", "bathroom") or room.id in wet_rooms:
                 wet_risers.append(((cx, cy), level.id))
 
     els.append(Panel(id="electrical-panel", name="Electrical panel", level=ground.id, position=riser_xy))
     els.append(Pipe(id="electrical-riser", name="Electrical riser", kind="electrical", bottom_level=ground.id,
                     top_level=levels[-1].id, position=riser_xy, diameter=0.08))
+    below = {l.id for l in levels if design.level(l.id).index < 0}
     for i, (pos, wet_level) in enumerate(wet_risers, 1):
         suffix = "" if i == 1 else f"-{i}"
+        bottom, top = (wet_level, ground.id) if wet_level in below else (ground.id, wet_level)
         els.append(Pipe(id=f"plumbing-riser{suffix}", name="Main riser" if i == 1 else f"Riser {i}", kind="water",
-                        bottom_level=ground.id, top_level=wet_level, position=pos))
+                        bottom_level=bottom, top_level=top, position=pos))
+
+
+def _needs_water(brick_id: str) -> bool:
+    brick = library().get(brick_id)
+    return brick is not None and any(k in brick.needs for k in ("water_cold", "water_hot", "drain"))
 
 
 def _porch(design: Design, polys: list[Polygon], els: list, ground: str = "L1") -> None:
@@ -991,6 +1154,9 @@ def analyze(design: Design, prune: bool = False) -> Derived:
     each("fixtures", lambda f, level: _fixture(f, design, infos, level))
     each("custom_shapes", lambda cs, level: _custom_shape(cs, design, infos, level))
     each("balconies", lambda b, level: _balcony(b, design, infos, level, els, sides))
+    top = next((l for l in reversed(levels) if footprints.get(l.id)), ground)
+    site = _Site(level_by_id, footprints, top, design.roof)
+    each("bricks", lambda b, level: _brick(b, design, infos, site))
     for c in design.columns:
         if c.level not in level_by_id:
             raise DesignError(f"column '{c.id}': unknown level '{c.level}'")

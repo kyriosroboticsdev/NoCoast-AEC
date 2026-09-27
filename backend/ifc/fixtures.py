@@ -12,7 +12,7 @@ import ifcopenshell.api.root
 
 from ifc.geometry import body, box, extrude, oriented_box
 from ifc.project import BuildContext, finish_element, placement, translate
-from schemas.bim import Beam, CustomFixture, Fixture, Railing
+from schemas.bim import Beam, CustomFixture, Fixture, Railing, ShapePart
 
 ROUND_SIDES = 16  # vertices approximating a circle for a "round" custom part
 
@@ -104,19 +104,25 @@ def add_fixture(ctx: BuildContext, fx: Fixture) -> None:
     finish_element(ctx, element, body(ctx, items), frame, style, fx.level, item=fx)
 
 
-def add_custom(ctx: BuildContext, cs: CustomFixture) -> None:
-    m = ctx.model
-    level = ctx.level(cs.level)
+def part_solids(m, parts: list[ShapePart]) -> list:
+    """Solids for box/round ShapeParts (min-corner x, y, z; a round part is a w-diameter cylinder)."""
     items = []
-    for p in cs.parts:
+    for p in parts:
         if p.shape == "round":
             r = p.w / 2
             cx, cy = p.x + r, p.y + r
             outline = [(cx + r * math.cos(2 * math.pi * i / ROUND_SIDES), cy + r * math.sin(2 * math.pi * i / ROUND_SIDES))
-                      for i in range(ROUND_SIDES)]
+                       for i in range(ROUND_SIDES)]
             items.append(extrude(m, outline, p.h, origin=(0, 0, p.z)))
         else:
             items.append(box(m, p.x, p.y, p.z, p.w, p.d, p.h))
+    return items
+
+
+def add_custom(ctx: BuildContext, cs: CustomFixture) -> None:
+    m = ctx.model
+    level = ctx.level(cs.level)
+    items = part_solids(m, cs.parts)
     element = ifcopenshell.api.root.create_entity(m, ifc_class="IfcFurniture", predefined_type="USERDEFINED", name=cs.name or cs.id)
     element.ObjectType = "custom"
     frame = placement(cs.position[0], cs.position[1], level.elevation, math.radians(cs.rotation))

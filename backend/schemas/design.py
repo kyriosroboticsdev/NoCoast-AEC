@@ -414,6 +414,29 @@ class CustomShapeDef(BaseModel):
         return None if v is None else _pt(v)
 
 
+class BrickDef(BaseModel):
+    """One placed brick from the library (bricks/library): what it is, where, and any parameters that
+    differ from the brick's defaults. How it is placed depends on the brick's host — see bricks/model.py."""
+
+    id: str
+    brick: str = Field(description="Brick id from the library")
+    room: Optional[str] = Field(None, description="Room it stands in (floor/wall/ceiling hosts); optional for free/roof/span")
+    level: Optional[str] = Field(None, description="Storey for bricks without a room; default the room's, else the ground floor")
+    side: Literal["N", "S", "E", "W", "center"] = "center"
+    near: Optional[Pt] = None
+    at: float = Field(0.5, ge=0, le=1)
+    position: Optional[Pt] = Field(None, description="Exact plan position of its centre")
+    start: Optional[Pt] = Field(None, description="span bricks: from")
+    end: Optional[Pt] = Field(None, description="span bricks: to")
+    rotation: Optional[float] = None
+    params: dict[str, float] = Field(default_factory=dict)
+
+    @field_validator("near", "position", "start", "end", mode="before")
+    @classmethod
+    def _p(cls, v):
+        return None if v is None else _pt(v)
+
+
 class BalconyDef(BaseModel):
     id: str
     room: str
@@ -510,6 +533,7 @@ class Design(BaseModel):
     stairs: list[StairDef] = Field(default_factory=list)
     fixtures: list[FixtureDef] = Field(default_factory=list)
     custom_shapes: list[CustomShapeDef] = Field(default_factory=list)
+    bricks: list[BrickDef] = Field(default_factory=list, description="Placed library bricks: equipment, services, structure, site")
     balconies: list[BalconyDef] = Field(default_factory=list)
     columns: list[ColumnDef] = Field(default_factory=list)
     elements: list[FreeDef] = Field(default_factory=list, description="Free-standing walls, slabs, roofs, columns, beams")
@@ -548,7 +572,7 @@ class Design(BaseModel):
         ids = {r.id for r in self.rooms} | {d.id for d in self.doors} | {w.id for w in self.windows}
         ids |= {s.id for s in self.stairs} | {f.id for f in self.fixtures} | {b.id for b in self.balconies}
         ids |= {c.id for c in self.columns} | {l.id for l in self.levels} | {e.id for e in self.elements}
-        ids |= {cs.id for cs in self.custom_shapes}
+        ids |= {cs.id for cs in self.custom_shapes} | {b.id for b in self.bricks}
         return ids
 
     def unique_id(self, base: str) -> str:
