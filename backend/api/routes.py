@@ -9,7 +9,9 @@ Stateful (what the UI uses):
     POST /projects/{id}/import        (SSE)        lift a NoCoast-generated IFC file into the project
     GET  /projects/{id}/versions/{n}/{ifc|spec|context|slices|gcode}
     GET  /projects/{id}/versions/{n}/render?azimuth=&elevation=&target=&level=…   a screenshot (PNG) from any view
-    GET  /projects/{id}/versions/{n}/export?format=  zip bundle (default) or one artefact
+    GET  /projects/{id}/versions/{n}/export?format=  zip bundle (default) or one artefact; format=validation checks
+                                                     the IFC, format=stamped writes author=, organization=,
+                                                     project_name= and the prompt history into a copy of it
     GET  /projects/{id}/export                       the head version as a bundle
     GET  /projects/{id}/shots/{name}                                 a screenshot the model was shown while checking its work
     GET  /projects/{id}/attachments/{file}                           an image the user attached to one of its prompts
@@ -34,7 +36,7 @@ import uuid
 from pathlib import Path
 
 import ifcopenshell
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field, ValidationError
 
@@ -42,6 +44,7 @@ import config
 from agents import PLANNERS, PlanResult, get_planner
 from bricks import library
 from core import construction, export, pipeline
+from core.stamp import ExportMeta
 from core.context import describe_design, describe_spec
 from core.derive import DesignError, analyze, space_id
 from ifc.builder import write_ifc
@@ -236,16 +239,35 @@ def version_ifc(project_id: str, number: int):
 
 
 @router.get("/projects/{project_id}/versions/{number}/export")
-def version_export(project_id: str, number: int, format: str = "zip"):
+def version_export(project_id: str, number: int, format: str = "zip", thorough: bool = False,
+                   author: str | None = Query(None, max_length=200), organization: str | None = Query(None, max_length=200),
+                   project_name: str | None = Query(None, max_length=200)):
     """Download a version as a deliverable. `format=zip` (default) is the whole bundle — IFC, the
-    spec and design JSON, the editing context, the requirement checks, a take-off schedule and a
-    README. The other formats hand out a single file (see core/export.FORMATS)."""
+    spec and design JSON, the editing context, the requirement checks, a take-off schedule, a
+    validation report and a README. The other formats hand out a single file (see core/export.FORMATS).
+    `validation` and `stamped` take `thorough=true` to include the schema's WHERE rules (a few seconds)."""
     v = _version(project_id, number)
     if format not in export.FORMATS:
         raise HTTPException(400, f"unknown export format '{format}' (known: {', '.join(export.FORMATS)})")
     name = export.filename(v, format)
-    return Response(export.artifact(v, format), media_type=export.MEDIA[format],
-                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+    meta = ExportMeta(author=author, organization=organization, project_name=project_name)
+    try:
+        body = export.artifact(v, format, meta=meta, lineage=_lineage(v) if format == "stamped" else None, thorough=thorough)
+    except export.StampError as exc:
+        raise HTTPException(500, str(exc)) from exc
+    return Response(body, media_type=export.MEDIA[format], headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+def _lineage(version) -> list:
+    """This version and its ancestors, oldest first: the prompts that led to it."""
+    out, seen = [version], {version.number}
+    while out[-1].parent is not None and out[-1].parent not in seen:
+        parent = store.get_version(version.project_id, out[-1].parent)
+        if parent is None:
+            break
+        seen.add(parent.number)
+        out.append(parent)
+    return out[::-1]
 
 
 @router.get("/projects/{project_id}/export")

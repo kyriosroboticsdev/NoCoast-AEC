@@ -539,6 +539,8 @@ optimistic concurrency (409).
 | `GET /projects/{id}/versions/{n}/ifc` | | the IFC file |
 | `GET /projects/{id}/versions/{n}/export` | `?format=zip` (default) | the whole version as one zip — see below |
 | `GET /projects/{id}/versions/{n}/export` | `?format=ifc\|summary\|spec\|design\|context\|checks\|schedule` | one artefact on its own |
+| `GET /projects/{id}/versions/{n}/export` | `?format=validation` `&thorough=` | a validation report on the IFC |
+| `GET /projects/{id}/versions/{n}/export` | `?format=stamped` `&author=&organization=&project_name=&thorough=` | the IFC with its provenance written in |
 | `GET /projects/{id}/export` | | the head version as a bundle |
 | `GET /projects/{id}/versions/{n}/spec` | | `{version, spec, design, guids}` |
 | `GET /projects/{id}/versions/{n}/context` | | text — exactly what the LLM sees when editing |
@@ -563,6 +565,17 @@ and a README explaining each file. Re-importing the IFC from a bundle recovers t
 export round-trips. In the UI the Export button downloads the IFC and its caret offers the rest; every
 version card also has its own IFC and Bundle buttons, so an older version can be downloaded without
 first putting it in the workspace.
+
+Two formats are for handing the file to somebody outside the project. `format=validation`
+(`core/validate.py`) checks the IFC itself: IfcOpenShell schema validation (with `thorough=true` also
+the schema's WHERE rules, a few seconds), one project with units, building storeys, unique GlobalIds,
+and elements with geometry placed in a storey. Errors make a file unfit to hand over; warnings do not.
+The report is also in every bundle. `format=stamped` (`core/stamp.py`) returns the IFC with its
+provenance written in: the STEP header gets `author=` and `organization=`, and `IfcProject` gets
+`project_name=` and a `NoCoast_Export` property set with the export time, source project and version,
+validation status, and the prompts that led to this version (walked through the version parents).
+The stored file is never changed: the stamp goes onto a copy, GlobalIds stay the same, the copy is
+validated again before it is sent, and it imports back like the original.
 
 ### 4.13 Frontend
 

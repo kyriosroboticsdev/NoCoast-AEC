@@ -69,7 +69,7 @@ def test_bundle_holds_everything():
         names = set(zf.namelist())
         assert names == {"README.md", "guids.json"} | {f"{pid}-v1.{ext}" for ext in
                                                        ("ifc", "summary.md", "spec.json", "design.json",
-                                                        "context.txt", "checks.json", "schedule.csv")}
+                                                        "context.txt", "checks.json", "schedule.csv", "validation.json")}
         assert zf.read("README.md").decode().startswith("# NoCoast export")
         model = ifcopenshell.file.from_string(zf.read(f"{pid}-v1.ifc").decode())
         assert model.by_type("IfcWall") and model.by_type("IfcSpace")

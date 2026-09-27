@@ -7,6 +7,12 @@ to an email or dropped into a coordination folder and still make sense.
 
 Individual artefacts are available on their own too (`artifact()`), which is what the UI's export
 menu uses for "just the IFC" / "just the spec".
+
+Two artefacts are about handing the file to somebody outside the project. `validation` is a report on
+the IFC itself (core/validate.py): schema conformance and the structure a receiving tool relies on.
+`stamped` is the IFC with its provenance written into it (core/stamp.py): author, organization, the
+prompts that produced this version and its validation status. The stored file is never changed; a
+stamp goes onto a copy, and the copy is validated again before it is handed out.
 """
 
 from __future__ import annotations
@@ -19,20 +25,25 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
+import ifcopenshell
+
 from core.context import describe_design, describe_spec
 from core.derive import DesignError, analyze
+from core.stamp import ExportMeta, LineageEntry, stamp
+from core.validate import ValidationReport, validate_ifc
 from schemas.bim import BuildingSpec, polygon_area
 from store.db import VersionData
 
-FORMATS = ("ifc", "zip", "spec", "design", "context", "checks", "schedule", "summary")
+FORMATS = ("ifc", "zip", "spec", "design", "context", "checks", "schedule", "summary", "validation", "stamped")
 MEDIA = {
     "ifc": "application/x-step", "zip": "application/zip", "spec": "application/json",
     "design": "application/json", "context": "text/plain; charset=utf-8", "checks": "application/json",
     "schedule": "text/csv; charset=utf-8", "summary": "text/markdown; charset=utf-8",
+    "validation": "application/json", "stamped": "application/x-step",
 }
 EXTENSIONS = {"ifc": "ifc", "zip": "zip", "spec": "spec.json", "design": "design.json",
               "context": "context.txt", "checks": "checks.json", "schedule": "schedule.csv",
-              "summary": "summary.md"}
+              "summary": "summary.md", "validation": "validation.json", "stamped": "stamped.ifc"}
 
 
 def stem(version: VersionData) -> str:
@@ -124,14 +135,44 @@ Generated {when} by {by}.
 | `{stem}.context.txt` | The same design rendered as the text an LLM is given when editing this version. |
 | `{stem}.checks.json` | Each requirement from the brief and whether the model satisfies it. |
 | `{stem}.schedule.csv` | Room, wall, opening and equipment schedule for take-off. |
+| `{stem}.validation.json` | A check of the IFC itself: schema conformance, units, storeys, unique GlobalIds, geometry. |
 | `guids.json` | Element id → IFC GlobalId. Stable across versions, so diffs between exports line up. |
 
 Re-importing `{stem}.ifc` into NoCoast recovers the design layer, so an export can be round-tripped.
 """
 
 
-def artifact(version: VersionData, fmt: str) -> bytes:
-    """One export artefact as bytes. `fmt` is one of FORMATS (zip goes through `bundle`)."""
+class StampError(RuntimeError):
+    """Stamping produced a file that no longer validates; nothing is handed out."""
+
+
+def validation(version: VersionData, thorough: bool = False) -> ValidationReport:
+    return validate_ifc(ifcopenshell.open(str(version.ifc_path)), thorough=thorough)
+
+
+def stamped_ifc(version: VersionData, meta: ExportMeta | None = None, lineage: list[VersionData] | None = None,
+                thorough: bool = False) -> bytes:
+    """The version's IFC with its provenance written into it. `lineage` is this version and its ancestors,
+    oldest first (the prompts that led here); without it only this version's prompt is recorded."""
+    model = ifcopenshell.open(str(version.ifc_path))     # a copy in memory: the stored file is never modified
+    report = validate_ifc(model, thorough=thorough)
+    status = ("passed" if report.ok else "failed") + (" (with schema rules)" if report.thorough else "")
+    stamp(model, meta or ExportMeta(), project_id=version.project_id, version=version.number,
+          lineage=[LineageEntry(number=v.number, mode=v.mode, prompt=v.prompt, llm=v.llm) for v in lineage or [version]],
+          validation_status=status, filename=filename(version, "stamped"))
+    if report.ok and not validate_ifc(model).ok:
+        raise StampError(f"stamping {stem(version)} produced an invalid IFC")
+    return model.to_string().encode()
+
+
+def artifact(version: VersionData, fmt: str, *, meta: ExportMeta | None = None, lineage: list[VersionData] | None = None,
+             thorough: bool = False) -> bytes:
+    """One export artefact as bytes. `fmt` is one of FORMATS (zip goes through `bundle`). `meta`, `lineage`
+    and `thorough` only matter to `stamped` and `validation`."""
+    if fmt == "validation":
+        return validation(version, thorough).model_dump_json(indent=1).encode()
+    if fmt == "stamped":
+        return stamped_ifc(version, meta, lineage, thorough)
     if fmt == "ifc":
         return Path(version.ifc_path).read_bytes()
     if fmt == "zip":
@@ -159,7 +200,7 @@ def bundle(version: VersionData) -> bytes:
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("README.md", README.format(name=version.spec.building.name, number=version.number,
                                                when=_when(version.created), by=version.llm or version.mode, stem=base))
-        for fmt in ("ifc", "summary", "spec", "design", "context", "checks", "schedule"):
+        for fmt in ("ifc", "summary", "spec", "design", "context", "checks", "schedule", "validation"):
             zf.writestr(filename(version, fmt), artifact(version, fmt))
         zf.writestr("guids.json", json.dumps(version.guids, indent=1))
     return buf.getvalue()
