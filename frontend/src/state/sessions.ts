@@ -16,11 +16,20 @@ import type { Version } from "../api/client";
 
 export type Stage = "planning" | "building" | "loading" | "done" | "error";
 
+/**
+ * Stage of the work a trace step belongs to — the trace is grouped under these, in the order a
+ * project actually goes through them. ("plan" | "validate" | "build" | "load" are the older names,
+ * still found in sessions persisted by an earlier version.)
+ */
+export type TracePhase =
+  | "brief" | "research" | "massing" | "plan" | "circulation" | "envelope" | "structure" | "fitout" | "review" | "output"
+  | "validate" | "build" | "load";
+
 /** One line of the live reasoning trace (from the backend stream, or the viewer's load steps). */
 export interface TraceStep {
   id: string;
   parent: string | null;
-  phase: "plan" | "validate" | "build" | "load";
+  phase: TracePhase;
   title: string;
   detail: string | null;
   status: "running" | "done" | "error";
@@ -29,6 +38,10 @@ export interface TraceStep {
   image?: string | null;
   layer?: boolean;
   error?: string;
+  /** The model's own reasoning for this move, in its words. */
+  why?: string | null;
+  /** The quantities behind it ("16 m² · 4.0 × 4.0 m"), shown next to the title. */
+  metric?: string | null;
 }
 
 export interface Run {
@@ -37,6 +50,10 @@ export interface Run {
   /** The project version this run produced. */
   version?: Version;
   steps?: TraceStep[];
+  /** The design strategy the model wrote before it started building. */
+  approach?: string;
+  /** What the model is writing this instant; cleared as soon as the step lands. */
+  drafting?: string | null;
   startedAt?: number;
   endedAt?: number;
 }

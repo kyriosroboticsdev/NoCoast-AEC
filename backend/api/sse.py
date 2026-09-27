@@ -1,7 +1,8 @@
 """Run a blocking pipeline function in a thread and stream its `emit` calls as Server-Sent Events.
 
 Every event carries `seq` (ordinal) and `t` (seconds since the request started) so the UI can show
-the run as a timeline."""
+the run as a timeline. A comment line goes out every KEEPALIVE seconds while the pipeline is quiet,
+which keeps proxies (and the browser's own buffering) from sitting on the connection."""
 
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from core.pipeline import ConflictError, PipelineError
 from logsetup import log
 
 _END = object()
+KEEPALIVE = 1.0  # seconds of silence after which a `: ping` comment is sent
 
 
 def sse_response(work: Callable[[Callable[[str, str, dict | None], None]], object]) -> StreamingResponse:
@@ -51,11 +53,16 @@ def sse_response(work: Callable[[Callable[[str, str, dict | None], None]], objec
     threading.Thread(target=run, daemon=True).start()
 
     async def stream():
+        yield ": open\n\n"  # flush the response head immediately so the client starts reading
         while True:
-            item = await asyncio.to_thread(q.get)
+            try:
+                item = await asyncio.to_thread(q.get, True, KEEPALIVE)
+            except queue.Empty:
+                yield ": ping\n\n"
+                continue
             if item is _END:
                 break
             yield f"event: {item['stage']}\ndata: {json.dumps(item)}\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"})

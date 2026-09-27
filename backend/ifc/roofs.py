@@ -1,5 +1,6 @@
-"""IfcRoof: flat (extruded outline), gable (chevron profile + gable-end infill) and hip (faceted brep).
-Pitched shapes need a rectangular outline; the derive step falls back to flat otherwise."""
+"""IfcRoof: flat (extruded outline), gable (chevron profile + gable-end infill), shed (single sloping
+plane + two triangular ends) and hip (faceted brep). Pitched shapes need a rectangular outline; the
+derive step falls back to flat otherwise."""
 
 from __future__ import annotations
 
@@ -42,6 +43,26 @@ def _gable_items(m, roof: Roof):
             profile_along_x(m, tri, y1, GABLE_END_T), profile_along_x(m, tri, y0 + GABLE_END_T, GABLE_END_T)]
 
 
+def _shed_items(m, roof: Roof):
+    """A single plane sloping up towards +y (ridge along x) or +x, with a triangular wall under each
+    end of it. The cheapest roof there is, and what a warehouse, a carport or a lean-to wants."""
+    x0, y0, x1, y1 = _rect(roof.outline)
+    w, d = x1 - x0, y1 - y0
+    ridge = roof.ridge or ("x" if w >= d else "y")
+    t = roof.thickness / math.cos(math.radians(roof.pitch))
+    if ridge == "x":  # slope runs along y, high edge at y1
+        h = d * math.tan(math.radians(roof.pitch))
+        wedge = [(y0, 0), (y1, h), (y1, h + t), (y0, t)]
+        tri = [(y0, 0), (y1, h), (y1, 0)]
+        return [profile_along_y(m, wedge, x0, w),
+                profile_along_y(m, tri, x0, GABLE_END_T), profile_along_y(m, tri, x1 - GABLE_END_T, GABLE_END_T)]
+    h = w * math.tan(math.radians(roof.pitch))
+    wedge = [(x0, 0), (x1, h), (x1, h + t), (x0, t)]
+    tri = [(x0, 0), (x1, h), (x1, 0)]
+    return [profile_along_x(m, wedge, y1, d),
+            profile_along_x(m, tri, y1, GABLE_END_T), profile_along_x(m, tri, y0 + GABLE_END_T, GABLE_END_T)]
+
+
 def _hip_brep(m, roof: Roof):
     x0, y0, x1, y1 = _rect(roof.outline)
     w, d = x1 - x0, y1 - y0
@@ -76,6 +97,10 @@ def add_roof(ctx: BuildContext, roof: Roof) -> None:
     elif roof.shape == "gable":
         element = ifcopenshell.api.root.create_entity(m, ifc_class="IfcRoof", predefined_type="GABLE_ROOF", name=roof.name or roof.id)
         rep = body(ctx, _gable_items(m, roof))
+        style = "Roof:pitched"
+    elif roof.shape == "shed":
+        element = ifcopenshell.api.root.create_entity(m, ifc_class="IfcRoof", predefined_type="SHED_ROOF", name=roof.name or roof.id)
+        rep = body(ctx, _shed_items(m, roof))
         style = "Roof:pitched"
     else:
         element = ifcopenshell.api.root.create_entity(m, ifc_class="IfcRoof", predefined_type="HIP_ROOF", name=roof.name or roof.id)

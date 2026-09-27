@@ -1,5 +1,7 @@
-import { ChevronsUpDown, Download, Ellipsis, House, PanelLeft, PanelRight } from "lucide-react";
+import { ChevronsUpDown, Ellipsis, House, PanelLeft, PanelRight } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import type { ExportFormat } from "../api/client";
+import { ExportMenu } from "./ExportMenu";
 
 interface Props {
   title: string | null;
@@ -9,7 +11,8 @@ interface Props {
   onHome: () => void;
   onToggleSidebar: () => void;
   onToggleAssistant: () => void;
-  onExport: (() => void) | null;
+  onExport: (format: ExportFormat) => Promise<string | null>;
+  exportDisabled: string | null;
   onDelete: (() => void) | null;
 }
 
@@ -59,9 +62,7 @@ export function TopBar(p: Props) {
           </div>
         )}
       </div>
-      <button className="btn" disabled={!p.onExport} onClick={() => p.onExport?.()}>
-        <Download size={16} /> Export IFC
-      </button>
+      <ExportMenu onExport={p.onExport} disabledReason={p.exportDisabled} />
     </header>
   );
 }

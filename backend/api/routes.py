@@ -9,6 +9,8 @@ Stateful (what the UI uses):
     POST /projects/{id}/import        (SSE)        lift a NoCoast-generated IFC file into the project
     GET  /projects/{id}/versions/{n}/{ifc|spec|context|slices|gcode}
     GET  /projects/{id}/versions/{n}/render?azimuth=&elevation=&target=&level=…   a screenshot (PNG) from any view
+    GET  /projects/{id}/versions/{n}/export?format=  zip bundle (default) or one artefact
+    GET  /projects/{id}/export                       the head version as a bundle
     GET  /projects/{id}/shots/{name}                                 a screenshot the model was shown while checking its work
     GET  /projects/{id}/attachments/{file}                           an image the user attached to one of its prompts
     POST /projects/{id}/versions/{n}/construction                     start a live-build simulation job
@@ -39,7 +41,7 @@ from pydantic import BaseModel, Field, ValidationError
 import config
 from agents import PLANNERS, PlanResult, get_planner
 from bricks import library
-from core import construction, pipeline
+from core import construction, export, pipeline
 from core.context import describe_design, describe_spec
 from core.derive import DesignError, analyze, space_id
 from ifc.builder import write_ifc
@@ -115,7 +117,7 @@ def _project(project_id: str) -> Project:
 
 
 def _with_url(v: Version) -> dict:
-    return v.model_dump() | {"ifc_url": v.ifc_url}
+    return v.model_dump() | {"ifc_url": v.ifc_url, "export_url": v.export_url}
 
 
 # --- stateful ---------------------------------------------------------------
@@ -229,7 +231,33 @@ def _version(project_id: str, number: int):
 @router.get("/projects/{project_id}/versions/{number}/ifc")
 def version_ifc(project_id: str, number: int):
     v = _version(project_id, number)
-    return FileResponse(v.ifc_path, media_type="application/x-step", filename=f"{project_id}-v{number}.ifc")
+    return FileResponse(v.ifc_path, media_type="application/x-step", filename=export.filename(v, "ifc"),
+                        headers={"Content-Disposition": f'attachment; filename="{export.filename(v, "ifc")}"'})
+
+
+@router.get("/projects/{project_id}/versions/{number}/export")
+def version_export(project_id: str, number: int, format: str = "zip"):
+    """Download a version as a deliverable. `format=zip` (default) is the whole bundle — IFC, the
+    spec and design JSON, the editing context, the requirement checks, a take-off schedule and a
+    README. The other formats hand out a single file (see core/export.FORMATS)."""
+    v = _version(project_id, number)
+    if format not in export.FORMATS:
+        raise HTTPException(400, f"unknown export format '{format}' (known: {', '.join(export.FORMATS)})")
+    name = export.filename(v, format)
+    return Response(export.artifact(v, format), media_type=export.MEDIA[format],
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/projects/{project_id}/export")
+def project_export(project_id: str):
+    """The project's head version as a bundle — the URL to share when someone asks for "the model"."""
+    _project(project_id)
+    head = store.head(project_id)
+    if head is None:
+        raise HTTPException(404, f"project '{project_id}' has no versions yet")
+    name = export.filename(head, "zip")
+    return Response(export.bundle(head), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @router.get("/projects/{project_id}/versions/{number}/spec")

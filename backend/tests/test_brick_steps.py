@@ -153,7 +153,7 @@ def test_unknown_brick_suggests_close_matches():
 
 
 PLANTER = {
-    "id": "planter", "name": "Planter", "description": "a tapered box planter", "ifc_class": "IfcFurniture",
+    "id": "tapered_planter", "name": "Tapered planter", "description": "a tapered box planter", "ifc_class": "IfcFurniture",
     "tags": ["planter", "garden"],
     "params": [{"name": "w", "default": 0.8, "min": 0.3, "max": 2}, {"name": "h", "default": 0.5, "min": 0.2, "max": 1}],
     "geometry": [{"shape": "loft", "sections": [{"z": 0, "profile": {"rect": ["w * 0.8", "w * 0.8"], "centered": True}},
@@ -165,15 +165,15 @@ PLANTER = {
 
 def test_an_asset_step_defines_a_brick_the_model_can_place_and_compile():
     d, msg = apply_step(_house(), Step(step="asset", definition=json.dumps(PLANTER)))
-    assert msg.startswith("asset planter: Planter (2 solid(s)")
-    d, _ = apply_step(d, Step(step="brick", brick="planter", ref="living", params=[{"name": "w", "value": 1.2}]))
+    assert msg.startswith("asset tapered_planter: Tapered planter (2 solid(s)")
+    d, _ = apply_step(d, Step(step="brick", brick="tapered_planter", ref="living", params=[{"name": "w", "value": 1.2}]))
     spec, _ = derive(d)
-    a = next(e for e in spec.elements if isinstance(e, Asset) and e.brick == "planter")
+    a = next(e for e in spec.elements if isinstance(e, Asset) and e.brick == "tapered_planter")
     assert a.size == pytest.approx((1.2, 1.2, 0.55)) and a.params["w"] == pytest.approx(1.2)
     model, _ = compile_ifc(spec)
     assert check_geometry(model) == []
-    proxy = next(p for p in model.by_type("IfcFurniture") if ifcopenshell.util.element.get_pset(p, "NoCoast_Brick", "Brick") == "planter")
-    assert proxy.Name.startswith("Planter")
+    proxy = next(p for p in model.by_type("IfcFurniture") if ifcopenshell.util.element.get_pset(p, "NoCoast_Brick", "Brick") == "tapered_planter")
+    assert proxy.Name.startswith("Tapered planter")
 
 
 def test_asset_steps_are_validated_and_removing_one_removes_its_placements():
@@ -183,9 +183,9 @@ def test_asset_steps_are_validated_and_removing_one_removes_its_placements():
         apply_step(_house(), Step(step="asset", definition=json.dumps({**PLANTER, "id": "fridge"})))
     with pytest.raises(StepError, match="asset"):
         apply_step(_house(), Step(step="asset", definition=json.dumps({**PLANTER, "geometry": [{"shape": "box", "size": ["q", 1, 1]}]})))
-    d = _house(dict(step="asset", definition=json.dumps(PLANTER)), dict(step="brick", brick="planter", ref="living"))
-    d2, msg = apply_step(d, Step(step="remove", id="planter"))
-    assert msg == "removed asset planter and its 1 placement(s)" and not d2.bricks and not d2.library
+    d = _house(dict(step="asset", definition=json.dumps(PLANTER)), dict(step="brick", brick="tapered_planter", ref="living"))
+    d2, msg = apply_step(d, Step(step="remove", id="tapered_planter"))
+    assert msg == "removed asset tapered_planter and its 1 placement(s)" and not d2.bricks and not d2.library
 
 
 def test_params_resize_the_brick():

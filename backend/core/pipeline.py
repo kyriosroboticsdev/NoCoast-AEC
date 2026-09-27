@@ -43,7 +43,7 @@ from core.ops import OpError, apply_ops
 from core.stream import StepStream
 from ifc.builder import GeometryError, compile_ifc, summarize
 from llm import LLM, LLMError, LLMRequest
-from llm.base import Image
+from llm.base import EmptyReply, Image
 from llm.prompts import (build_system, build_user_message, look_system, look_user_message, requirements_system,
                          requirements_user_message, research_system, research_user_message)
 from render import Shot
@@ -99,15 +99,31 @@ def _call(llm: LLM, request: LLMRequest, emit: Emit = _noop, stream: StepStream 
     log.info("LLM %s: %s request, system %d chars, user %d chars, %d image(s)", llm.name, request.schema_name, len(request.system),
              len(request.user), len(request.images))
     log.debug("LLM user message:\n%s", request.user)
-    emit("llm", f"sending {request.schema_name} request to {llm.name}{' ' + model if model else ''}",
+    emit("llm", f"consulting {llm.name}{' ' + model if model else ''}",
          {"provider": llm.name, "model": model, "schema": request.schema_name, "system_chars": len(request.system),
           "user_chars": len(request.user), "user": request.user[-6000:]})
     t = time.perf_counter()
     try:
         raw = llm.complete(request, stream.feed if stream else None, lambda note: emit("llm", note, None))
+    except EmptyReply as exc:
+        # Nothing to do is a valid answer to "fix these problems"; it is not one to "list the brief".
+        if stream is None:
+            raise
+        log.info("LLM %s had no changes to make", llm.name)
+        emit("llm", f"{llm.name} had nothing to change", {"empty": True})
+        raw = {"steps": []}
     except LLMError as exc:
         log.error("LLM %s failed after %.1fs: %s", llm.name, time.perf_counter() - t, exc)
-        raise
+        # A reply that broke off (max_tokens, a dropped connection) after the model had already
+        # built something is worth keeping: the steps that streamed in are applied and valid, and
+        # the checks and repair rounds run on them as usual.
+        if stream is None or not stream.accepted:
+            raise
+        log.warning("keeping %d step(s) applied before the reply broke off", len(stream.accepted))
+        emit("llm", f"the reply broke off ({exc}) after {len(stream.accepted)} move(s); "
+                    f"carrying on with what was built", {"error": str(exc), "recovered": True,
+                                                         "accepted": len(stream.accepted)})
+        raw = {"steps": []}
     finally:
         if stream:
             stream.close()
@@ -116,8 +132,8 @@ def _call(llm: LLM, request: LLMRequest, emit: Emit = _noop, stream: StepStream 
     log.debug("LLM reply:\n%s", json.dumps(raw, indent=1)[:20000])
     extra = ""
     if stream:
-        extra = f", {len(stream.accepted)} step(s) applied, {len(stream.rejected)} rejected, {stream.count} preview(s)"
-    emit("llm", f"reply complete: {len(text)} chars in {time.perf_counter() - t:.1f}s{extra}",
+        extra = f": {len(stream.accepted)} move(s) applied, {len(stream.rejected)} rejected, {stream.count} preview(s)"
+    emit("llm", f"{llm.name} finished in {time.perf_counter() - t:.1f}s{extra}",
          {"seconds": round(time.perf_counter() - t, 2), "chars": len(text), "previews": stream.count if stream else 0,
           "accepted": len(stream.accepted) if stream else 0, "rejected": len(stream.rejected) if stream else 0,
           "reply": json.dumps(raw, indent=1)[:30000]})
@@ -130,7 +146,8 @@ def request_requirements(llm: LLM, prompt: str, emit: Emit = _noop, focus: str |
                          attached: Sequence[ImageAttachment] = ()) -> RequirementsResponse:
     errors: list[str] = []
     for attempt in range(config.MAX_REPAIRS + 1):
-        emit("requirements", "extracting a checklist from the request" if not attempt else f"repair attempt {attempt}", {"errors": errors})
+        emit("requirements", "reading the brief and turning it into a checklist" if not attempt
+             else f"re-reading the brief (attempt {attempt + 1})", {"errors": errors})
         raw = _call(llm, LLMRequest(system=requirements_system(),
                                     user=requirements_user_message(prompt, errors, focus, [i.name for i in attached]),
                                     schema=REQUIREMENTS_SCHEMA, schema_name="requirements", meta={"prompt": prompt, "focus": focus},
@@ -138,7 +155,8 @@ def request_requirements(llm: LLM, prompt: str, emit: Emit = _noop, focus: str |
         try:
             resp = RequirementsResponse.model_validate(raw)
             unsupported = [r.text for r in resp.requirements if not r.supported]
-            emit("requirements", f"{len(resp.requirements)} requirement(s)" + (f", {len(unsupported)} not supported" if unsupported else ""),
+            emit("requirements", f"{len(resp.requirements)} requirement(s) in the brief"
+                 + (f", {len(unsupported)} outside what I can model" if unsupported else ""),
                  {"summary": resp.summary, "requirements": [r.model_dump(exclude_none=True) for r in resp.requirements],
                   "unsupported": unsupported})
             return resp
@@ -190,12 +208,24 @@ class Feedback:
     seen: list[str] = field(default_factory=list)       # problems the model saw in screenshots
 
     def label(self, editing: bool) -> str:
-        fixing = [what for what, items in (("rejected steps", self.problems), ("unmet requirements", self.unmet),
-                                           ("coordination issues", errors(self.issues)), ("what the screenshots showed", self.seen))
+        fixing = [what for what, items in (("the moves that did not build", self.problems),
+                                           ("the gaps against the brief", self.unmet),
+                                           ("the coordination issues", errors(self.issues)),
+                                           ("what the screenshots showed", self.seen))
                   if items]
         if fixing:
-            return "fixing " + " and ".join(fixing)
-        return "editing the design" if editing else "building the design"
+            return "reworking " + " and ".join(fixing)
+        return "working out what to change" if editing else "designing the building"
+
+    @property
+    def round(self) -> str:
+        if self.problems:
+            return "repair"
+        if self.unmet:
+            return "gaps"
+        if self.issues:
+            return "coordination"
+        return "look" if self.seen else "design"
 
 
 def build_round(llm: LLM, prompt: str, design: Design, checklist: list[str], emit: Emit, *, guids: GuidMap,
@@ -203,8 +233,9 @@ def build_round(llm: LLM, prompt: str, design: Design, checklist: list[str], emi
                 toolbox: Toolbox | None = None, attached: Sequence[ImageAttachment] = ()) -> StepStream:
     context = _context(design)
     fixes = fix_lines(feedback.issues)
-    emit("build", f"{feedback.label(editing)}: asking the model for steps",
-         {"problems": feedback.problems, "unmet": feedback.unmet, "issues": fixes, "seen": feedback.seen})
+    emit("build", feedback.label(editing),
+         {"problems": feedback.problems, "unmet": feedback.unmet, "issues": fixes, "seen": feedback.seen,
+          "editing": editing, "round": "edit" if editing and feedback.round == "design" else feedback.round})
     stream = StepStream(emit, design, guids, first_index)
     meta = {"prompt": prompt, "design": design.model_dump(mode="json"), "problems": feedback.problems, "unmet": feedback.unmet,
             "editing": editing, "focus": focus, "issues": [i.as_dict() for i in errors(feedback.issues)], "seen": feedback.seen,
@@ -248,12 +279,26 @@ def _problem_lines(stream: StepStream) -> list[str]:
     return [f"step {i} {json.dumps(raw)[:300]}: {err}" for i, raw, err in stream.rejected]
 
 
+def follow_up(*args, **kwargs) -> StepStream | None:
+    """A repair or gap-closing round. These come after a design already exists, so a model that
+    times out, returns nothing or answers with prose must not throw the building away: the failure
+    becomes a note and the run finishes with what it has."""
+    emit: Emit = args[4]
+    try:
+        return build_round(*args, **kwargs)
+    except LLMError as exc:
+        log.warning("follow-up round failed, keeping the design as it stands: %s", exc)
+        emit("build", f"the follow-up round did not come back ({exc}); finishing with the design as it stands",
+             {"error": str(exc), "recovered": True})
+        return None
+
+
 # --- versions ---------------------------------------------------------------
 
 def _persist(store: Store, project_id: str, spec: BuildingSpec, guids: GuidMap, *, mode: str, prompt: str | None,
              llm: str | None, ops: list[dict], notes: list[str], design: Design | None, emit: Emit,
              model: ifcopenshell.file | None = None, checks: list[dict] | None = None,
-             images: list[dict] | None = None) -> VersionData:
+             images: list[dict] | None = None, approach: str | None = None) -> VersionData:
     if model is None:
         model, guids = compile_ifc(spec, guids, design.model_dump_json() if design else None)
     guids = prune_guids(spec, guids)
@@ -265,8 +310,9 @@ def _persist(store: Store, project_id: str, spec: BuildingSpec, guids: GuidMap, 
     log.info("project %s: wrote %s (%d elements, mode=%s)", project_id, path.name, len(spec.elements), mode)
     version = store.add_version(project_id, spec=spec, guids=guids, mode=mode, summary=summarize(model), ifc_path=path,
                                 prompt=prompt, llm=llm, ops=ops, notes=notes, design=design, checks=checks or [],
-                                images=images or [])
-    emit("done", f"version {version.number} ready", version.as_version().model_dump() | {"ifc_url": version.ifc_url})
+                                images=images or [], approach=approach)
+    emit("done", f"version {version.number} ready",
+         version.as_version().model_dump() | {"ifc_url": version.ifc_url, "export_url": version.export_url})
     return version
 
 
@@ -308,14 +354,18 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
         stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=0, editing=editing, focus=focus_text,
                              toolbox=toolbox, attached=attached)
         design, guids = stream.design, stream.guids
+        approach = stream.approach
         steps_total += stream.applied
         accepted_total += len(stream.accepted)
         for attempt in range(config.MAX_REPAIRS):
             if not stream.rejected:
                 break
-            stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=steps_total,
+            repaired = follow_up(llm, prompt, design, checklist, emit, guids=guids, first_index=steps_total,
                                  feedback=Feedback(problems=_problem_lines(stream)), editing=editing, focus=focus_text,
                                  toolbox=toolbox, attached=attached)
+            if repaired is None:
+                break
+            stream = repaired
             design, guids = stream.design, stream.guids
             steps_total += stream.applied
             accepted_total += len(stream.accepted)
@@ -327,9 +377,12 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
             unmet = unmet_lines(results)
             if not unmet and not errors(issues):
                 break
-            stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=steps_total,
-                                 feedback=Feedback(unmet=unmet, issues=issues), editing=editing, toolbox=toolbox,
-                                 attached=attached)
+            closing = follow_up(llm, prompt, design, checklist, emit, guids=guids, first_index=steps_total,
+                                feedback=Feedback(unmet=unmet, issues=issues), editing=editing, toolbox=toolbox,
+                                attached=attached)
+            if closing is None:
+                break
+            stream = closing
             design, guids = stream.design, stream.guids
             steps_total += stream.applied
             accepted_total += len(stream.accepted)
@@ -346,9 +399,12 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
             review = look_round(llm, prompt, design, checklist, guids, emit, save)
             if not review.problems:
                 break
-            stream = build_round(llm, prompt, design, checklist, emit, guids=guids, first_index=steps_total,
-                                 feedback=Feedback(seen=review.problems), editing=editing, toolbox=toolbox,
-                                 attached=attached)
+            fixing = follow_up(llm, prompt, design, checklist, emit, guids=guids, first_index=steps_total,
+                               feedback=Feedback(seen=review.problems), editing=editing, toolbox=toolbox,
+                               attached=attached)
+            if fixing is None:
+                break
+            stream = fixing
             design, guids = stream.design, stream.guids
             steps_total += stream.applied
             accepted_total += len(stream.accepted)
@@ -359,7 +415,7 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
         if not design.has_geometry():
             raise PipelineError("the design has nothing to build")
 
-        emit("compile", "deriving geometry and compiling the final IFC")
+        emit("compile", "drawing the construction: walls, slabs, openings and roof, then writing the IFC")
         spec, derive_notes = derive(design)
         model, guids = compile_ifc(spec, guids, design.model_dump_json())
         notes = design.notes + derive_notes + notes + [r.line() for r in results if r.status != "met"] + [i.line() for i in issues]
@@ -369,7 +425,7 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
         return _persist(store, project_id, spec, guids, mode="edit" if editing else "design", prompt=prompt, llm=llm.name,
                         ops=[{"step": s} for s in []], notes=notes, design=design, emit=emit, model=model,
                         checks=[{"text": r.requirement.text, "status": r.status, "detail": r.detail} for r in results],
-                        images=stored_images)
+                        images=stored_images, approach=approach)
     except LLMError as exc:
         raise PipelineError(f"language model unavailable: {exc}") from exc
     except (DesignError, GeometryError) as exc:
@@ -389,7 +445,7 @@ def _verify(design: Design, reqs: list[Requirement], emit: Emit) -> tuple[list[C
     results = check(design, derived, reqs)
     met, total = score(results)
     unmet = [r for r in results if r.status == "unmet"]
-    emit("verify", f"{met}/{total} checkable requirement(s) met" + (f", {len(unmet)} unmet" if unmet else ""),
+    emit("verify", f"checking the model against the brief: {met}/{total} met" + (f", {len(unmet)} outstanding" if unmet else ""),
          {"results": [{"text": r.requirement.text, "status": r.status, "detail": r.detail} for r in results],
           "unmet": [r.line() for r in unmet]})
     return results, issues

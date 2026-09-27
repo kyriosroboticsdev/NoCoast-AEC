@@ -1,7 +1,10 @@
 import { IfcTurnCard } from "@nocoast/ifc-viewer";
-import { ChevronDown, ChevronUp, Code, Database, Eye, ListChecks, Paperclip, RotateCcw, Sparkles, X } from "lucide-react";
+import {
+  ChevronDown, ChevronUp, Code, Compass, Database, Download, Eye, ListChecks, Package, Paperclip, RotateCcw, Sparkles, X,
+} from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { backendUrl, getSpec, type Version } from "../api/client";
+import { backendUrl, exportName, fetchExport, getSpec, type ExportFormat, type Version } from "../api/client";
+import { saveFile } from "../platform";
 import { formatSize, type Attachment } from "../state/attachments";
 import { PANEL_RANGE } from "../state/layout";
 import type { Message, Session } from "../state/sessions";
@@ -105,9 +108,17 @@ function AssistantMessage({ m, head, busy, latest, viewing, onView, onRestore, c
   if (!run) return <div className="answer"><p>{m.text}</p></div>;
   const v = run.version;
 
+  const approach = v?.approach ?? run.approach;
+
   return (
     <div className="answer">
       {m.text && <p>{m.text}</p>}
+      {approach && (
+        <div className="approach">
+          <Compass size={15} />
+          <p>{approach}</p>
+        </div>
+      )}
       <Reasoning run={run} />
 
       {v && v.checks && v.checks.length > 0 && <Checklist checks={v.checks} />}
@@ -149,6 +160,7 @@ function AssistantMessage({ m, head, busy, latest, viewing, onView, onRestore, c
           <div className="version-bar">
             <span className="muted">{v.number === head ? "Current version" : `Head is v${head}`}</span>
             <span className="grow" />
+            <VersionExport v={v} />
             <button onClick={() => onView(v)} disabled={viewing}><Eye size={13} /> {viewing ? "In workspace" : "View"}</button>
             {v.number !== head && (
               <button onClick={() => onRestore(v.number)} disabled={busy} title="Make this version the head again">
@@ -168,6 +180,29 @@ function AssistantMessage({ m, head, busy, latest, viewing, onView, onRestore, c
       )}
       {run.stage === "error" && <div className="error-card"><X size={15} /> {run.error}</div>}
     </div>
+  );
+}
+
+/** Download any version straight from its card, without making it the one in the workspace. */
+function VersionExport({ v }: { v: Version }) {
+  const [busy, setBusy] = useState(false);
+  const save = async (format: ExportFormat) => {
+    setBusy(true);
+    try {
+      await saveFile(exportName(v.project_id, v.number, format), await fetchExport(v.project_id, v.number, format));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <button onClick={() => save("ifc")} disabled={busy} title={`Download ${v.project_id}-v${v.number}.ifc`}>
+        <Download size={13} /> IFC
+      </button>
+      <button onClick={() => save("zip")} disabled={busy} title="IFC, spec, design, schedule and checks as one zip">
+        <Package size={13} /> Bundle
+      </button>
+    </>
   );
 }
 

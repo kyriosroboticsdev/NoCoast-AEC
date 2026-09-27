@@ -26,6 +26,11 @@ class LLMError(RuntimeError):
     """The model could not be reached or returned something that is not JSON."""
 
 
+class EmptyReply(LLMError):
+    """The model returned nothing at all. On a build round that means "no changes"; on a
+    checklist it is a failure, so the two are distinguished rather than both being errors."""
+
+
 @dataclass(frozen=True)
 class Image:
     """An image shown to the model after the user text, introduced by its caption. A screenshot of
@@ -68,6 +73,17 @@ def clean_reply(text: str) -> str:
     return _FENCE.sub("", text.strip())
 
 
+def body(text: str) -> str:
+    """The JSON object inside a (possibly still streaming) reply.
+
+    Unconstrained models introduce themselves before the object — "Here's the design:" — and a
+    leading sentence makes the whole prefix unparseable, so the live parser would see no steps at
+    all until the reply ended. Cutting to the first brace costs nothing when there is no prose."""
+    cleaned = clean_reply(text)
+    start = cleaned.find("{")
+    return cleaned[start:] if start > 0 else cleaned
+
+
 def parse_reply(text: str) -> dict:
     """Final reply → dict. Tolerates prose around the object (unconstrained models) and falls back
     to closing an unfinished JSON (max_tokens cut) so the validate/repair loop gets a concrete
@@ -75,6 +91,8 @@ def parse_reply(text: str) -> dict:
     from core.partial_json import parse_partial  # local import: core depends on llm, not the reverse
 
     cleaned = clean_reply(text)
+    if not cleaned.strip():
+        raise EmptyReply("the model returned an empty reply")
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
