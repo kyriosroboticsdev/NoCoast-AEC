@@ -2,17 +2,30 @@ import { BedDouble, RotateCcw, X } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import type { Facts } from "../state/design";
+import { PANEL_RANGE } from "../state/layout";
 import type { LegacyViewer, Picked, PropertySet, ViewName } from "../viewer/LegacyViewer";
 import type { SectionView } from "../viewer/section";
+import { Resizer } from "./Resizer";
 
 // --- floating view panel (top-right) ----------------------------------------
 
-export function ViewControls({ viewer, roomsVisible, onRooms }: { viewer: LegacyViewer; roomsVisible: boolean; onRooms: () => void }) {
+interface ViewProps {
+  viewer: LegacyViewer;
+  roomsVisible: boolean;
+  onRooms: () => void;
+  width: number;
+  onResize: (width: number) => void;
+  onResetSize: () => void;
+}
+
+export function ViewControls({ viewer, roomsVisible, onRooms, width, onResize, onResetSize }: ViewProps) {
   const views: [ViewName, string][] = [
     ["top", "Top"], ["bottom", "Bottom"], ["front", "Front"], ["back", "Back"], ["left", "Left"], ["right", "Right"],
   ];
   return (
-    <div className="float view-controls">
+    <div className="float view-controls" style={{ width }}>
+      <Resizer className="resizer-viewtools" label="View palette width" onReset={onResetSize}
+        width={{ value: width, dir: -1, ...PANEL_RANGE.viewTools, onChange: onResize }} />
       <div className="view-grid">
         {views.map(([v, label]) => (
           <button key={v} onClick={() => viewer.view(v)}>{label}</button>
@@ -65,42 +78,53 @@ interface InfoProps {
   facts: Facts | null;
   properties: PropertySet[];
   onClear: () => void;
+  width: number;
+  height: number;
+  onResize: (size: { width?: number; height?: number }) => void;
+  onResetSize: () => void;
 }
 
-export function InfoCard({ fileName, schema, picked, facts, properties, onClear }: InfoProps) {
+export function InfoCard({ fileName, schema, picked, facts, properties, onClear, width, height, onResize, onResetSize }: InfoProps) {
   return (
-    <div className="float info-card">
-      <div className="info-title" title={fileName}>{fileName}</div>
-      <div className="muted small">{schema || "IFC"} · m</div>
-      <div className="info-sep" />
-      {picked ? (
-        <>
-          <div className="info-head">
-            <div className="info-sub" title={facts?.title ?? picked.name ?? picked.type}>{facts?.title ?? `${picked.type.replace(/^Ifc/, "")} ${picked.tag || picked.name}`}</div>
-            <button className="icon-btn tiny" title="Clear selection" onClick={onClear}><X size={14} /></button>
-          </div>
-          {facts && facts.rows.length > 0 && (
-            <dl className="kv facts">
-              {facts.rows.map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}
-            </dl>
-          )}
-          <details className="info-ifc">
-            <summary>IFC properties</summary>
-            {properties.map((ps) => (
-              <div key={ps.name} className="info-pset">
-                <div className="info-pset-title">{ps.name}</div>
-                <dl className="kv facts">
-                  {ps.props.map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}
-                </dl>
-              </div>
-            ))}
-            {!properties.length && <div className="muted small">No property sets.</div>}
-          </details>
-          <div className="guid">{picked.globalId}</div>
-        </>
-      ) : (
-        <div className="muted small">Click an element to inspect it and to make the next prompt about it. Clicking a floor picks the room.</div>
-      )}
+    <div className="float info-card" style={{ width }}>
+      {/* Anchored bottom-left, so the card grows to the right and upwards from its top-right corner.
+          The height is how far it may grow before the property sets scroll. */}
+      <Resizer className="resizer-inspector" label="Inspector width and height" onReset={onResetSize}
+        width={{ value: width, dir: 1, ...PANEL_RANGE.inspectorW, onChange: (w) => onResize({ width: w }) }}
+        height={{ value: height, dir: -1, ...PANEL_RANGE.inspectorH, onChange: (h) => onResize({ height: h }) }} />
+      <div className="info-scroll" style={{ maxHeight: height }}>
+        <div className="info-title" title={fileName}>{fileName}</div>
+        <div className="muted small">{schema || "IFC"} · m</div>
+        <div className="info-sep" />
+        {picked ? (
+          <>
+            <div className="info-head">
+              <div className="info-sub" title={facts?.title ?? picked.name ?? picked.type}>{facts?.title ?? `${picked.type.replace(/^Ifc/, "")} ${picked.tag || picked.name}`}</div>
+              <button className="icon-btn tiny" title="Clear selection" onClick={onClear}><X size={14} /></button>
+            </div>
+            {facts && facts.rows.length > 0 && (
+              <dl className="kv facts">
+                {facts.rows.map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}
+              </dl>
+            )}
+            <details className="info-ifc">
+              <summary>IFC properties</summary>
+              {properties.map((ps) => (
+                <div key={ps.name} className="info-pset">
+                  <div className="info-pset-title">{ps.name}</div>
+                  <dl className="kv facts">
+                    {ps.props.map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}
+                  </dl>
+                </div>
+              ))}
+              {!properties.length && <div className="muted small">No property sets.</div>}
+            </details>
+            <div className="guid">{picked.globalId}</div>
+          </>
+        ) : (
+          <div className="muted small">Click an element to inspect it and to make the next prompt about it. Clicking a floor picks the room.</div>
+        )}
+      </div>
     </div>
   );
 }

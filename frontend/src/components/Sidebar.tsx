@@ -1,6 +1,8 @@
 import { Box, FolderOpen, PanelLeft, Plus, Search, Trash } from "lucide-react";
 import { useState } from "react";
+import { PANEL_RANGE } from "../state/layout";
 import type { Session } from "../state/sessions";
+import { Resizer } from "./Resizer";
 
 interface Props {
   sessions: Session[];
@@ -13,6 +15,9 @@ interface Props {
   onCollapse: () => void;
   backendUp: boolean | null;
   planners: string[];
+  width: number;
+  onResize: (width: number) => void;
+  onResetWidth: () => void;
 }
 
 export function Sidebar(p: Props) {
@@ -20,7 +25,7 @@ export function Sidebar(p: Props) {
   const list = query ? p.sessions.filter((s) => s.title.toLowerCase().includes(query.toLowerCase())) : p.sessions;
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" style={{ width: p.width }}>
       <div className="sidebar-head">
         <div className="logo"><span className="logo-mark">◆</span> Generative BIM</div>
         <button className="icon-btn" title="Search sessions" onClick={() => setQuery(query === null ? "" : null)}>
@@ -75,6 +80,9 @@ export function Sidebar(p: Props) {
             : "Started automatically by the desktop app, or run python main.py in backend/."}
         </div>
       </div>
+
+      <Resizer className="resizer-sidebar" label="Sidebar width" onReset={p.onResetWidth}
+        width={{ value: p.width, dir: 1, ...PANEL_RANGE.sidebar, onChange: p.onResize }} />
     </aside>
   );
 }

@@ -8,8 +8,10 @@ import { TopBar } from "./components/TopBar";
 import { Workspace } from "./components/Workspace";
 import * as platform from "./platform";
 import { describeElement, roomAt, type Design, type Facts } from "./state/design";
+import { clearFiles, deleteFile, getFile, keepFilesFor, putFile } from "./state/files";
+import { useLayout } from "./state/layout";
 import {
-  addMessage, patchRun, SESSIONS_KEY, uid, upsertStep, useSessions, type Session, type TraceStep,
+  addMessage, patchRun, uid, upsertStep, useSessions, type Session, type TraceStep,
 } from "./state/sessions";
 import { stageTracer, type Preview } from "./state/trace";
 import { runtime, toTurn, turnId } from "./turns";
@@ -46,7 +48,8 @@ interface Shown {
 }
 
 export default function App() {
-  const { sessions, active, activeId, setActiveId, create, update, remove } = useSessions();
+  const { sessions, active, activeId, setActiveId, create, update, remove, clear } = useSessions();
+  const { size, layout, resize, resetPanel, setFlag } = useLayout();
   const activeRef = useRef(activeId);
   activeRef.current = activeId;
   const sessionsRef = useRef(sessions);
@@ -84,9 +87,8 @@ export default function App() {
   const [planners, setPlanners] = useState<string[]>([]);
   const [planner, setPlanner] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [assistantOpen, setAssistantOpen] = useState(true);
-  const localFiles = useRef(new Map<string, Uint8Array>()); // session id → bytes of a file opened from disk
+  // Bytes of a file opened from disk, by session id: a memory cache in front of IndexedDB (state/files.ts).
+  const localFiles = useRef(new Map<string, Uint8Array>());
 
   const onPick = useCallback((p: Picked | null) => {
     const v = viewerRef.current!;
@@ -222,23 +224,70 @@ export default function App() {
     }
     const key = `${active.id}:${model.name}`;
     if (loadedKey.current === key) return;
-    const local = localFiles.current.get(active.id);
+    const sid = active.id;
     (async () => {
       try {
         if (model.url) {
           const ver = versionOf(model.url);
           const design = ver ? await fetchDesign(ver.project, ver.number) : null;
           await showModel(await api.fetchBytes(model.url), model.name, key, { label: ver ? `v${ver.number} · final` : model.name, preview: false, design });
-        } else if (local) await showModel(local, model.name, key, { label: model.name, preview: false, design: null });
+          return;
+        }
+        // Opened from disk: this run's bytes, or the copy kept for the session since an earlier run.
+        let local = localFiles.current.get(sid);
+        if (!local) {
+          const stored = await getFile(sid);
+          if (stored) {
+            local = stored.bytes;
+            localFiles.current.set(sid, local);
+          }
+        }
+        if (local) await showModel(local, model.name, key, { label: model.name, preview: false, design: null });
         else {
           clearModel();
-          setLoadError(`${model.name} was opened from disk in an earlier run. Open it again to view it.`);
+          setLoadError(`${model.name} was opened from disk and is no longer available. Open it again to view it.`);
         }
       } catch (e) {
         setLoadError(`Couldn't load ${model.name}: ${e instanceof Error ? e.message : e}`);
       }
     })();
   }, [viewerReady, active?.id, active?.model?.name]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * Take the head of an open session's project from the backend. Versions live there,
+   * the session only remembers where it got to, so a run whose result never reached the
+   * browser — the app was closed, the window reloaded mid-build — is picked up here
+   * instead of leaving the session one version behind for good.
+   */
+  useEffect(() => {
+    const sid = active?.id;
+    const pid = active?.project?.id;
+    if (!sid || !pid || !backendUp || busy) return;
+    let cancelled = false;
+    api.getProject(pid).then((detail) => {
+      const head = detail.head;
+      if (cancelled || !head) return;
+      update(sid, (s) => {
+        if (s.project?.id !== pid) return s;
+        const behind = s.project.head === null || head.number > s.project.head;
+        if (!behind && s.model) return s;
+        ensureTurn(head);
+        return {
+          ...s,
+          project: { id: pid, head: head.number },
+          model: behind || !s.model ? { name: versionName(head), url: head.ifc_url } : s.model,
+        };
+      });
+    }, () => {
+      // Offline or a project the backend no longer has: keep showing what the session remembers.
+    });
+    return () => { cancelled = true; };
+  }, [active?.id, active?.project?.id, backendUp, busy, update]);
+
+  // Files opened from disk outlive their session otherwise.
+  useEffect(() => {
+    void keepFilesFor(sessionsRef.current.map((s) => s.id));
+  }, []);
 
   // --- actions ------------------------------------------------------------------
 
@@ -384,6 +433,8 @@ export default function App() {
   const removeSession = (id: string) => {
     const s = sessionsRef.current.find((x) => x.id === id);
     for (const m of s?.messages ?? []) if (m.run?.version) runtime.removeTurn(turnId(m.run.version));
+    localFiles.current.delete(id);
+    void deleteFile(id);
     remove(id);
   };
 
@@ -394,7 +445,10 @@ export default function App() {
 
   const openSessionWithModel = async (name: string, bytes: Uint8Array, url?: string) => {
     const sid = create(name);
-    if (!url) localFiles.current.set(sid, bytes);
+    if (!url) {
+      localFiles.current.set(sid, bytes);
+      void putFile(sid, name, bytes); // so the session still has its model after a restart
+    }
     update(sid, addMessage({ id: uid(), role: "assistant", text: `Opened ${name}. Explore it in the viewer, or describe a new building below.` }));
     const ver = versionOf(url);
     const design = ver ? await fetchDesign(ver.project, ver.number) : null;
@@ -436,10 +490,12 @@ export default function App() {
         if (!(await startSession(prompt))) return;
       } else if (smoke && smokeTab === "reset") {
         // Test hygiene: forget sessions created by earlier smoke runs.
-        localStorage.removeItem(SESSIONS_KEY);
+        clear();
+        await clearFiles();
         return platform.report({ status: "ready", screen: "reset" });
       } else if (smoke) {
-        // Home screen: nothing to load.
+        // Home screen: nothing to load, and no restored session in the way.
+        setActiveId(null);
         await new Promise((r) => setTimeout(r, 800));
         return platform.report({ status: "ready", screen: "home" });
       } else return;
@@ -459,6 +515,8 @@ export default function App() {
   const running = active?.messages.some((m) => m.run && !["done", "error"].includes(m.run.stage));
   const status = loadError
     ?? (!shown && running ? "Generating model… the first preview appears after the first room." : null)
+    // A restored session has a model before the viewer has read it back.
+    ?? (!shown && active?.model ? `Loading ${active.model.name}…` : null)
     ?? (!shown && active ? "No model in this session yet." : null);
   const v = viewerRef.current;
   // The selection is only meaningful as prompt context when the workspace shows a version of this session.
@@ -467,15 +525,17 @@ export default function App() {
   return (
     <IfcViewerProvider runtime={runtime}>
     <div className="app">
-      {sidebarOpen && (
+      {layout.sidebarOpen && (
         <Sidebar sessions={sessions} activeId={activeId} onSelect={setActiveId} onNew={() => setActiveId(null)}
-          onOpenFile={openFile} onSample={openSample} onDelete={removeSession} onCollapse={() => setSidebarOpen(false)}
-          backendUp={backendUp} planners={planners} />
+          onOpenFile={openFile} onSample={openSample} onDelete={removeSession} onCollapse={() => setFlag("sidebarOpen", false)}
+          backendUp={backendUp} planners={planners}
+          width={size.sidebar} onResize={(w) => resize("sidebar", w)} onResetWidth={() => resetPanel("sidebar")} />
       )}
       <div className="main">
-        <TopBar title={active?.title ?? null} sidebarOpen={sidebarOpen} assistantOpen={assistantOpen}
+        <TopBar title={active?.title ?? null} sidebarOpen={layout.sidebarOpen} assistantOpen={layout.assistantOpen}
           showAssistantToggle={!!active} onHome={() => setActiveId(null)}
-          onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} onToggleAssistant={() => setAssistantOpen(!assistantOpen)}
+          onToggleSidebar={() => setFlag("sidebarOpen", !layout.sidebarOpen)}
+          onToggleAssistant={() => setFlag("assistantOpen", !layout.assistantOpen)}
           onExport={loaded && !shown?.preview ? () => platform.saveIfc(loaded.name, loaded.bytes) : null}
           onDelete={active ? () => removeSession(active.id) : null} />
         <div className="content">
@@ -485,12 +545,22 @@ export default function App() {
             section={section} onSection={(t) => sectionRef.current?.setValue(t)} onFollow={(on) => sectionRef.current?.setFollow(on)}
             onClose={() => { if (active) update(active.id, (s) => ({ ...s, model: undefined })); clearModel(); }}
             picked={picked} facts={facts} properties={properties} onClearPick={() => v?.clearSelection()}
-            roomsVisible={roomsVisible} onRooms={toggleRooms} />
-          {active && assistantOpen && (
+            roomsVisible={roomsVisible} onRooms={toggleRooms}
+            inspector={{ width: size.inspectorW, height: size.inspectorH }}
+            onResizeInspector={({ width, height }) => {
+              if (width !== undefined) resize("inspectorW", width);
+              if (height !== undefined) resize("inspectorH", height);
+            }}
+            onResetInspector={() => { resetPanel("inspectorW"); resetPanel("inspectorH"); }}
+            viewTools={size.viewTools} onResizeViewTools={(w) => resize("viewTools", w)}
+            onResetViewTools={() => resetPanel("viewTools")} />
+          {active && layout.assistantOpen && (
             <Assistant session={active} busy={busy} planners={planners} planner={planner} setPlanner={setPlanner}
               onSubmit={(t) => generate(active.id, t, focusFor)} onAttach={openFile}
               focus={focusFor} onClearFocus={() => v?.clearSelection()}
-              viewing={loaded?.key ?? null} onView={viewVersion} onRestore={(n) => restore(active.id, n)} />
+              viewing={loaded?.key ?? null} onView={viewVersion} onRestore={(n) => restore(active.id, n)}
+              width={size.assistant} onResize={(w) => resize("assistant", w)} onResetWidth={() => resetPanel("assistant")}
+              cardHeight={size.turnCard} onResizeCard={(h) => resize("turnCard", h)} onResetCard={() => resetPanel("turnCard")} />
           )}
           {!active && (
             <div className="home-layer">

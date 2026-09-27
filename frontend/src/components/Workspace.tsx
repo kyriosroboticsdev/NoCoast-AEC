@@ -23,6 +23,13 @@ interface Props {
   onClearPick: () => void;
   roomsVisible: boolean;
   onRooms: () => void;
+  /** Sizes of the floating panels over the model, and their drag handles (state/layout.ts). */
+  inspector: { width: number; height: number };
+  onResizeInspector: (size: { width?: number; height?: number }) => void;
+  onResetInspector: () => void;
+  viewTools: number;
+  onResizeViewTools: (width: number) => void;
+  onResetViewTools: () => void;
 }
 
 export function Workspace(p: Props) {
@@ -50,8 +57,11 @@ export function Workspace(p: Props) {
           {hasModel && p.viewer && (
             <>
               <Showing label={p.shown!.label} preview={p.shown!.preview} />
-              <ViewControls viewer={p.viewer} roomsVisible={p.roomsVisible} onRooms={p.onRooms} />
-              <InfoCard fileName={p.fileName ?? ""} schema={p.schema} picked={p.picked} facts={p.facts} properties={p.properties} onClear={p.onClearPick} />
+              <ViewControls viewer={p.viewer} roomsVisible={p.roomsVisible} onRooms={p.onRooms}
+                width={p.viewTools} onResize={p.onResizeViewTools} onResetSize={p.onResetViewTools} />
+              <InfoCard fileName={p.fileName ?? ""} schema={p.schema} picked={p.picked} facts={p.facts} properties={p.properties}
+                onClear={p.onClearPick} width={p.inspector.width} height={p.inspector.height}
+                onResize={p.onResizeInspector} onResetSize={p.onResetInspector} />
               {p.section && <SectionBar section={p.section} onValue={p.onSection} onFollow={p.onFollow} />}
               <div className="gizmo-wrap"><AxisGizmo viewer={p.viewer} /></div>
             </>
