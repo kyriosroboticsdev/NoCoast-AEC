@@ -7,6 +7,7 @@ import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { Workspace } from "./components/Workspace";
 import * as platform from "./platform";
+import { useTheme } from "./state/theme";
 import type { Attachment } from "./state/attachments";
 import { describeElement, roomAt, type Design, type Facts } from "./state/design";
 import { clearFiles, deleteFile, getFile, keepFilesFor, putFile } from "./state/files";
@@ -52,6 +53,7 @@ interface Shown {
 
 export default function App() {
   const { sessions, active, activeId, setActiveId, create, update, remove, clear } = useSessions();
+  const { theme, toggle: toggleTheme } = useTheme();
   const { size, layout, resize, resetPanel, setFlag } = useLayout();
   const activeRef = useRef(activeId);
   activeRef.current = activeId;
@@ -134,6 +136,10 @@ export default function App() {
       setOptions(o);
     });
   }, [onPick]);
+
+  useEffect(() => {
+    if (viewerReady) viewerRef.current?.setTheme(theme);
+  }, [theme, viewerReady]);
 
   useEffect(() => {
     if (!options) return;
@@ -572,7 +578,8 @@ export default function App() {
           onToggleSidebar={() => setFlag("sidebarOpen", !layout.sidebarOpen)}
           onToggleAssistant={() => setFlag("assistantOpen", !layout.assistantOpen)}
           onExport={exportShown} exportDisabled={exportDisabled}
-          onDelete={active ? () => removeSession(active.id) : null} />
+          onDelete={active ? () => removeSession(active.id) : null}
+          theme={theme} onToggleTheme={toggleTheme} />
         <div className="content">
           <Workspace hostRef={hostRef} viewer={viewerReady ? v : null}
             fileName={loaded?.name ?? (active?.model?.name ?? null)} schema={loaded?.schema ?? ""}

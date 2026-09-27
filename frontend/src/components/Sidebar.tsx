@@ -1,5 +1,6 @@
 import { Box, FolderOpen, PanelLeft, Plus, Search, Trash } from "lucide-react";
 import { useState } from "react";
+import { Logo } from "./Logo";
 import { PANEL_RANGE } from "../state/layout";
 import type { Session } from "../state/sessions";
 import { Resizer } from "./Resizer";
@@ -27,7 +28,7 @@ export function Sidebar(p: Props) {
   return (
     <aside className="sidebar" style={{ width: p.width }}>
       <div className="sidebar-head">
-        <div className="logo"><span className="logo-mark">◆</span> Generative BIM</div>
+        <div className="brand-home" title="tekt"><Logo height={26} /></div>
         <button className="icon-btn" title="Search sessions" onClick={() => setQuery(query === null ? "" : null)}>
           <Search size={17} />
         </button>
