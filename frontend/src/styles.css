@@ -312,20 +312,22 @@ pre.code { margin: 8px 0 0; max-height: 320px; overflow: auto; font-size: 12px; 
 .trace-row.running > .trace-dot { color: var(--accent); }
 .trace-row.error > .trace-dot { color: var(--danger); border-color: #efc9c5; }
 .trace-main { flex: 1; min-width: 0; }
-.trace-line { display: flex; align-items: center; gap: 8px; min-height: 21px; }
-.trace-title { font-size: 14px; color: var(--text-2); }
+/* Badges are nowrap, so without wrapping they squeeze a long title down to one word per line. */
+.trace-line { display: flex; align-items: center; flex-wrap: wrap; gap: 3px 8px; min-height: 21px; }
+.trace-title { font-size: 14px; color: var(--text-2); flex: 1 1 auto; min-width: 14ch; }
 .trace-row:not(.child) > .trace-main > .trace-line .trace-title { font-weight: 550; color: var(--text); }
 .trace-row.child .trace-title { font-size: 13.5px; }
 .trace-row.running > .trace-main > .trace-line .trace-title { color: var(--text); }
-.trace-ms { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.trace-ms { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
+.trace-line > .grow { flex: 1 0 0; }  /* a zero basis, so the spacer never widens the line and forces a wrap */
 .trace-detail { font-size: 12.5px; color: var(--muted); line-height: 1.45; margin-top: 1px; word-break: break-word; white-space: pre-line; }
 .trace-detail.err { color: var(--danger); }
 .trace-shot { display: block; margin-top: 6px; max-width: 320px; }
 .trace-shot img { display: block; width: 100%; border-radius: 6px; border: 1px solid var(--line); }
-.layer-badge { font-size: 11px; font-weight: 600; color: var(--accent-text); background: var(--accent-soft); border-radius: 999px; padding: 1px 7px; white-space: nowrap; }
+.layer-badge { font-size: 11px; font-weight: 600; color: var(--accent-text); background: var(--accent-soft); border-radius: 999px; padding: 1px 7px; white-space: nowrap; flex: none; }
 /* the model's own reasoning for a move, set apart from the mechanical detail line */
 .trace-why { font-size: 12.5px; color: var(--text-2); line-height: 1.5; margin-top: 3px; padding-left: 9px; border-left: 2px solid var(--line); font-style: italic; }
-.trace-metric { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; background: var(--sunken); border-radius: 999px; padding: 1px 7px; }
+.trace-metric { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; background: var(--sunken); border-radius: 999px; padding: 1px 7px; flex: none; }
 
 /* the design strategy the model writes before it starts drawing */
 .approach { display: flex; gap: 10px; background: var(--accent-soft); border-radius: var(--radius); padding: 12px 14px; color: var(--accent-text); }
