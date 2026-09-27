@@ -89,7 +89,7 @@ def thinking_for(schema: str, prompt: str, reply: dict, meta: dict | None = None
     steps = reply.get("steps", [])
     meta = meta or {}
     problems = [re.sub(r"^step \d+ \{.*?\}: |applying this step makes the design unbuildable: ", "", str(p))
-                for k in ("problems", "unmet", "issues", "seen") for p in (meta.get(k) or [])]
+                for k in ("problems", "unmet", "issues", "seen", "code") for p in (meta.get(k) or [])]
     if problems or meta.get("editing"):
         head = ("**Reworking what did not land**\n\n" + " ".join(f"{p.rstrip('.')}." for p in problems[:3]) + " "
                 if problems else "**Reading the change against the current design**\n\n")
@@ -144,7 +144,7 @@ class MockLLM:
         elif request.schema_name == "look":
             reply = self._look(request.meta)
         elif request.schema_name == "build":
-            if any(request.meta.get(k) for k in ("problems", "unmet", "issues", "seen")):
+            if any(request.meta.get(k) for k in ("problems", "unmet", "issues", "seen", "code")):
                 reply = {"steps": self._fix(prompt, request.meta)}
             elif request.meta.get("editing"):
                 reply = {"steps": self._edit(prompt, Design.model_validate(request.meta["design"]), request.meta.get("focus"))}

@@ -431,6 +431,22 @@ export function stageTracer(push: (step: TraceStep) => void, hooks: Hooks = {}) 
           });
           return;
         }
+        case "precheck": {
+          // The code screen before issue: failures go back to the model as a fix round.
+          const score = (d.score ?? {}) as Record<string, number>;
+          const failing = (d.checks as Finding[] | undefined) ?? [];
+          const g = group("review", failing.length ? "Code screen before issue" : undefined);
+          if (!failing.length) {
+            child(g, `Code screen before issue: ${score.pass ?? 0} of ${score.total ?? 0} clauses pass`, null, "done", { badge: String(d.code ?? "").split(" ")[0] || null, tone: "pass" });
+            return;
+          }
+          for (const c of failing) {
+            child(g, `${c.title}: ${c.value} (required ${c.target})`, null, "done",
+                  { badge: c.reference, tone: "fail", why: c.advice ? `Sent back to the model: ${c.advice}` : null });
+          }
+          setDetail(g, `${failing.length} clause${failing.length === 1 ? "" : "s"} failing · the model is fixing them before the drawings are issued`);
+          return;
+        }
         case "estimate": {
           const g = group("cost");
           const cost = (d.cost ?? {}) as Record<string, number | string>;
