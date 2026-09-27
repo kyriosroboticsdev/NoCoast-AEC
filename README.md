@@ -473,6 +473,24 @@ Two viewers share the page, both on That Open with the same pinned versions:
 **Keep `web-ifc` at 0.0.77.** In 0.0.78 the browser wasm does not match its own JavaScript, and That
 Open fails every conversion. `frontend/package.json` enforces this with an `overrides` entry.
 
+**Panels** (`src/state/layout.ts`, `src/components/Resizer.tsx`). The sidebar, the assistant, the
+floating inspector (width and height), the floating view palette and the 3D version cards all carry a
+drag handle on the edge they grow from: drag it, nudge it with the arrow keys, or double-click to go
+back to the default. Sizes and which side panels are open are stored under `gbim.layout.v1`. What is
+stored is what the user dragged; rendering clamps it to the window so the 3D view keeps at least
+340 px and a floating panel never covers more than 60 % of it, which means shrinking a window and
+growing it again gives the panels their size back.
+
+**Sessions** (`src/state/sessions.ts`, `src/state/files.ts`). A session is one conversation over one
+backend project, stored under `gbim.sessions.v2` with the active session id in `gbim.active.v1`, so a
+restart reopens the session you were in and reloads its model. Writes are debounced and flushed when
+the window goes away; a write that does not fit the quota sheds traces and then the oldest sessions
+rather than losing the list; another window's write is merged in by recency (deleted ids are
+remembered so a merge cannot resurrect them). IFC files opened from disk are kept per session in
+IndexedDB, since `localStorage` is far too small for a model, and are deleted with the session.
+Opening a session re-reads its project head from the backend, so a run that finished after the window
+went away is picked up instead of leaving the session a version behind.
+
 `Open IFC…` and `Sample` view a file in the main viewer without adding it to the project; the
 backend's `/projects/{id}/import` endpoint has no button yet. The server-side slicer and live-build
 endpoints (§4.11) exist in the backend but have no UI yet.
