@@ -20,16 +20,16 @@ import config
 from ifc.builder import compile_ifc
 from schemas.bim import (Asset, Beam, BuildingSpec, Column, CustomFixture, Door, Element, Fixture, LightFixture, Outlet,
                           Panel, Pipe, Railing, Roof, Slab, Space, Stair, Wall, Window, Wire)
-from schemas.brick_types import PHASES, Phase
+from schemas.phases import PHASES, Phase, phase_for
 from store.db import VersionData
 
 CONSTRUCTION_DIR = config.OUTPUT_DIR / "construction"  # served by the /models static mount
 JOB_TTL = 1800           # seconds before a finished job's files and status are dropped
 STEP_SECONDS = 0.2       # backend pace between steps; independent of how often a client polls
 
-# Element types per construction phase, built in schemas.brick_types.PHASES order — mirrors ifc/builder.py's
-# BUILDERS. Library bricks (Asset) carry their own phase, so a footing goes in with the foundation and a tree
-# with the site works at the end.
+# Derived element types per construction phase, built in schemas.phases.PHASES order — mirrors
+# ifc/builder.py's BUILDERS. Bricks (Asset) take the phase of their IFC class, so a footing goes in with the
+# foundation and a tree with the site works at the end.
 KINDS: dict[Phase, tuple[type, ...]] = {
     "foundation": (Slab,),
     "structure": (Wall, Column, Beam, Stair),
@@ -43,7 +43,7 @@ KINDS: dict[Phase, tuple[type, ...]] = {
 
 def phase_of(el: Element) -> Phase:
     if isinstance(el, Asset):
-        return el.phase
+        return phase_for(el.ifc_class)
     return next(phase for phase, kinds in KINDS.items() if isinstance(el, kinds))
 
 
