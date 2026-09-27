@@ -3,8 +3,8 @@
 Matches brick names, ids and multi-word tags ("heat pump", "solar panels"), plus a short list of
 single words that are unambiguous on their own ("elevator", "sprinklers"). Generic words ("panel",
 "outdoor", "table") and things the template planner already builds (fences, decks, porches) are left
-out, so a plain house prompt names no bricks. Bricks that generalise a catalogue fixture are skipped
-too: the template furnishes rooms with those itself, and so is anything written as a style ("a wood
+out, so a plain house prompt names no bricks. Bricks standing in for a catalogue fixture (a `fixture`
+property) are skipped too: the template furnishes rooms with those itself, and so is anything written as a style ("a wood
 stove-style fireplace" is a fireplace).
 """
 
@@ -45,7 +45,7 @@ def _phrases() -> list[tuple[str, list[str]]]:
     """(phrase, candidate brick ids), longest phrase first."""
     by_phrase: dict[str, list[str]] = {}
     for b in library().bricks.values():
-        if b.legacy_fixture:
+        if "fixture" in b.properties:
             continue
         words = {b.name.lower(), b.id.replace("_", " ")} | {t.lower() for t in b.tags if "-" not in t}
         for w in words:

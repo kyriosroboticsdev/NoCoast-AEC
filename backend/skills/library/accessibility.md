@@ -1,7 +1,7 @@
 ---
 name: accessibility
 title: Accessible and age-friendly design
-disciplines: transport, architecture, plumbing
+tags: transport, architecture, plumbing
 triggers: accessible, accessibility, wheelchair, disabled, elderly, aging, ageing, mobility, step-free, lift, elevator, universal design
 bricks: passenger_elevator, platform_lift, stair_lift, access_ramp, walk_in_shower, wall_hung_wc, grab_bar, handrail
 ---

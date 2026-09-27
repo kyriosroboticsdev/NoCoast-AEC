@@ -1,7 +1,7 @@
 ---
 name: bedrooms-and-living
 title: Bedrooms, living and dining rooms
-disciplines: interior, electrical
+tags: interior, electrical
 triggers: bedroom, master, nursery, living, lounge, dining, family room, snug, guest room, kids
 bricks: double_bed, single_bed, bunk_bed, crib, nightstand, wardrobe, dresser, sofa, corner_sofa, armchair, coffee_table, tv_stand, television, rug, dining_table, round_dining_table, dining_chair, sideboard, bookshelf, floor_lamp, pendant_light
 ---

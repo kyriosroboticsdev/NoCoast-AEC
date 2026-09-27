@@ -244,7 +244,7 @@ def template_steps(prompt: str) -> list[dict]:
 
 
 def brick_steps(mentions, design: Design) -> list[dict]:
-    """A brick step for every brick the prompt names, at the first spot its rules allow that clashes with
+    """A brick step for every brick the prompt names, at the first spot its mount and tags suggest that clashes with
     nothing already there (core/placement.py)."""
     steps: list[dict] = []
     derived = analyze(design)

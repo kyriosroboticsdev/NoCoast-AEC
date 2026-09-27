@@ -1,7 +1,7 @@
 ---
 name: fire-safety
 title: Fire detection, suppression and escape
-disciplines: fire
+tags: fire
 triggers: fire, smoke, alarm, sprinkler, sprinklers, escape, exit, fire safety, detector, extinguisher, commercial, office, school, apartment, flats
 bricks: smoke_detector, heat_detector, co_detector, fire_alarm_sounder, manual_call_point, sprinkler_head, sprinkler_valve_set, fire_hose_reel, fire_extinguisher, fire_hydrant, emergency_light, exit_sign
 ---

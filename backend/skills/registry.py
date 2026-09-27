@@ -1,11 +1,11 @@
-"""Skills: short playbooks on assembling bricks correctly, one markdown file each.
+"""Skills: short playbooks on writing and assembling assets, one markdown file each.
 
 A skill file starts with a front-matter block:
 
     ---
     name: kitchen-layout
     title: Kitchen layout
-    disciplines: interior, plumbing
+    tags: kitchen, plumbing
     triggers: kitchen, cooking, island, galley
     bricks: kitchen_counter, kitchen_sink, oven, fridge
     ---
@@ -32,12 +32,12 @@ class Skill:
     name: str
     title: str
     body: str
-    disciplines: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
     triggers: list[str] = field(default_factory=list)
     bricks: list[str] = field(default_factory=list)
 
     def line(self) -> str:
-        return f"{self.name} — {self.title} ({', '.join(self.disciplines)})"
+        return f"{self.name} — {self.title} ({', '.join(self.tags)})"
 
     def text(self) -> str:
         return f"SKILL {self.name}: {self.title}\n{self.body.strip()}"
@@ -58,7 +58,7 @@ def _parse(path: Path) -> Skill:
 
     if "name" not in meta or "title" not in meta:
         raise ValueError(f"{path.name}: front matter needs name and title")
-    return Skill(meta["name"], meta["title"], m.group(2), split("disciplines"), split("triggers"), split("bricks"))
+    return Skill(meta["name"], meta["title"], m.group(2), split("tags"), split("triggers"), split("bricks"))
 
 
 class SkillBook:

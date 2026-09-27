@@ -1,7 +1,7 @@
 ---
 name: bathroom-layout
 title: Bathrooms, en-suites and WCs
-disciplines: plumbing, hvac, interior
+tags: plumbing, hvac, interior
 triggers: bathroom, ensuite, en-suite, wc, toilet, shower, bath, powder room, wet room, cloakroom
 bricks: toilet, wall_hung_wc, washbasin, vanity_unit, shower, walk_in_shower, bathtub, freestanding_bathtub, towel_radiator, extractor_fan, floor_drain, mirror
 ---

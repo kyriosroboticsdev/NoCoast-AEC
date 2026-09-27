@@ -1,7 +1,7 @@
 ---
 name: offices-and-commercial
 title: Offices, shops and other non-domestic fit-outs
-disciplines: interior, data, fire, hvac
+tags: interior, data, fire, hvac
 triggers: office, offices, coworking, workplace, commercial, shop, retail, meeting room, reception, studio, clinic, school, classroom
 bricks: workstation, office_chair, meeting_table, reception_desk, filing_cabinet, printer, network_rack, wifi_access_point, data_outlet, partition_screen, air_handling_unit, supply_diffuser, return_grille, emergency_light, exit_sign, manual_call_point, fire_alarm_sounder
 ---

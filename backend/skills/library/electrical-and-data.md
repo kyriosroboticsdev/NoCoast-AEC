@@ -1,7 +1,7 @@
 ---
 name: electrical-and-data
 title: Power, lighting, data and smart home
-disciplines: electrical, data
+tags: electrical, data
 triggers: electrical, sockets, outlets, lighting, lights, switches, smart home, wifi, network, data, home office, cinema, security, cctv, ev, electric car, charger
 bricks: consumer_unit, light_switch, dimmer_switch, double_socket, usb_socket, outdoor_socket, pendant_light, recessed_downlight, wall_sconce, floor_lamp, ev_charger, router, network_rack, wifi_access_point, data_outlet, security_camera, doorbell, motion_sensor, ceiling_speaker, projector, television
 ---

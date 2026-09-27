@@ -11,11 +11,12 @@ skills whose triggers match the request.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from typing import Callable, get_args
 
-from bricks import library
+from bricks import Brick, library
 from core import structure
 from core.coordinate import coordinate
 from core.derive import DesignError, Derived, analyze
@@ -70,21 +71,33 @@ Tool = Callable[[ToolCall, Design, Toolbox], str]
 
 
 def _search_bricks(call: ToolCall, design: Design, box: Toolbox) -> str:
-    hits = library().search(call.query or "", call.discipline, SEARCH_LIMIT)
+    hits = library().search(call.query or "", call.tag, SEARCH_LIMIT)
     if not hits:
-        return f"no bricks match '{call.query}'" + (f" in {call.discipline}" if call.discipline else "")
+        return f"no bricks match '{call.query}'" + (f" tagged {call.tag}" if call.tag else "") + "; you can write an asset instead"
     text = "\n".join(b.line() for b, _ in hits)
-    box.add(f"search:{call.query}|{call.discipline}", f"search_bricks({call.query!r}):\n{text}")
+    box.add(f"search:{call.query}|{call.tag}", f"search_bricks({call.query!r}):\n{text}")
     return text
 
 
 def _get_brick(call: ToolCall, design: Design, box: Toolbox) -> str:
-    lib = library()
-    brick = lib.get(call.id or "")
+    brick = design.find_brick(call.id)
     if brick is None:
-        return f"no brick '{call.id}'; closest: {', '.join(lib.suggest((call.id or '').replace('_', ' '))) or 'none'}"
+        return f"no brick '{call.id}'; closest: {', '.join(library().suggest((call.id or '').replace('_', ' '))) or 'none'}"
     box.add(f"brick:{brick.id}", brick.card())
     return brick.card()
+
+
+def _check_asset(call: ToolCall, design: Design, box: Toolbox) -> str:
+    if not call.definition:
+        return "check_asset needs `definition`: the asset JSON"
+    try:
+        brick = Brick.model_validate(json.loads(call.definition))
+        solids = brick.solids(brick.resolve())
+    except json.JSONDecodeError as exc:
+        return f"not valid JSON: {exc.msg} at char {exc.pos}"
+    except ValueError as exc:
+        return f"invalid: {exc}"
+    return f"valid ({len(solids)} solid(s) at its defaults):\n{brick.card()}"
 
 
 def _list_skills(call: ToolCall, design: Design, box: Toolbox) -> str:
@@ -114,6 +127,7 @@ def _checked(report: Callable[[Design, Derived], list[Issue]]) -> Tool:
 TOOLS: dict[ToolName, Tool] = {
     "search_bricks": _search_bricks,
     "get_brick": _get_brick,
+    "check_asset": _check_asset,
     "list_skills": _list_skills,
     "get_skill": _get_skill,
     "check_design": _checked(coordinate),

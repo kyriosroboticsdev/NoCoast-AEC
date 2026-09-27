@@ -1,7 +1,7 @@
 ---
 name: kitchen-layout
 title: Kitchen layout and the work triangle
-disciplines: interior, plumbing, hvac, electrical
+tags: interior, plumbing, hvac, electrical
 triggers: kitchen, cooking, island, galley, pantry, chef, breakfast bar
 bricks: kitchen_counter, kitchen_island, kitchen_sink, oven, fridge, dishwasher, upper_cabinets, pantry_cabinet, range_hood, microwave, bar_stool, heat_detector
 ---

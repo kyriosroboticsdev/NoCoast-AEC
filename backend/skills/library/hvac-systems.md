@@ -1,7 +1,7 @@
 ---
 name: hvac-systems
 title: Heating, cooling and ventilation systems
-disciplines: hvac
+tags: hvac
 triggers: hvac, heating, cooling, air conditioning, ac, heat pump, boiler, radiator, ventilation, mvhr, fresh air, underfloor, passivhaus, low carbon, climate
 bricks: air_source_heat_pump, gas_boiler, radiator, towel_radiator, underfloor_manifold, split_ac_indoor, ac_condenser, air_handling_unit, mvhr_unit, rooftop_unit, supply_diffuser, return_grille, extractor_fan, thermostat, gas_meter, flue_chimney, supply_duct
 ---

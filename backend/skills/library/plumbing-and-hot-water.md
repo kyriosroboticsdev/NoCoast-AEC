@@ -1,7 +1,7 @@
 ---
 name: plumbing-and-hot-water
 title: Water supply, hot water and drainage
-disciplines: plumbing, energy
+tags: plumbing, energy
 triggers: plumbing, hot water, water heater, drainage, rainwater, sump, basement, laundry, utility, cylinder, tank
 bricks: water_heater, tankless_water_heater, solar_thermal_collector, rainwater_tank, sump_pump, floor_drain, roof_drain, water_shutoff_valve, utility_sink, washing_machine, tumble_dryer
 ---

@@ -12,9 +12,9 @@ Stateful (what the UI uses):
     GET  /projects/{id}/versions/{n}/construction/{job_id}            poll it
 
 Library (read-only; the same tools the model calls while researching):
-    GET  /bricks?q=&discipline=&limit=   search the brick library (no q: list, optionally one discipline)
+    GET  /bricks?q=&tag=&limit=          search the brick library (no q: list, optionally one tag)
     GET  /bricks/{id}                    one brick: its full definition and the card the model reads
-    GET  /skills, /skills/{name}         assembly playbooks
+    GET  /skills, /skills/{name}         playbooks on writing and assembling assets
 
 Stateless (kept for scripts and tests): POST /plan, /build, /generate.
 """
@@ -117,16 +117,15 @@ def health() -> dict:
 
 
 @router.get("/bricks")
-def list_bricks(q: str | None = None, discipline: str | None = None, limit: int = 20) -> dict:
+def list_bricks(q: str | None = None, tag: str | None = None, limit: int = 20) -> dict:
     lib = library()
     if q:
-        hits = [(b, score) for b, score in lib.search(q, discipline, limit)]
+        hits = lib.search(q, tag, limit)
     else:
-        hits = [(b, 0.0) for b in sorted(lib.bricks.values(), key=lambda b: (b.discipline, b.id))
-                if not discipline or b.discipline == discipline][:limit]
-    return {"total": len(lib), "disciplines": {d: len(bs) for d, bs in sorted(lib.disciplines().items())},
-            "bricks": [{"id": b.id, "name": b.name, "discipline": b.discipline, "category": b.category, "host": b.host,
-                        "ifc_class": b.ifc_class, "line": b.line(), "score": score} for b, score in hits]}
+        hits = [(b, 0.0) for b in sorted(lib.bricks.values(), key=lambda b: b.id) if not tag or tag in b.tags][:limit]
+    return {"total": len(lib), "tags": dict(lib.tags().most_common()),
+            "bricks": [{"id": b.id, "name": b.name, "tags": b.tags, "mount": b.mount, "ifc_class": b.ifc_class,
+                        "line": b.line(), "score": score} for b, score in hits]}
 
 
 @router.get("/bricks/{brick_id}")
@@ -139,7 +138,7 @@ def get_brick(brick_id: str) -> dict:
 
 @router.get("/skills")
 def list_skills() -> list[dict]:
-    return [{"name": s.name, "title": s.title, "disciplines": s.disciplines, "bricks": s.bricks} for s in skillbook().all()]
+    return [{"name": s.name, "title": s.title, "tags": s.tags, "bricks": s.bricks} for s in skillbook().all()]
 
 
 @router.get("/skills/{name}")
@@ -147,7 +146,7 @@ def get_skill(name: str) -> dict:
     skill = skillbook().get(name)
     if skill is None:
         raise HTTPException(404, f"no skill '{name}'")
-    return {"name": skill.name, "title": skill.title, "disciplines": skill.disciplines, "triggers": skill.triggers,
+    return {"name": skill.name, "title": skill.title, "tags": skill.tags, "triggers": skill.triggers,
             "bricks": skill.bricks, "body": skill.body}
 
 
