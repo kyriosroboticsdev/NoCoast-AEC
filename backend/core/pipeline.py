@@ -42,6 +42,7 @@ from core.issues import Issue
 from core.look import Review, look_rounds, look_turns, review_design
 from core.research import Toolbox, research, tool_rounds
 from core.ops import OpError, apply_ops
+from core.remedy import remedies
 from core.review import review
 from core.stream import StepStream, ThoughtStream
 from ifc.builder import GeometryError, compile_ifc, summarize
@@ -225,6 +226,7 @@ class Feedback:
     issues: list[Issue] = field(default_factory=list)   # coordination issues; the errors are sent, with suggested steps
     seen: list[str] = field(default_factory=list)       # problems the model saw in screenshots
     code: list[str] = field(default_factory=list)       # failing clauses of the pre-issue code screen
+    remedies: list[dict] = field(default_factory=list)  # design steps that would clear those clauses
 
     def label(self, editing: bool) -> str:
         fixing = [what for what, items in (("the moves that did not build", self.problems),
@@ -261,7 +263,7 @@ def build_round(llm: LLM, prompt: str, design: Design, checklist: list[str], emi
     stream = StepStream(emit, design, guids, first_index)
     meta = {"prompt": prompt, "design": design.model_dump(mode="json"), "problems": feedback.problems, "unmet": feedback.unmet,
             "editing": editing, "focus": focus, "issues": [i.as_dict() for i in errors(feedback.issues)], "seen": feedback.seen,
-            "code": feedback.code, "bricks": toolbox.bricks if toolbox else []}
+            "code": feedback.code, "remedies": feedback.remedies, "bricks": toolbox.bricks if toolbox else []}
     user = build_user_message(prompt, checklist, context, focus=focus, toolbox=toolbox.text() if toolbox else None,
                               problems=feedback.problems, unmet=feedback.unmet, issues=fixes, seen=feedback.seen,
                               code=feedback.code, attached=[i.name for i in attached])
@@ -473,11 +475,12 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
             results, issues = _verify(design, reqs.requirements, emit)
 
         for _ in range(code_rounds() if accepted_total else 0):
-            failing = _code_screen(design, emit)
+            failing, fixes = _code_screen(design, emit)
             if not failing:
                 break
             fixing = follow_up(llm, prompt, design, checklist, emit, guids=guids, first_index=steps_total,
-                               feedback=Feedback(code=failing), editing=editing, toolbox=toolbox, attached=attached)
+                               feedback=Feedback(code=failing, remedies=fixes), editing=editing, toolbox=toolbox,
+                               attached=attached)
             if fixing is None:
                 break
             stream = fixing
@@ -508,23 +511,33 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
         raise PipelineError(f"the design could not be built: {exc}") from exc
 
 
-def _code_screen(design: Design, emit: Emit) -> list[str]:
-    """Screen the design against the code before it is issued; the failing clauses, as lines a fix round can act on."""
+def _code_screen(design: Design, emit: Emit) -> tuple[list[str], list[dict]]:
+    """Screen the design against the code before it is issued: the failing clauses, as lines a fix round can
+    act on, and the design steps that would clear them."""
     try:
         spec, _ = derive(design)
         screen = review(spec, design)
     except Exception as exc:  # noqa: BLE001 — a review bug must not stop the building being issued
         log.warning("pre-issue code screen failed: %s", exc)
-        return []
+        return [], []
     failing = [c for c in screen["checks"] if c["status"] == "fail"]
+    try:
+        fixes = remedies(failing, spec, design)
+    except Exception as exc:  # noqa: BLE001 — the clauses still go back to the model without suggested steps
+        log.warning("code remedies failed: %s", exc)
+        fixes = {}
     score = screen["score"]
     emit("precheck", f"pre-issue code screen: {score['pass']} of {score['total']} clauses pass"
                      + (f", {len(failing)} failing — handing them back to the model" if failing else ", nothing failing"),
          {"phase": "code", "code": screen["code"], "score": score,
-          "checks": [{k: c[k] for k in ("title", "reference", "status", "value", "target", "detail", "advice")} for c in failing]})
-    return [f"{c['reference']} — {c['title']}: measured {c['value']}, required {c['target']}. {c['detail']}"
-            + (f" Fix: {c['advice']}" if c["advice"] else "") + (f" (elements: {', '.join(c['elements'][:6])})" if c["elements"] else "")
-            for c in failing]
+          "checks": [{**{k: c[k] for k in ("title", "reference", "status", "value", "target", "detail", "advice")},
+                      "fix": len(fixes.get(c["id"], []))} for c in failing]})
+    lines = [f"{c['reference']} — {c['title']}: measured {c['value']}, required {c['target']}. {c['detail']}"
+             + (f" Fix: {c['advice']}" if c["advice"] else "") + (f" (elements: {', '.join(c['elements'][:6])})" if c["elements"] else "")
+             + (" Suggested steps: " + json.dumps([{k: v for k, v in s.items() if k != "why"} for s in fixes[c["id"]]])
+                if c["id"] in fixes else "")
+             for c in failing]
+    return lines, [s for c in failing for s in fixes.get(c["id"], [])]
 
 
 def _verify(design: Design, reqs: list[Requirement], emit: Emit) -> tuple[list[CheckResult], list[Issue]]:
