@@ -19,6 +19,7 @@ load_dotenv(ENV_FILE)
 OUTPUT_DIR = Path(os.environ.get("BIM_OUTPUT_DIR", BACKEND_DIR / "output"))
 DB_PATH = Path(os.environ.get("BIM_DB_PATH", OUTPUT_DIR / "projects.sqlite3"))
 PORT = int(os.environ.get("BIM_PORT", 8765))
+DEMO_DIR = Path(os.environ.get("BIM_DEMO_DIR", BACKEND_DIR / "demo"))  # packed runs restored at startup (core/replay.py)
 
 # Set by reload(); listed here so the names exist for imports.
 LLM_PROVIDER = LLM_MODEL = LLM_BASE_URL = LLM_API_KEY = ""

@@ -13,6 +13,8 @@ Stateful (what the UI uses):
     GET  /projects/{id}/export                       the head version as a bundle
     GET  /projects/{id}/versions/{n}/analysis        design review, cost/carbon estimate and the drawing index
     GET  /projects/{id}/versions/{n}/sheets/{no}.svg one drawing sheet (G-001, A-101, …) as SVG
+    GET  /projects/{id}/versions/{n}/replay?speed=  (SSE) the recorded prompt run, played back faster
+    GET  /runs                                       recorded runs, newest first
     GET  /projects/{id}/shots/{name}                                 a screenshot the model was shown while checking its work
     GET  /projects/{id}/attachments/{file}                           an image the user attached to one of its prompts
     POST /projects/{id}/versions/{n}/construction                     start a live-build simulation job
@@ -43,7 +45,7 @@ from pydantic import BaseModel, Field, ValidationError
 import config
 from agents import PLANNERS, PlanResult, get_planner
 from bricks import library
-from core import construction, export, pipeline
+from core import construction, export, pipeline, replay
 from core.context import describe_design, describe_spec
 from core.derive import DesignError, analyze, space_id
 from ifc.builder import write_ifc
@@ -59,7 +61,7 @@ from skills import skillbook
 from slicer.slice import slice_model
 from store.db import Project, Store, Version
 
-from api.sse import sse_response
+from api.sse import replay_response, sse_response
 
 OUTPUT_DIR = config.OUTPUT_DIR
 SHOT_NAME = re.compile(r"^[0-9a-f]{12}\.png$")
@@ -188,7 +190,31 @@ def prompt_project(project_id: str, req: PromptRequest):
     _project(project_id)
     llm = get_llm(req.planner) if req.planner in PROVIDERS else get_llm()
     return sse_response(lambda emit: pipeline.run_prompt(store, llm, project_id, req.prompt, req.base_version, emit, req.focus,
-                                                         req.images))
+                                                         req.images),
+                        record=lambda events: replay.record(store, project_id, req.prompt, llm.name, events))
+
+
+@router.get("/runs")
+def list_runs() -> list[dict]:
+    """Recorded prompt runs, newest first: what `…/replay` can play back."""
+    out = []
+    for p in store.list_projects():
+        for f in sorted((store.ifc_dir / p.id).glob("v*.run.json")):
+            number = int(f.name[1:].split(".")[0])
+            run = replay.load(store, p.id, number)
+            if run:
+                out.append({"project": p.id, "version": number, **replay.summary(run)})
+    return sorted(out, key=lambda r: -r["recorded"])
+
+
+@router.get("/projects/{project_id}/versions/{number}/replay")
+def replay_run(project_id: str, number: int, speed: float = 8.0):
+    """Play a recorded run back as the same SSE stream, `speed` times faster (long pauses are capped)."""
+    _project(project_id)
+    run = replay.load(store, project_id, number)
+    if run is None:
+        raise HTTPException(404, f"version {number} of '{project_id}' has no recorded run")
+    return replay_response(replay.pace(run["events"], speed))
 
 
 @router.post("/projects/{project_id}/ops")
