@@ -1,7 +1,7 @@
 Link to Open-Source Documentation:
 https://docs.google.com/document/d/1tU3kCJchFRInzQXuF_GBEn_fQGtBhatj
 
-# NoCoast-AEC
+# Tekt
 
 Text prompt → building model → **IFC**, with the language model kept swappable and the building built
 as a stream of small deltas so the user watches it grow and can iterate on it. Python/FastAPI backend
