@@ -25,6 +25,7 @@ roof from those and compiles them to IFC after every step.
                                    (room, door, window, stair, brick, roof …)                     ▲     (≤ 1 s apart)
                  rejected steps ─────────────────────────────── fix round (≤ N) ──────────────────┘
         ──► COORDINATE (clashes, connectors, structural spans) + CHECK against the checklist ──► errors/unmet → fix round
+        ──► LOOK: screenshots from camera views the model picks, sent back to it ──► problems it sees → fix round
         ──► derive BuildingSpec (IR) ─► IfcOpenShell compiler (stable GlobalIds) ─► version store ─► viewer
  edit:  the same, starting from the head version's DESIGN; the model emits only the steps that change it
 ```
@@ -60,6 +61,9 @@ backend/
                         model.py (Brick), place.py (placement against frames), and the JSON library (bricks/library/*.json)
   skills/               assembly know-how the model reads on demand (skills/library/*.md)
   core/research.py      the research loop: the model's tool calls into bricks and skills, collected into a toolbox
+  core/look.py          the look loop: screenshots of the model from views it picks, what it sees → a fix round
+  render/               headless renderer: scene.py (IFC → triangles), raster.py (numpy z-buffer), caps.py (plan cuts),
+                        font.py (labels), png.py; schemas/look.py is the View the model picks
   core/coordinate.py    coordination: clash.py (solid and keep-out clashes), assembly.py (connectors), structure.py (spans)
   core/stream.py        apply steps as they stream; worker thread compiles previews (geometry-checks only what changed)
   core/pipeline.py      the run: requirements → build stream → fix rounds → check → compile → version
@@ -131,6 +135,8 @@ switching provider, model or key takes effect without a restart — only paths a
 | `LLM_MODEL`, `LLM_BASE_URL`, `LLM_API_KEY` | model id / endpoint / key for the chosen provider |
 | `BIM_MAX_REPAIRS` | fix rounds for rejected steps per prompt (default 2) |
 | `BIM_VERIFY_ROUNDS` | fix rounds for unmet requirements per prompt (default 1; 0 = report only) |
+| `BIM_LOOK_ROUNDS`, `BIM_LOOK_TURNS` | visual reviews per prompt (default 1; 0 = off) and camera turns per review (default 3) |
+| `LLM_VISION` | `1`/`0`: whether the model is sent screenshots; default on for `claude`, Anthropic's endpoint and `mock` |
 | `BIM_OUTPUT_DIR`, `BIM_DB_PATH`, `BIM_PORT` | storage and port |
 | `BIM_BACKEND_URL` (Tauri) or `?backend=` (browser) | backend origin for the UI, default `http://127.0.0.1:8765` |
 | `BIM_NO_BACKEND`, `BIM_BACKEND_DIR` (Tauri) | don't spawn the backend / where `backend/` is |
@@ -378,11 +384,13 @@ ones that no longer apply, with a note). Deleting a wall deletes its openings; l
 ```python
 @dataclass
 class LLMRequest:
-    system: str; user: str; schema: dict; schema_name: str  # "requirements" | "build"
+    system: str; user: str; schema: dict; schema_name: str  # "requirements" | "research" | "build" | "look"
     meta: dict                                              # side channel for the mock only
+    images: list[Image]                                     # PNG + caption each; sent only to vision models
 
 class LLM(Protocol):
     name: str
+    vision: bool                                            # can be shown images (LLM_VISION overrides)
     def complete(self, request: LLMRequest, on_text=None, on_note=None) -> dict: ...
 ```
 
@@ -393,6 +401,9 @@ class LLM(Protocol):
 | `claude` | Anthropic SDK, `output_config.format` json_schema | structured outputs |
 | `ollama` | `/api/chat` with `format: <json schema>` | local models via Ollama |
 | `openai` | `/chat/completions` with `response_format: json_schema` (strict) | Anthropic's compat endpoint, Fireworks, vLLM, LM Studio, fine-tuned models |
+
+Images go after the user text, each introduced by its caption: Anthropic `image` blocks (`claude`), `image_url`
+data-URL parts (`openai`, `llamacpp`), or the message's `images` list with the captions appended (`ollama`).
 
 Every provider receives the schema through `llm/schema.py::strict_schema` (all properties required,
 objects closed, tuples as arrays, `oneOf`→`anyOf`, optionally without numeric bounds). Two prompts exist
@@ -453,6 +464,8 @@ History is linear; `revert/{n}` appends a copy of *n*; `base_version` gives opti
 | `GET /projects/{id}/versions/{n}/ifc` | | the IFC file |
 | `GET /projects/{id}/versions/{n}/spec` | | `{version, spec, design, guids}` |
 | `GET /projects/{id}/versions/{n}/context` | | text — exactly what the LLM sees when editing |
+| `GET /projects/{id}/versions/{n}/render` | `?target=&azimuth=&elevation=&level=&cut=&hide=&position=&look_at=&distance=&ortho=&fov=&width=&height=` | a PNG from any view — the renderer the model looks through; `X-Visible` lists the elements in frame |
+| `GET /projects/{id}/shots/{name}` | | a screenshot the model was shown (linked from the `look` SSE stage) |
 | `GET /projects/{id}/versions/{n}/slices`, `…/gcode` | `?layer_height=` | horizontal slices of the compiled IFC in construction-phase order; slicer-style preview G-code (`slicer/`) |
 | `POST /projects/{id}/versions/{n}/construction`, `GET …/construction/{job}` | | live-build job: one IFC per element in construction order, polled by the viewer (`core/construction.py`) |
 | `POST /plan`, `/build`, `/generate` | | stateless one-shots (scripts, tests) |
@@ -564,7 +577,40 @@ Each issue carries suggested steps (found by `first_fit`, which tries candidate 
 tags until one derives without a clash); errors join unmet requirements in the fix round. Requirements gain
 the kinds `asset` (brick, room, count) and `structure`.
 
-## 4.15 Troubleshooting
+### 4.15 Looking at the model — visual self-check
+
+Numbers catch clashes and missing services; they do not catch a fridge facing the wall, a canopy floating
+above its trunk or a model-written asset that does not look like what it should. So after the checks, a
+vision model looks at what it built and picks where to point the camera (`core/look.py`):
+
+```
+ design ─► compile ─► first views: the whole model from the south-west + a plan cut of each level (≤ 3)
+        ─► LLM look turn {views, problems, done} with the latest screenshots attached
+        ─► more views? render them ─► next turn (≤ BIM_LOOK_TURNS)
+        ─► problems ─► fix round with them as "WHAT YOU SAW IN THE SCREENSHOTS" ─► checks again (≤ BIM_LOOK_ROUNDS)
+```
+
+**A view** (`schemas/look.py::View`) is the model's camera: `target` (an element, asset or room id to frame)
+or `look_at` [x, y, z]; `azimuth` (compass bearing it looks from) and `elevation` (90 = a plan), or a
+`position` to stand at (e.g. in a room at eye height 1.6 m); `distance`; `level` (that level and below, cut
+1.5 m above its floor) or an absolute `cut` height; `hide` (IFC classes, ids, `ground`); `ortho`; `fov`.
+
+**The renderer** (`render/`) is headless numpy: the compiled IFC is tessellated once per review
+(`scene.py`), clipped against the near plane and the cut, z-buffered with an element-id buffer, flat-shaded
+with outlines on depth steps, and written as PNG with the standard library (~0.3 s at 1024×768). Section
+cuts get solid caps: the cut's crossing segments per element are polygonized and kept where they are
+inside the solid by winding number (`caps.py`), so a plan shows walls and furniture as dark shapes with
+the door gaps. A targeted element is drawn over anything in front of it and highlighted, so a close-up
+always shows it. Element ids are written where each element is seen, room ids on their floors, and a red
+arrow points north. Each screenshot's caption lists the visible elements with their share of the frame, so
+the model can tie what it sees to ids it can act on. A view that cannot be taken (unknown id or level,
+everything hidden) comes back to the model as text with the ids it could use.
+
+Every screenshot is stored under `output/projects/<id>/shots/` and linked from the `look` SSE stage; the
+reasoning trace shows them inline. `GET …/versions/{n}/render` takes the same view parameters for people.
+Text-only models skip the stage with a note (`LLM_VISION`).
+
+### 4.16 Troubleshooting
 
 Both sides log verbosely so a failure can be diagnosed from two pastes:
 
@@ -586,7 +632,10 @@ shows each reason (usually an edit request the model could not map onto existing
 
 ## 5. Tests
 
-`cd backend && python -m pytest` — 379 tests on the mock LLM, no network: the geometry kernel (every
+`cd backend && python -m pytest` — 400 tests on the mock LLM, no network: the look loop (screenshots sent to
+the model, the views it asks for, what it sees driving a fix round, text-only models skipping it, each
+adapter's image format) and the renderer (plan cuts with solid caps, x-rayed targets, bad views explained,
+the render and screenshot routes) · the geometry kernel (every
 node kind and modifier, every solid kind tessellating in IFC to the kernel's extent), every brick placing with
 its defaults and compiling to valid IFC, model-written assets, clashes, connectors and spans, the research loop and an
 end-to-end prompt with a lift, solar, heat pump, boiler and trees · derivation (walls from shared
