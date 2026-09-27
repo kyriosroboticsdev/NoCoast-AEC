@@ -317,12 +317,21 @@ class Panel(_Element):
 
 
 class Wire(_Element):
-    """A branch-circuit run: a polyline at a fixed height above the level (in the ceiling/wall void)."""
+    """A branch-circuit run in the walls and roof. `path` is the plan polyline and `elevation` is the
+    height of that run above the level. `heights`, when set, gives each vertex its own height: a
+    repeated plan point is a vertical drop down to a device."""
 
     type: Literal["wire"] = "wire"
     level: str
     path: list[Point] = Field(min_length=2)
-    elevation: float = Field(2.7, description="Height above the level the run sits at")
+    elevation: float = Field(2.7, description="Height above the level the run sits at, when `heights` is omitted")
+    heights: Optional[list[float]] = Field(None, description="Height of each path vertex above the level")
+
+    @model_validator(mode="after")
+    def _heights_match(self) -> "Wire":
+        if self.heights is not None and len(self.heights) != len(self.path):
+            raise ValueError(f"wire '{self.id}': {len(self.heights)} heights for {len(self.path)} path points")
+        return self
 
 
 Element = Annotated[

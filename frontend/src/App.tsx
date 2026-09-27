@@ -69,6 +69,10 @@ export default function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [section, setSection] = useState<SectionView | null>(null);
   const [roomsVisible, setRoomsVisible] = useState(false);
+  // A build replay plays a stored version back one element at a time. `restore` means put the
+  // finished model back when the playback ends; a new prompt or a session switch clears it.
+  const replayRef = useRef<{ cancel: boolean; restore: boolean; done: Promise<void> } | null>(null);
+  const [replaying, setReplaying] = useState(false);
   // The camera is framed on the first model of a session and then left alone: previews and new versions
   // load into the same view so the building grows in place — unless it clearly outgrows the view.
   const framed = useRef(0);
@@ -223,6 +227,11 @@ export default function App() {
     for (const m of active?.messages ?? []) if (m.run?.version) ensureTurn(m.run.version);
     const model = active?.model;
     if (!active || !model) {
+      const playing = replayRef.current;
+      if (playing) {
+        playing.cancel = true;
+        playing.restore = false;
+      }
       // A load for this same session may be in flight (its model is attached when it finishes).
       const mine = active && loadedKey.current?.startsWith(`${active.id}:`);
       if (loadedKey.current && !mine && !busy) clearModel();
@@ -232,6 +241,13 @@ export default function App() {
     if (loadedKey.current === key) return;
     const sid = active.id;
     (async () => {
+      const playing = replayRef.current;
+      if (playing) {
+        playing.cancel = true;
+        playing.restore = false;
+        await playing.done;
+      }
+      if (activeRef.current !== sid) return;
       try {
         if (model.url) {
           const ver = versionOf(model.url);
@@ -309,6 +325,12 @@ export default function App() {
     /** The user message whose attachments this run carries; they get the backend's URLs when it lands. */
     attachedTo?: string,
   ) => {
+    const playing = replayRef.current;
+    if (playing) {
+      playing.cancel = true;
+      playing.restore = false;
+      await playing.done;
+    }
     const aid = uid();
     update(sid, addMessage({ id: aid, role: "assistant", text, run: { stage: "planning", steps: [], startedAt: Date.now() } }));
     setBusy(true);
@@ -514,6 +536,98 @@ export default function App() {
     viewerRef.current?.setRoomsVisible(next);
   };
 
+  /** Pause that ends early when the replay is stopped. */
+  const replayPause = (token: { cancel: boolean }) => new Promise<void>((resolve) => {
+    const tick = window.setInterval(() => {
+      if (!token.cancel) return;
+      window.clearInterval(tick);
+      window.clearTimeout(done);
+      resolve();
+    }, 50);
+    const done = window.setTimeout(() => {
+      window.clearInterval(tick);
+      resolve();
+    }, 500);
+  });
+
+  /**
+   * Play the version on screen back in construction order, one element every half second, with the
+   * camera held on the finished building so each step appears inside the full extent.
+   */
+  const replayBuild = useCallback(async () => {
+    const running = replayRef.current;
+    if (running) {
+      running.cancel = true;
+      running.restore = true;
+      return;
+    }
+    const ver = shown?.version;
+    const sid = activeRef.current;
+    if (!ver || !sid || busy) return;
+    let finish = () => {};
+    const token = { cancel: false, restore: false, done: Promise.resolve() };
+    token.done = new Promise<void>((resolve) => { finish = resolve; });
+    replayRef.current = token;
+    setReplaying(true);
+    const restoreFinal = async () => {
+      const detail = await api.getProject(ver.project);
+      const version = detail.versions.find((item) => item.number === ver.number) ?? detail.head;
+      if (version && version.number === ver.number) await loadVersion(sid, version);
+    };
+    try {
+      const v = viewerRef.current!;
+      v.fit();
+      framed.current = Math.max(framed.current, v.extent());
+      sectionRef.current?.setValue(1e9); // full height, so the replay is not stuck under a section cut
+      setShown((s) => (s ? { ...s, label: "replay · preparing", preview: true, version: ver } : s));
+      let status = await api.startConstruction(ver.project, ver.number);
+      let played = 0;
+      for (;;) {
+        if (token.cancel || activeRef.current !== sid) break;
+        if (status.error) throw new Error(status.error);
+        const urls = status.urls ?? [];
+        while (played < urls.length) {
+          if (token.cancel || activeRef.current !== sid) break;
+          const bytes = await api.fetchBytes(urls[played]);
+          if (token.cancel || activeRef.current !== sid) break;
+          played++;
+          await showModel(bytes, "replay.ifc", `${sid}:replay`, {
+            keepCamera: true,
+            label: `replay ${played} / ${status.total}`,
+            preview: true,
+            version: ver,
+          });
+          const more = played < urls.length || !status.done;
+          if (more && !token.cancel) await replayPause(token);
+        }
+        if (token.cancel || activeRef.current !== sid) break;
+        if (status.done) {
+          token.restore = true;
+          if (!token.cancel) await replayPause(token);
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 300));
+        if (token.cancel || activeRef.current !== sid) break;
+        status = await api.constructionStatus(ver.project, ver.number, status.job_id);
+      }
+    } catch (e) {
+      if (!token.cancel) {
+        token.restore = true;
+        setLoadError(`Replay stopped: ${e instanceof Error ? e.message : e}`);
+      }
+    } finally {
+      try {
+        if (token.restore && activeRef.current === sid) await restoreFinal();
+      } catch (e) {
+        setLoadError(`Couldn't restore the model: ${e instanceof Error ? e.message : e}`);
+      } finally {
+        replayRef.current = null;
+        setReplaying(false);
+        finish();
+      }
+    }
+  }, [busy, loadVersion, showModel, shown?.version]);
+
   // Smoke-test hooks (BIM_AUTOLOAD / BIM_PROMPT / BIM_SMOKE_SELECT) once everything is up.
   useEffect(() => {
     if (!viewerReady || !options) return;
@@ -581,6 +695,7 @@ export default function App() {
             onClose={() => { if (active) update(active.id, (s) => ({ ...s, model: undefined })); clearModel(); }}
             picked={picked} facts={facts} properties={properties} onClearPick={() => v?.clearSelection()}
             roomsVisible={roomsVisible} onRooms={toggleRooms}
+            replay={shown?.version && !busy ? { playing: replaying, onToggle: () => void replayBuild() } : null}
             inspector={{ width: size.inspectorW, height: size.inspectorH }}
             onResizeInspector={({ width, height }) => {
               if (width !== undefined) resize("inspectorW", width);

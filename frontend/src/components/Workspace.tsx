@@ -23,6 +23,8 @@ interface Props {
   onClearPick: () => void;
   roomsVisible: boolean;
   onRooms: () => void;
+  /** Replay control; null when the model on screen is not a stored version. */
+  replay: { playing: boolean; onToggle: () => void } | null;
   /** Sizes of the floating panels over the model, and their drag handles (state/layout.ts). */
   inspector: { width: number; height: number };
   onResizeInspector: (size: { width?: number; height?: number }) => void;
@@ -57,7 +59,7 @@ export function Workspace(p: Props) {
           {hasModel && p.viewer && (
             <>
               <Showing label={p.shown!.label} preview={p.shown!.preview} />
-              <ViewControls viewer={p.viewer} roomsVisible={p.roomsVisible} onRooms={p.onRooms}
+              <ViewControls viewer={p.viewer} roomsVisible={p.roomsVisible} onRooms={p.onRooms} replay={p.replay}
                 width={p.viewTools} onResize={p.onResizeViewTools} onResetSize={p.onResetViewTools} />
               <InfoCard fileName={p.fileName ?? ""} schema={p.schema} picked={p.picked} facts={p.facts} properties={p.properties}
                 onClear={p.onClearPick} width={p.inspector.width} height={p.inspector.height}

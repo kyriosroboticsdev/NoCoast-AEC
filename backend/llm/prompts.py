@@ -227,6 +227,9 @@ Rules:
   there once the building has rooms). Rooms wider than the
   walls can span (about 7 m, timber 6, concrete 8) need a beam; upper storeys overhanging by more than 1 m need columns.
   The design is checked for all of this after building and problems come back to you with suggested steps.
+- The current design may list compliance warnings: a door blocked (swing, clearance or the opening itself),
+  two pieces intersecting, or an element floating, partly buried, facing the wrong way, or not hosted in a
+  wall, roof or slab. Each warning names the element and what is wrong; when editing, fix those too.
 - Emit asset steps before the brick steps that place them, and brick steps after furniture, in construction order:
   structure, services, equipment, site last. A brick placed on another brick comes after it.
 Return only the JSON object.
@@ -283,7 +286,8 @@ def build_system() -> str:
 
 FIX_INTRO = "SOME STEPS WERE REJECTED. The current design is shown above; emit ONLY steps that fix the problems below:"
 UNMET_INTRO = "The design does not yet satisfy every requirement. The current design is shown above; emit ONLY steps that fix these:"
-ISSUES_INTRO = ("COORDINATION ISSUES (clashes, missing services, unsupported spans). Emit ONLY steps that resolve them; the "
+ISSUES_INTRO = ("COORDINATION ISSUES (clashes, missing services, unsupported spans). Emit ONLY steps that resolve them "
+                "and any compliance warnings in the current design (blocked doors, intersections, bad hosts); the "
                 "suggested steps work, adjust them if you know better:")
 
 

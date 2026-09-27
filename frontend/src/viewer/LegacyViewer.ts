@@ -9,6 +9,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import * as WebIFC from "web-ifc";
+import { createBaseGrid } from "./infiniteGrid";
 
 export interface Picked {
   expressID: number;
@@ -69,14 +70,7 @@ export class LegacyViewer {
     const sun = new THREE.DirectionalLight(0xffffff, 1.5);
     sun.position.set(30, 50, 20);
     this.scene.add(sun);
-    const grid = new THREE.GridHelper(60, 60, 0x333844, 0x22252d);
-    (grid.material as THREE.Material).clippingPlanes = [this.clipPlane];
-    this.scene.add(grid);
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200),
-      new THREE.MeshBasicMaterial({ color: 0x0b0d12, transparent: true, opacity: 0.75, depthWrite: false, clippingPlanes: [this.clipPlane] }));
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -0.02;
-    this.scene.add(ground);
+    this.scene.add(createBaseGrid(this.clipPlane));
     this.scene.add(this.root);
 
     const wasmPath = new URL("wasm/", document.baseURI).href;

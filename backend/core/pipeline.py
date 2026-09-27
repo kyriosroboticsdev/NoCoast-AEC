@@ -174,13 +174,23 @@ def checklist_lines(reqs: list[Requirement]) -> list[str]:
 # --- research -----------------------------------------------------------------
 
 def _context(design: Design) -> str | None:
-    """The current design as the model sees it; None for an empty one."""
+    """The current design as the model sees it; None for an empty one.
+
+    Compliance warnings (blocked doors, intersections, bad hosts) are appended so every research,
+    build and look prompt sees them, including checks that used to stop at the user-facing report.
+    """
     if not design.has_geometry():
         return None
     try:
-        return describe_design(design, analyze(design))
+        derived = analyze(design)
     except DesignError:
         return describe_design(design)
+    text = describe_design(design, derived)
+    warnings = [i.line() for i in coordinate(design, derived) if i.severity == "warning"]
+    if warnings:
+        text += ("\ncompliance warnings (fix these when you edit — each names the element and what is wrong):\n- "
+                 + "\n- ".join(warnings))
+    return text
 
 
 def research_round(llm: LLM, prompt: str, design: Design, checklist: list[str], emit: Emit, focus: str | None = None) -> Toolbox:

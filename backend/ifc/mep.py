@@ -1,8 +1,10 @@
 """Plumbing and electrical rough-in: a riser (water or electrical conduit), outlets, ceiling
-lights, the distribution panel, and branch-circuit wire runs. Same trick as ifc/fixtures.py:
-a few boxes, enough for a viewer to read the circuit, not a routed engineering model."""
+lights, the distribution panel, and branch-circuit wire runs. The runs follow the walls and
+the roof (core/routing.py); each segment is a thin box, including a vertical drop at a device."""
 
 from __future__ import annotations
+
+import math
 
 import ifcopenshell.api.root
 
@@ -55,11 +57,31 @@ def add_panel(ctx: BuildContext, panel: Panel) -> None:
     finish_element(ctx, element, body(ctx, [item]), translate(x, y, level.elevation + 1.2), "Panel", panel.level, item=panel)
 
 
+def _cable_item(m, a, b, za: float, zb: float, size: float = 0.02):
+    """A short box for one run of cable: horizontal at za, or a vertical drop when the plan point repeats."""
+    horiz = math.hypot(b[0] - a[0], b[1] - a[1])
+    if horiz < 0.01:
+        drop = abs(zb - za)
+        if drop < 0.01:
+            return None
+        return box(m, a[0] - size / 2, a[1] - size / 2, min(za, zb), size, size, drop)
+    return oriented_box(m, a, b, size, min(za, zb), size)
+
+
 def add_wire(ctx: BuildContext, wire: Wire) -> None:
     """The branch cable itself (IfcCableSegment) — distinct from the riser's conduit
     (IfcCableCarrierSegment, ifc/mep.py::add_pipe) so the two never collide in a phase filter."""
     m = ctx.model
     level = ctx.level(wire.level)
-    items = [oriented_box(m, a, b, 0.02, 0, 0.02) for a, b in zip(wire.path, wire.path[1:])]
+    if wire.heights:
+        items = [item for a, b, za, zb in zip(wire.path, wire.path[1:], wire.heights, wire.heights[1:])
+                 if (item := _cable_item(m, a, b, za, zb)) is not None]
+        place_z = level.elevation
+    else:
+        items = [oriented_box(m, a, b, 0.02, 0, 0.02) for a, b in zip(wire.path, wire.path[1:])
+                 if math.hypot(b[0] - a[0], b[1] - a[1]) > 0.01]
+        place_z = level.elevation + wire.elevation
+    if not items:
+        return
     element = ifcopenshell.api.root.create_entity(m, ifc_class="IfcCableSegment", predefined_type="CABLESEGMENT", name=wire.name or wire.id)
-    finish_element(ctx, element, body(ctx, items), translate(z=level.elevation + wire.elevation), "Wire", wire.level, item=wire)
+    finish_element(ctx, element, body(ctx, items), translate(z=place_z), "Wire", wire.level, item=wire)
