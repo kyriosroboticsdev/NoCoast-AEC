@@ -2,17 +2,30 @@ import { BedDouble, RotateCcw, X } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import type { Facts } from "../state/design";
+import { PANEL_RANGE } from "../state/layout";
 import type { LegacyViewer, Picked, PropertySet, ViewName } from "../viewer/LegacyViewer";
 import type { SectionView } from "../viewer/section";
+import { Resizer } from "./Resizer";
 
 // --- floating view panel (top-right) ----------------------------------------
 
-export function ViewControls({ viewer, roomsVisible, onRooms }: { viewer: LegacyViewer; roomsVisible: boolean; onRooms: () => void }) {
+interface ViewProps {
+  viewer: LegacyViewer;
+  roomsVisible: boolean;
+  onRooms: () => void;
+  width: number;
+  onResize: (width: number) => void;
+  onResetSize: () => void;
+}
+
+export function ViewControls({ viewer, roomsVisible, onRooms, width, onResize, onResetSize }: ViewProps) {
   const views: [ViewName, string][] = [
     ["top", "Top"], ["bottom", "Bottom"], ["front", "Front"], ["back", "Back"], ["left", "Left"], ["right", "Right"],
   ];
   return (
-    <div className="float view-controls">
+    <div className="float view-controls" style={{ width }}>
+      <Resizer className="resizer-viewtools" label="View palette width" onReset={onResetSize}
+        width={{ value: width, dir: -1, ...PANEL_RANGE.viewTools, onChange: onResize }} />
       <div className="view-grid">
         {views.map(([v, label]) => (
           <button key={v} onClick={() => viewer.view(v)}>{label}</button>
@@ -65,11 +78,19 @@ interface InfoProps {
   facts: Facts | null;
   properties: PropertySet[];
   onClear: () => void;
+  width: number;
+  height: number;
+  onResize: (size: { width?: number; height?: number }) => void;
+  onResetSize: () => void;
 }
 
-export function InfoCard({ fileName, schema, picked, facts, properties, onClear }: InfoProps) {
+export function InfoCard({ fileName, schema, picked, facts, properties, onClear, width, height, onResize, onResetSize }: InfoProps) {
   return (
-    <div className="float info-card">
+    <div className="float info-card" style={{ width, maxHeight: height }}>
+      {/* Anchored bottom-left, so the card grows to the right and upwards from its top-right corner. */}
+      <Resizer className="resizer-inspector" label="Inspector size" onReset={onResetSize}
+        width={{ value: width, dir: 1, ...PANEL_RANGE.inspectorW, onChange: (w) => onResize({ width: w }) }}
+        height={{ value: height, dir: -1, ...PANEL_RANGE.inspectorH, onChange: (h) => onResize({ height: h }) }} />
       <div className="info-title" title={fileName}>{fileName}</div>
       <div className="muted small">{schema || "IFC"} · m</div>
       <div className="info-sep" />

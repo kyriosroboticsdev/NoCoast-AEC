@@ -56,8 +56,30 @@ code, pre, .mono, .guid { font-family: "Cascadia Code", Consolas, ui-monospace, 
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .content { flex: 1; display: flex; min-height: 0; position: relative; }
 
+/* ---------- resizable panels ---------- */
+/* Every panel carries a Resizer (components/Resizer.tsx): an invisible strip along the
+   edge it grows from, which shows a line while hovered, focused or dragged. */
+.resizer { position: absolute; z-index: 12; touch-action: none; outline: none; }
+.resizer::after { content: ""; position: absolute; border-radius: 2px; background: transparent; transition: background 0.12s ease; }
+.resizer:hover::after, .resizer:focus-visible::after, body.resizing .resizer:active::after { background: var(--accent); }
+.resizer:focus-visible::after { background: var(--accent-text); }
+/* vertical handles resize a width, horizontal ones a height */
+.resizer-sidebar, .resizer-assistant, .resizer-viewtools { top: 0; bottom: 0; width: 11px; }
+.resizer-sidebar::after, .resizer-assistant::after, .resizer-viewtools::after { top: 0; bottom: 0; left: 50%; width: 2px; margin-left: -1px; }
+.resizer-sidebar { right: -6px; }
+.resizer-assistant { left: -6px; }
+.resizer-viewtools { left: -6px; top: 8px; bottom: 8px; }
+.resizer-card { left: 0; right: 0; bottom: -6px; height: 11px; }
+.resizer-card::after { left: 25%; right: 25%; top: 50%; height: 2px; margin-top: -1px; }
+/* the inspector is anchored bottom-left, so it is resized from its top-right corner */
+.resizer-inspector { top: -7px; right: -7px; width: 18px; height: 18px; }
+.resizer-inspector::after { inset: 5px; border-radius: 50%; background: var(--line); }
+.resizer-inspector:hover::after, .resizer-inspector:focus-visible::after { background: var(--accent); }
+body.resizing { user-select: none; }
+body.resizing * { cursor: var(--drag-cursor, col-resize) !important; }
+
 /* ---------- sidebar ---------- */
-.sidebar { width: 272px; flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--bg); padding: 14px 12px 12px; gap: 4px; }
+.sidebar { position: relative; width: 272px; flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--bg); padding: 14px 12px 12px; gap: 4px; }
 .sidebar-head { display: flex; align-items: center; gap: 2px; padding: 2px 4px 10px 8px; }
 .logo { flex: 1; font-weight: 750; font-size: 17px; letter-spacing: -0.02em; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .logo-mark { color: var(--accent); font-size: 15px; }
@@ -285,7 +307,7 @@ pre.code { margin: 8px 0 0; max-height: 320px; overflow: auto; font-size: 12px; 
 .layer-badge { font-size: 11px; font-weight: 600; color: var(--accent-text); background: var(--accent-soft); border-radius: 999px; padding: 1px 7px; white-space: nowrap; }
 
 /* --- Version turn cards (@nocoast/ifc-viewer) inside assistant results --- */
-.turn-card { margin-top: 10px; }
+.turn-card { position: relative; margin-top: 10px; }
 .turn-card .ncv-card { border-radius: 10px; }
 .turn-card.viewing .ncv-card { box-shadow: 0 0 0 2px var(--accent); }
 .version-bar { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12.5px; }

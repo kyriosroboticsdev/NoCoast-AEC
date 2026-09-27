@@ -2,10 +2,12 @@ import { IfcTurnCard } from "@nocoast/ifc-viewer";
 import { ChevronDown, ChevronUp, Code, Database, Eye, ListChecks, RotateCcw, Sparkles, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { getSpec, type Version } from "../api/client";
+import { PANEL_RANGE } from "../state/layout";
 import type { Message, Session } from "../state/sessions";
 import { turnId } from "../turns";
 import { Composer } from "./Composer";
 import { Reasoning } from "./Reasoning";
+import { Resizer } from "./Resizer";
 
 interface Props {
   session: Session;
@@ -22,9 +24,20 @@ interface Props {
   viewing: string | null;
   onView: (v: Version) => void;
   onRestore: (n: number) => void;
+  /** Panel width and turn-card height, both dragged by the user (state/layout.ts). */
+  width: number;
+  onResize: (width: number) => void;
+  onResetWidth: () => void;
+  cardHeight: number;
+  onResizeCard: (height: number) => void;
+  onResetCard: () => void;
 }
 
-export function Assistant({ session, busy, viewing, onView, onRestore, ...composer }: Props) {
+export function Assistant({
+  session, busy, viewing, onView, onRestore,
+  width, onResize, onResetWidth, cardHeight, onResizeCard, onResetCard,
+  ...composer
+}: Props) {
   const head = session.project?.head ?? null;
   const latest = [...session.messages].reverse().find((m) => m.run?.version)?.id;
   const scroller = useRef<HTMLDivElement>(null);
@@ -36,7 +49,9 @@ export function Assistant({ session, busy, viewing, onView, onRestore, ...compos
   }, [session.messages, atBottom]);
 
   return (
-    <aside className="assistant">
+    <aside className="assistant" style={{ width }}>
+      <Resizer className="resizer-assistant" label="Assistant width" onReset={onResetWidth}
+        width={{ value: width, dir: -1, ...PANEL_RANGE.assistant, onChange: onResize }} />
       <div className="chat" ref={scroller}
         onScroll={(e) => {
           const el = e.currentTarget;
@@ -44,7 +59,8 @@ export function Assistant({ session, busy, viewing, onView, onRestore, ...compos
         }}>
         {session.messages.map((m) => (m.role === "user" ? <UserBubble key={m.id} m={m} /> : (
           <AssistantMessage key={m.id} m={m} head={head} busy={busy} latest={m.id === latest}
-            viewing={viewing === `${session.id}:v${m.run?.version?.number}.ifc`} onView={onView} onRestore={onRestore} />
+            viewing={viewing === `${session.id}:v${m.run?.version?.number}.ifc`} onView={onView} onRestore={onRestore}
+            cardHeight={cardHeight} onResizeCard={onResizeCard} onResetCard={onResetCard} />
         )))}
       </div>
       {!atBottom && (
@@ -63,9 +79,10 @@ function UserBubble({ m }: { m: Message }) {
   return <div className="bubble">{m.text}</div>;
 }
 
-function AssistantMessage({ m, head, busy, latest, viewing, onView, onRestore }: {
+function AssistantMessage({ m, head, busy, latest, viewing, onView, onRestore, cardHeight, onResizeCard, onResetCard }: {
   m: Message; head: number | null; busy: boolean; latest: boolean; viewing: boolean;
   onView: (v: Version) => void; onRestore: (n: number) => void;
+  cardHeight: number; onResizeCard: (height: number) => void; onResetCard: () => void;
 }) {
   const run = m.run;
   if (!run) return <div className="answer"><p>{m.text}</p></div>;
@@ -108,7 +125,9 @@ function AssistantMessage({ m, head, busy, latest, viewing, onView, onRestore }:
             </tbody>
           </table>
           <div className={`turn-card ${viewing ? "viewing" : ""}`}>
-            <IfcTurnCard turnId={turnId(v)} height={170} liveOn={latest ? "visible" : "hover"} onExpand={() => onView(v)} />
+            <IfcTurnCard turnId={turnId(v)} height={cardHeight} liveOn={latest ? "visible" : "hover"} onExpand={() => onView(v)} />
+            <Resizer className="resizer-card" label="Version card height" onReset={onResetCard}
+              height={{ value: cardHeight, dir: 1, ...PANEL_RANGE.turnCard, onChange: onResizeCard }} />
           </div>
           <div className="version-bar">
             <span className="muted">{v.number === head ? "Current version" : `Head is v${head}`}</span>
