@@ -19,7 +19,7 @@ from shapely.affinity import rotate
 from shapely.geometry import Polygon, box
 
 from core.derive import DesignError, analyze
-from core.review import TOILET, Model
+from core.review import TOILET, Model, opening_width
 from schemas.bim import BuildingSpec, Fixture
 from schemas.design import Design, DoorDef, RoomDef, StairDef
 from schemas.steps import Step, StepError, apply_step
@@ -117,6 +117,12 @@ def _need(check: dict) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def _need_width(check: dict) -> float:
+    """The total exit width a door-width clause asks for, in metres (0 when it states none)."""
+    m = re.search(r"≥\s*([\d,]+) mm total", check.get("target", ""))
+    return int(m.group(1).replace(",", "")) / 1000 if m else 0.0
+
+
 def _exits(design: Design, taken: list[tuple[float, float]]) -> Iterable[dict]:
     """New ground-floor exits, best first: the outer side furthest from the exits already there, a pair of
     leaves mid-wall, then nearer the corners, then a single leaf."""
@@ -177,10 +183,24 @@ def remedies(checks: list[dict], spec: BuildingSpec, design: Design) -> dict[str
             continue
         cid, steps = c["id"], []
         if cid in ("egress.door-width", "access.entrance"):
+            widened = set()
             for e in c["elements"]:
                 if e in doors:
-                    steps.append(trial.first([_door(doors[e], kind="double", width=EXIT_LEAF,
-                                                    why="a pair of leaves so the exit clears the width its occupant load needs")]))
+                    step = trial.first([_door(doors[e], kind="double", width=EXIT_LEAF,
+                                              why="a pair of leaves so the exit clears the width its occupant load needs")])
+                    steps.append(step)
+                    if step:
+                        widened.add(e)
+            need = _need_width(c)
+            ext = m.exterior_doors(order[0] if order else None)
+            capacity = sum(EXIT_LEAF - 0.1 if d.id in widened else opening_width(d) for d in ext)
+            while need and capacity < need - 1e-6:
+                step = trial.first(_exits(trial.design, taken))
+                if not step:
+                    break
+                steps.append(step)
+                taken.append(_centre(trial.design.room(step["room"])))
+                capacity += step["width"] - (0.1 if step["kind"] == "double" else 0.09)
         elif cid == "egress.exits":
             for _ in range(max(0, (_need(c) or 0) - len(taken))):
                 step = trial.first(_exits(trial.design, taken))
