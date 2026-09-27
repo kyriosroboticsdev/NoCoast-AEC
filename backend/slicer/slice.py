@@ -20,23 +20,24 @@ import ifcopenshell.geom
 import ifcopenshell.util.element
 
 from ifc.assets import BRICK_PSET
+from schemas.brick_types import PHASES as PHASE_ORDER, Phase
 
 Point3 = tuple[float, float, float]
 Segment = tuple[float, float, float, float]  # x1, y1, x2, y2
 
-# Construction phases, in build order — mirrors ifc/builder.py's BUILDERS.
-PHASES: list[tuple[str, tuple[str, ...]]] = [
-    ("foundation", ("IfcSlab",)),
-    ("structure", ("IfcWall", "IfcColumn", "IfcBeam", "IfcStair")),
-    ("roof", ("IfcRoof",)),
-    ("plumbing", ("IfcPipeSegment", "IfcCableCarrierSegment")),  # water riser + electrical conduit stack, both rough-in
-    ("mechanical", ()),
-    ("spaces", ("IfcSpace",)),
-    ("electrical", ("IfcOutlet", "IfcElectricDistributionBoard", "IfcCableSegment")),
-    ("details", ("IfcDoor", "IfcWindow", "IfcRailing", "IfcFurniture", "IfcSanitaryTerminal", "IfcElectricAppliance",
-                "IfcBuildingElementProxy", "IfcLightFixture")),
-    ("site", ()),
-]
+# IFC classes of the derived (non-brick) elements per construction phase; bricks carry their phase in
+# their pset. The order is schemas.brick_types.PHASES.
+CLASSES: dict[Phase, tuple[str, ...]] = {
+    "foundation": ("IfcSlab",),
+    "structure": ("IfcWall", "IfcColumn", "IfcBeam", "IfcStair"),
+    "roof": ("IfcRoof",),
+    "plumbing": ("IfcPipeSegment", "IfcCableCarrierSegment"),  # water riser + electrical conduit stack, both rough-in
+    "spaces": ("IfcSpace",),
+    "electrical": ("IfcOutlet", "IfcElectricDistributionBoard", "IfcCableSegment"),
+    "details": ("IfcDoor", "IfcWindow", "IfcRailing", "IfcFurniture", "IfcSanitaryTerminal", "IfcElectricAppliance",
+                "IfcBuildingElementProxy", "IfcLightFixture"),
+}
+PHASES: list[tuple[Phase, tuple[str, ...]]] = [(p, CLASSES.get(p, ())) for p in PHASE_ORDER]
 
 
 @dataclass

@@ -20,31 +20,31 @@ import config
 from ifc.builder import compile_ifc
 from schemas.bim import (Asset, Beam, BuildingSpec, Column, CustomFixture, Door, Element, Fixture, LightFixture, Outlet,
                           Panel, Pipe, Railing, Roof, Slab, Space, Stair, Wall, Window, Wire)
+from schemas.brick_types import PHASES, Phase
 from store.db import VersionData
 
 CONSTRUCTION_DIR = config.OUTPUT_DIR / "construction"  # served by the /models static mount
 JOB_TTL = 1800           # seconds before a finished job's files and status are dropped
 STEP_SECONDS = 0.2       # backend pace between steps; independent of how often a client polls
 
-# Construction phases, in build order — mirrors ifc/builder.py's BUILDERS. Library bricks (Asset) carry
-# their own phase, so a footing goes in with the foundation and a tree with the site works at the end.
-PHASES: list[tuple[str, tuple[type, ...]]] = [
-    ("foundation", (Slab,)),
-    ("structure", (Wall, Column, Beam, Stair)),
-    ("roof", (Roof,)),
-    ("plumbing", (Pipe,)),
-    ("mechanical", ()),
-    ("spaces", (Space,)),
-    ("electrical", (Outlet, Panel, Wire)),
-    ("details", (Door, Window, Railing, Fixture, CustomFixture, LightFixture)),
-    ("site", ()),
-]
+# Element types per construction phase, built in schemas.brick_types.PHASES order — mirrors ifc/builder.py's
+# BUILDERS. Library bricks (Asset) carry their own phase, so a footing goes in with the foundation and a tree
+# with the site works at the end.
+KINDS: dict[Phase, tuple[type, ...]] = {
+    "foundation": (Slab,),
+    "structure": (Wall, Column, Beam, Stair),
+    "roof": (Roof,),
+    "plumbing": (Pipe,),
+    "spaces": (Space,),
+    "electrical": (Outlet, Panel, Wire),
+    "details": (Door, Window, Railing, Fixture, CustomFixture, LightFixture),
+}
 
 
-def phase_of(el: Element) -> str:
+def phase_of(el: Element) -> Phase:
     if isinstance(el, Asset):
         return el.phase
-    return next(label for label, kinds in PHASES if isinstance(el, kinds))
+    return next(phase for phase, kinds in KINDS.items() if isinstance(el, kinds))
 
 
 def _elevation(spec: BuildingSpec, el: Element) -> float:
@@ -61,8 +61,8 @@ def _elevation(spec: BuildingSpec, el: Element) -> float:
 def build_order(spec: BuildingSpec) -> list[Element]:
     """Elements in the order they'd really go up: by construction phase, bottom to top within it."""
     ordered: list[Element] = []
-    for label, _ in PHASES:
-        step = [el for el in spec.elements if phase_of(el) == label]
+    for phase in PHASES:
+        step = [el for el in spec.elements if phase_of(el) == phase]
         step.sort(key=lambda el: _elevation(spec, el))
         ordered += step
     return ordered

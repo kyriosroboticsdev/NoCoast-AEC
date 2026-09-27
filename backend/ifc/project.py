@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import get_args
 
 import numpy as np
 import ifcopenshell
@@ -20,6 +21,7 @@ import ifcopenshell.api.unit
 
 from core.guids import GuidMap, ensure_guids, key_for_element, key_for_level
 from schemas.bim import BuildingSpec
+from schemas.brick_types import Finish
 
 SPEC_PSET = "NoCoast_Spec"      # carries the element's spec JSON so our own files can be lifted back losslessly
 DESIGN_PSET = "NoCoast_Design"  # on IfcBuilding: the semantic design the spec was derived from
@@ -55,21 +57,6 @@ STYLES = {
     "Light": ((1.00, 0.97, 0.80), 0.0),
     "Panel": ((0.28, 0.29, 0.31), 0.0),
     "Wire": ((0.85, 0.65, 0.13), 0.0),
-    "Asset:wood": ((0.62, 0.45, 0.30), 0.0),
-    "Asset:soft": ((0.52, 0.55, 0.62), 0.0),
-    "Asset:sanitary": ((0.95, 0.95, 0.97), 0.0),
-    "Asset:appliance": ((0.82, 0.82, 0.84), 0.0),
-    "Asset:metal": ((0.58, 0.60, 0.63), 0.0),
-    "Asset:glass": ((0.55, 0.75, 0.90), 0.5),
-    "Asset:concrete": ((0.72, 0.72, 0.72), 0.0),
-    "Asset:plant": ((0.30, 0.55, 0.28), 0.0),
-    "Asset:water": ((0.35, 0.62, 0.85), 0.35),
-    "Asset:stone": ((0.60, 0.58, 0.55), 0.0),
-    "Asset:device": ((0.90, 0.90, 0.88), 0.0),
-    "Asset:duct": ((0.70, 0.73, 0.76), 0.0),
-    "Asset:solar": ((0.12, 0.16, 0.30), 0.0),
-    "Asset:fire": ((0.80, 0.12, 0.12), 0.0),
-    "Asset:car": ((0.70, 0.15, 0.15), 0.0),
 }
 MATERIALS = {"Wall": "Masonry", "Wall:masonry": "Masonry", "Wall:concrete": "Concrete", "Wall:timber": "Timber",
              "Wall:plaster": "Plaster", "Wall:stone": "Stone", "Wall:glass": "Glass", "Slab": "Concrete",
@@ -77,10 +64,29 @@ MATERIALS = {"Wall": "Masonry", "Wall:masonry": "Masonry", "Wall:concrete": "Con
              "Beam": "Timber", "Stair": "Timber", "Railing": "Steel", "Fixture:wood": "Timber", "Fixture:soft": "Fabric",
              "Fixture:sanitary": "Ceramic", "Fixture:appliance": "Steel", "Fixture:car": "Steel", "Fixture:fire": "Stone",
              "Pipe:water": "Copper", "Pipe:electrical": "Steel", "Outlet": "Plastic", "Light": "Plastic",
-             "Panel": "Steel", "Wire": "Plastic", "Asset:wood": "Timber", "Asset:soft": "Fabric", "Asset:sanitary": "Ceramic",
-             "Asset:appliance": "Steel", "Asset:metal": "Steel", "Asset:glass": "Glass", "Asset:concrete": "Concrete",
-             "Asset:plant": "Vegetation", "Asset:water": "Water", "Asset:stone": "Stone", "Asset:device": "Plastic",
-             "Asset:duct": "Galvanised steel", "Asset:solar": "Glass", "Asset:fire": "Steel", "Asset:car": "Steel"}
+             "Panel": "Steel", "Wire": "Plastic"}
+
+# Library brick finishes: style "Asset:<finish>" -> (rgb, transparency, material).
+FINISHES: dict[Finish, tuple[tuple[float, float, float], float, str]] = {
+    "wood": ((0.62, 0.45, 0.30), 0.0, "Timber"),
+    "soft": ((0.52, 0.55, 0.62), 0.0, "Fabric"),
+    "sanitary": ((0.95, 0.95, 0.97), 0.0, "Ceramic"),
+    "appliance": ((0.82, 0.82, 0.84), 0.0, "Steel"),
+    "metal": ((0.58, 0.60, 0.63), 0.0, "Steel"),
+    "glass": ((0.55, 0.75, 0.90), 0.5, "Glass"),
+    "concrete": ((0.72, 0.72, 0.72), 0.0, "Concrete"),
+    "plant": ((0.30, 0.55, 0.28), 0.0, "Vegetation"),
+    "water": ((0.35, 0.62, 0.85), 0.35, "Water"),
+    "stone": ((0.60, 0.58, 0.55), 0.0, "Stone"),
+    "device": ((0.90, 0.90, 0.88), 0.0, "Plastic"),
+    "duct": ((0.70, 0.73, 0.76), 0.0, "Galvanised steel"),
+    "solar": ((0.12, 0.16, 0.30), 0.0, "Glass"),
+    "fire": ((0.80, 0.12, 0.12), 0.0, "Steel"),
+    "car": ((0.70, 0.15, 0.15), 0.0, "Steel"),
+}
+assert set(FINISHES) == set(get_args(Finish)), "every brick finish needs a style"
+STYLES |= {f"Asset:{name}": (rgb, alpha) for name, (rgb, alpha, _) in FINISHES.items()}
+MATERIALS |= {f"Asset:{name}": material for name, (_, _, material) in FINISHES.items()}
 
 
 @dataclass
