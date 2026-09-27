@@ -18,7 +18,7 @@ from agents import shapes
 from agents.brick_words import mentioned_bricks
 from agents.template_planner import brick_steps, parse_requirements, site_steps, template_steps
 from core.derive import DesignError, analyze
-from llm.base import LLMRequest, OnNote, OnText
+from llm.base import LLMRequest, OnNote, OnText, OnThinking
 from schemas.bim import FixtureKind
 from schemas.design import Design, RoomDef, slug
 from schemas.research import MAX_CALLS
@@ -68,11 +68,74 @@ def approach_for(prompt: str, steps: list[dict]) -> str:
     return f"The parti: {strategy}. {circ}{light}Service rooms and the garage take the sides that get the least sun."
 
 
+PUBLIC = {"office", "meeting", "reception", "classroom", "retail", "cafe", "clinic", "lab", "workshop", "gym",
+          "auditorium", "ward", "warehouse"}
+
+
+def _why(steps: list[dict], kinds: tuple[str, ...], n: int = 2) -> list[str]:
+    whys = [s["why"].strip() for s in steps if s.get("step") in kinds and isinstance(s.get("why"), str) and s["why"].strip()]
+    return [w[0].upper() + w[1:] + ("" if w.endswith(".") else ".") for w in dict.fromkeys(whys)][:n]
+
+
+def thinking_for(schema: str, prompt: str, reply: dict, meta: dict | None = None) -> str:
+    """The mock's stand-in for a thinking model's summarised reasoning, so the offline planner narrates
+    its design the way a real model does: brief, parti, zoning, circulation, envelope, code."""
+    if schema == "requirements":
+        reqs = [r["text"] for r in reply.get("requirements", [])]
+        return ("**Reading the brief**\n\nI count " + str(len(reqs)) + " things the client asked for: "
+                + "; ".join(reqs[:8]) + ". Each becomes a check the finished model is measured against.")
+    if schema != "build":
+        return ""
+    steps = reply.get("steps", [])
+    meta = meta or {}
+    problems = [re.sub(r"^step \d+ \{.*?\}: |applying this step makes the design unbuildable: ", "", str(p))
+                for k in ("problems", "unmet", "issues", "seen") for p in (meta.get(k) or [])]
+    if problems or meta.get("editing"):
+        head = ("**Reworking what did not land**\n\n" + " ".join(f"{p.rstrip('.')}." for p in problems[:3]) + " "
+                if problems else "**Reading the change against the current design**\n\n")
+        whys = _why(steps, ("room", "layout", "door", "window", "stair", "furniture", "element", "roof", "remove"), 3)
+        return head + (" ".join(whys) or (f"{len(steps)} targeted move(s); the rest of the model stays as it is." if steps
+                                          else "Nothing worth forcing: the model stands as built and the gap is reported."))
+    plates = [s for s in steps if s.get("step") == "layout"]
+    rooms = [r for p in plates for r in (p.get("rooms") or [])]
+    area = sum(float(r["rect"][2]) * float(r["rect"][3]) for r in rooms if len(r.get("rect") or []) == 4)
+    public = any(r.get("kind") in PUBLIC for r in rooms)
+    zoning = []
+    for p in plates:
+        names = [r.get("name") or r.get("id") for r in p.get("rooms") or []]
+        level = {"L1": "Ground floor", "L2": "First floor", "L3": "Second floor"}.get(str(p.get("level")), str(p.get("level")))
+        zoning.append(f"{level}: {', '.join(names)}")
+    paras = [
+        "**Reading the site and brief**\n\n" + (f"About {area:.0f} m² of net floor area across {len(plates)} plate"
+                                                 f"{'s' if len(plates) != 1 else ''}. " if area else "")
+        + ("A non-domestic building, so it is designed to the IBC: occupancy by use, exits by occupant load, "
+           "accessible route to every public room." if public else
+           "A dwelling, so the IRC governs: habitable room sizes, stair geometry, daylight and escape openings."),
+        "**Parti and massing**\n\n" + reply["approach"],
+    ]
+    if zoning:
+        paras.append("**Zoning the plates**\n\n" + ". ".join(zoning) + ". Public and shared rooms sit at grade next to "
+                     "the entrance; quiet and private rooms go upstairs or to the back.")
+    for title, kinds in (("Circulation and egress", ("door", "stair")), ("Envelope and daylight", ("window", "roof"))):
+        whys = _why(steps, kinds)
+        if whys:
+            paras.append(f"**{title}**\n\n" + " ".join(whys))
+    paras.append("**Checking it against the code before drawing**\n\n" + (
+        "IBC 1005.3.2 wants 5 mm of door width per occupant and 1006.3.3 a second exit above 49 occupants; "
+        "Table 2902.1 sets the WC count and ADA 404.2.3 an 815 mm clear door into every public room. "
+        if public else
+        "IRC R311.7.5 caps the riser at 196 mm with a 254 mm minimum tread, R303.1 wants glazing of 8 % of each "
+        "habitable floor and R310 an escape window in every bedroom. ")
+        + "Designed to those numbers, the code screen after compile should come back without failures.")
+    return "\n\n".join(paras)
+
+
 class MockLLM:
     name = "mock"
     vision = True
 
-    def complete(self, request: LLMRequest, on_text: OnText | None = None, on_note: OnNote | None = None) -> dict:
+    def complete(self, request: LLMRequest, on_text: OnText | None = None, on_note: OnNote | None = None,
+                 on_thinking: OnThinking | None = None) -> dict:
         prompt: str = request.meta.get("prompt", request.user)
         if request.schema_name == "requirements":
             reply = {"summary": prompt[:80], "requirements": [r.model_dump(exclude_none=True) for r in parse_requirements(prompt)]}
@@ -90,7 +153,15 @@ class MockLLM:
             reply = {"approach": approach_for(prompt, reply["steps"]), **reply}
         else:
             raise ValueError(f"mock has no answer for schema '{request.schema_name}'")
-        if on_text:
+        thought = thinking_for(request.schema_name, prompt, reply, request.meta) if on_thinking else ""
+        if thought:
+            words = thought.split(" ")
+            slices = max(1, STREAM_STEPS // 2)
+            for i in range(1, slices + 1):
+                on_thinking(" ".join(words[: len(words) * i // slices]))
+                if STREAM_DELAY:
+                    time.sleep(STREAM_DELAY)
+        if on_text and request.schema_name == "build":
             text = json.dumps(reply)
             for i in range(1, STREAM_STEPS + 1):
                 on_text(text[: len(text) * i // STREAM_STEPS])
