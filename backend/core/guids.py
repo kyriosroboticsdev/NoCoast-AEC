@@ -69,28 +69,3 @@ def prune_guids(geo: GeoModel, guids: GuidMap) -> GuidMap:
     not: re-adding is a new element)."""
     live = set(model_keys(geo))
     return {k: v for k, v in guids.items() if k in live}
-
-
-# --- the room-centric spec, during the changeover -----------------------------
-# These two keep the old BuildingSpec builders compiling while the generic layer is wired up.
-# They go with the rest of the room layer.
-
-def key_for_element(element_id: str) -> str:
-    return f"element:{element_id}"
-
-
-def ensure_spec_guids(spec, existing: GuidMap | None = None) -> GuidMap:
-    guids: GuidMap = dict(existing or {})
-    keys = list(FIXED_KEYS) + [key_for_level(l.id) for l in spec.levels]
-    for el in spec.elements:
-        keys.append(key_for_element(el.id))
-        if el.type in ("door", "window") or (el.type == "stair" and el.to_level):
-            keys.append(key_for_opening(el.id))
-    for key in keys:
-        guids.setdefault(key, ifcopenshell.guid.new())
-    return guids
-
-
-def prune_spec_guids(spec, guids: GuidMap) -> GuidMap:
-    live = ensure_spec_guids(spec, {})
-    return {k: v for k, v in guids.items() if k in live}

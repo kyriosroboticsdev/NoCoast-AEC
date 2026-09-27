@@ -1,26 +1,22 @@
-"""End-to-end backend checks: prompt → spec → IFC that reopens and tessellates."""
+"""Prompt and handwritten spec → IFC that reopens and tessellates."""
 
 import ifcopenshell
 import pytest
 from fastapi.testclient import TestClient
 
-from agents.template_planner import TemplatePlanner
 from api.routes import OUTPUT_DIR
 from main import app
 from schemas.bim import BuildingSpec
 
 client = TestClient(app)
 
-SPEC_PROMPT = ("Create a two-story rectangular house. The first floor should have a kitchen and living room. "
-               "The second floor should have three bedrooms. Add windows to the exterior walls and a garage.")
-
 PROMPTS = [
-    SPEC_PROMPT,
-    "Create a two-story house with four bedrooms, a garage, and a flat roof.",
-    "A small one storey cabin",
-    "Design a modern two-story house with lots of natural light and a front porch.",
-    "Three storey house, 40 by 30 feet, with a kitchen, dining room, office and five bedrooms",
-    "A gable roof cottage with 2 bathrooms",
+    "a stone dome",
+    "a barrel vault",
+    "an underground tunnel",
+    "a helical stair",
+    "a bridge with piers and a curved deck",
+    "a small one storey cabin",
 ]
 
 
@@ -32,18 +28,22 @@ def test_generate(prompt):
     model = ifcopenshell.open(str(OUTPUT_DIR / f"{body['id']}.ifc"))
     assert model.schema == "IFC4"
     assert len(model.by_type("IfcProject")) == 1
-    assert model.by_type("IfcWall") and model.by_type("IfcSlab") and model.by_type("IfcRoof")
+    assert any(getattr(p, "Representation", None) for p in model.by_type("IfcProduct"))
     assert client.get(body["ifc_url"]).status_code == 200
 
 
-def test_spec_prompt_interpretation():
-    plan = TemplatePlanner().plan(SPEC_PROMPT)
-    rooms = {l.id: [e.name for e in plan.spec.elements if e.type == "space" and e.level == l.id] for l in plan.spec.levels}
-    assert len(plan.spec.levels) == 2
-    assert {"Kitchen", "Living Room", "Garage"} <= set(rooms["L1"])
-    assert {"Bedroom 1", "Bedroom 2", "Bedroom 3"} <= set(rooms["L2"])
-    assert not plan.notes or all("garage door" in n for n in plan.notes), plan.notes  # every template step applies
-    assert any(e.type == "stair" for e in plan.spec.elements)
+def test_plan_is_a_card_not_a_house():
+    r = client.post("/plan", json={"prompt": "a stone dome"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["planner"] == "cards"
+    assert body["model"]["parts"][0]["ifc"] == "IfcRoof"
+    assert r.json()["model"]["parts"][0]["name"] == "dome"
+
+
+def test_unknown_prompt_is_not_given_a_house():
+    r = client.post("/plan", json={"prompt": "qqqq xxxx"})
+    assert r.status_code == 422
 
 
 def test_invalid_spec_is_rejected():
@@ -91,30 +91,21 @@ def test_build_new_element_kinds():
     assert r.status_code == 200, r.text
     assert r.json()["summary"]["counts"] == {"IfcBeam": 1, "IfcFurniture": 1, "IfcRailing": 1, "IfcRoof": 2, "IfcSlab": 1, "IfcStair": 1, "IfcWall": 1}
     model = ifcopenshell.open(str(OUTPUT_DIR / f"{r.json()['id']}.ifc"))
-    slab = model.by_type("IfcSlab")[0]
-    assert slab.HasOpenings and slab.HasOpenings[0].RelatedOpeningElement.Name == "s well"
+    openings = model.by_type("IfcOpeningElement")
+    assert openings and "well" in openings[0].Name
+    assert model.by_type("IfcSlab")[0].HasOpenings
     assert {roof.PredefinedType for roof in model.by_type("IfcRoof")} == {"GABLE_ROOF", "HIP_ROOF"}
     bad = spec.model_dump()
     bad["elements"][1]["outline"] = [[0, 0], [8, 0], [8, 6], [4, 6], [4, 3], [0, 3]]
-    assert client.post("/build", json={"spec": bad}).status_code == 422  # gable needs a rectangle
+    assert client.post("/build", json={"spec": bad}).status_code == 422
 
 
-def test_focus_describes_selection_and_mock_acts_on_it(tmp_path):
+def test_focus_names_the_part():
     from core.context import describe_focus
-    from schemas.design import Design, LevelDef, RoomDef, DoorDef
+    from schemas.geo import GeoModel, GeoPart, Solid, Profile
 
-    d = Design(levels=[LevelDef(id="L1")], rooms=[RoomDef(id="hall", name="Hall", level="L1", kind="hall", rect=(0, 0, 4, 6)),
-                                                RoomDef(id="kitchen", name="Kitchen", level="L1", kind="kitchen", rect=(4, 0, 4, 6))],
-               doors=[DoorDef(id="door-kitchen-hall", room="kitchen", to="hall")])
-    assert describe_focus(d, "L1-wall-hall-W") == "the west exterior wall of the Hall (L1) (wall id L1-wall-hall-W; side=W)"
-    assert describe_focus(d, "L1-wall-hall+kitchen").startswith("the partition wall between the Hall (L1) and the Kitchen (L1)")
-    assert describe_focus(d, "L1-space-kitchen") == "the room the Kitchen (L1) (room id kitchen)"
-    assert describe_focus(d, "door-kitchen-hall") == "the door door-kitchen-hall of the Kitchen (L1) to the Hall (L1)"
-    assert describe_focus(d, "L1-floor") == "the floor slab of level L1"
-    assert describe_focus(d, "something-else") == "the element something-else"
-
-    from llm.mock import MockLLM
-    steps = MockLLM()._edit("add a window", d, describe_focus(d, "L1-wall-hall-W"))
-    assert steps == [{"step": "window", "room": "hall", "side": "W", "kind": "standard"}]
-    steps = MockLLM()._edit("remove this", d, describe_focus(d, "door-kitchen-hall"))
-    assert steps == [{"step": "remove", "id": "door-kitchen-hall"}]
+    geo = GeoModel(parts=[GeoPart(id="wall-l1-south", name="south wall", ifc="IfcWall", ifc_type="SOLIDWALL",
+                                  solids=[Solid(op="extrude", profile=Profile(rect=(6, 0.2)), depth=3)])])
+    text = describe_focus(geo, "wall-l1-south")
+    assert text is not None and "id=wall-l1-south" in text and "IfcWall" in text
+    assert describe_focus(geo, "missing") == "element id=missing"

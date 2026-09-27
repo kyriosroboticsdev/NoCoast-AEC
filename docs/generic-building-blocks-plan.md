@@ -277,7 +277,8 @@ carrying the whole `GeoModel`. `ifc/lifter.py` reads either: a new file lifts to
 
 This is where the deleted house prior goes, and it is the answer to "no template expander".
 
-`blocks/cards/*.json`, ~25 **recipe cards**. Each card is data, not code:
+`blocks/cards/*.md`, 29 **recipe cards**. Each card is markdown: YAML front matter plus one
+fenced JSON exemplar of GeoSteps. The front matter is:
 
 ```
 id, title, keywords[], tags[],
@@ -450,18 +451,34 @@ parallelising across an unstable interface is how you get four incompatible halv
 
 ## 11. Measured results
 
-*Not yet measured at the time of this first commit. Every figure in this section is filled in
-by a later commit on this branch from an actual run; nothing here is an estimate, and the
-baseline numbers below were taken on `f9722ab` before any code changed.*
-
-**Baselines on `f9722ab` (the room model), measured:**
+**Baselines on `f9722ab` (the room model), measured before this branch changed code:**
 
 * test suite: **110 passed, 33.8 s** (`.venv/bin/python -m pytest`)
 * eval set: **93/136 = 68 %** (`tools/eval.py`, mock provider, 21 cases, 16 requirement kinds)
 
-**To be filled in:** this branch's test count and runtime, this branch's eval score on the new
-geometric eval set with its residential subset broken out, the per-case element counts and file
-sizes from the end-to-end demo, and the deleted/added line counts.
+**This branch, measured:**
+
+* test suite: **62 passed, 40.73 s** (`.venv/bin/python -m pytest`). The room-centric tests were
+  deleted with the room layer; what remains covers the compiler, every recipe card, migration of
+  a handwritten `BuildingSpec`, the streamed project API, ops, lift, checks and the slicer.
+* eval set: **44/45 = 98 %** overall, residential subset **22/23 = 96 %** (`tools/eval.py`, mock
+  provider, 14 cases). The one miss is `round-table`: the mock does not invent furniture, so
+  "a round table" is unmet. That is the capability regression decision 6 accepted, visible as a
+  number. Every other case — the house, the cabin, the party wall, the dome, the vault, the
+  tunnel, the helical stair, the bridge — was met.
+* end-to-end demo (`tools/demo_geometry.py`), each file reopened and fully tessellated:
+
+  | case | elements | vertices | triangles | bytes |
+  |---|---:|---:|---:|---:|
+  | dome (revolve) | 1 | 7607 | 15210 | 6965 |
+  | barrel vault (revolve) | 1 | 2702 | 5400 | 6411 |
+  | tunnel (sweep) | 1 | 192 | 384 | 112407 |
+  | helical stair (repeat) | 1 | 144 | 216 | 17382 |
+  | bridge (4 piers, curved deck, assembly) | 6 | 60 | 100 | 31746 |
+  | house (regression) | 28 | 396 | 640 | 88384 |
+
+* diff against `f9722ab`: **90 files changed, +8304 / −6805**. The room layer (`derive.py`,
+  `schemas/design.py`, `schemas/steps.py`, `solver/`, the type-specific `ifc/*` builders) is gone.
 
 ## 12. Risks accepted
 

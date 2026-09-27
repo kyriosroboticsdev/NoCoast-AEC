@@ -1,10 +1,8 @@
 """Requirements — the checklist extracted from a prompt before anything is built.
 
-The model turns the request into a flat list of atomic requirements, each tagged with
-a `kind` the checker (core/checks.py) knows how to verify against the finished
-design. Requirements the system cannot honour are flagged `supported=false` and
-surfaced to the user instead of being silently dropped. The same format is used by
-the evaluation set (tests/evals) so accuracy can be measured.
+Kinds are geometric. A requirement points at elements with a selector (`ifc`, `name`,
+`level`, `id`) and asks a question the checker can answer from the compiled model.
+`supported=false` is how the model records a wish the geometry cannot express.
 """
 
 from __future__ import annotations
@@ -14,22 +12,23 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 RequirementKind = Literal[
-    "storeys",      # value = number of storeys
-    "room",         # room (name or kind keyword) exists; value = how many (default 1); level optional
-    "room_level",   # room is on level
-    "area",         # room has about value m² (±25 %)
-    "adjacent",     # room and room2 share a wall
-    "orientation",  # room has an exterior wall on side
-    "window",       # room has >= value windows (on side if given)
-    "door",         # a door connects room and room2 ('outside' allowed)
-    "stair",        # a stair exists (in room if given)
-    "furniture",    # item (furniture kind) exists (in room if given), value = count
-    "roof",         # roof kind == item
-    "feature",      # item in: garage, porch, balcony, open_plan
-    "dimension",    # footprint about value x value2 metres
-    "material",     # exterior walls use item
-    "style",        # not checkable (aesthetics, mood) — reported as informational
-    "other",        # anything else that cannot be verified automatically
+    "count",       # how many elements match; value is the minimum (default 1)
+    "entity",      # at least `value` of an IFC entity, subtypes included
+    "extent",      # bounding size along axis (x|y|z|longest|shortest) ≈ value
+    "elevation",   # base or top (which) ≈ value
+    "span",        # largest gap between supports under the selection ≈ value
+    "clearance",   # free height under the selection ≥ value
+    "enclosed",    # fraction of the footprint closed by other solids ≥ value
+    "connects",    # two selections touch; the second is ifc2/name2
+    "supported",   # every selected element has something beneath it, or sits on the ground
+    "opening",     # voids cut into the selection ≥ value
+    "volume",      # total solid volume ≈ value
+    "area",        # total plan footprint ≈ value
+    "curved",      # the selection is revolved, swept or faceted rather than a prism
+    "levels",      # number of above-ground storeys == value
+    "material",    # a selection's material name contains item
+    "style",       # not checkable
+    "other",       # not checkable
 ]
 
 
@@ -38,14 +37,18 @@ class Requirement(BaseModel):
 
     text: str = Field(description="The requirement in the user's words, one atomic statement")
     kind: RequirementKind
-    room: Optional[str] = Field(None, description="Room name or kind keyword ('bedroom', 'Master Bedroom')")
-    room2: Optional[str] = Field(None, description="adjacent/door: the other room, or 'outside'")
-    level: Optional[str] = Field(None, description="'L1', 'L2' … when the requirement names a storey")
-    side: Optional[str] = Field(None, description="N|S|E|W when the requirement names a side")
-    item: Optional[str] = Field(None, description="furniture kind, roof kind, feature name or material")
-    value: Optional[float] = Field(None, description="count, area, storeys or width")
-    value2: Optional[float] = Field(None, description="dimension: depth")
-    supported: bool = Field(True, description="false when the system cannot honour it")
+    ifc: Optional[str] = Field(None, description="IFC entity; subtypes match (IfcWall matches IfcWallStandardCase)")
+    name: Optional[str] = Field(None, description="Substring of the element's name")
+    level: Optional[str] = Field(None, description="Level id: L1, L2, B1")
+    id: Optional[str] = Field(None, description="Exact part id")
+    ifc2: Optional[str] = Field(None, description="connects: entity of the second selection")
+    name2: Optional[str] = Field(None, description="connects: name substring of the second selection")
+    value: Optional[float] = Field(None, description="Count, metres, square metres, cubic metres, or a fraction")
+    value2: Optional[float] = Field(None, description="extent: the other plan dimension")
+    axis: Optional[str] = Field(None, description="extent: x, y, z, longest or shortest")
+    which: Optional[str] = Field(None, description="elevation: base or top")
+    item: Optional[str] = Field(None, description="material: the material name to look for")
+    supported: bool = Field(True, description="false when the request cannot be checked or built")
 
     @field_validator("level", mode="before")
     @classmethod
@@ -56,7 +59,7 @@ class Requirement(BaseModel):
             return f"L{v}"
         s = str(v).strip()
         low = s.lower()
-        words = {"ground": "L1", "first": "L1", "downstairs": "L1", "upstairs": "L2", "second": "L2", "third": "L3", "top": None}
+        words = {"ground": "L1", "first": "L1", "downstairs": "L1", "upstairs": "L2", "second": "L2", "third": "L3"}
         if low in words:
             return words[low]
         import re
@@ -64,15 +67,12 @@ class Requirement(BaseModel):
         if b:
             return f"B{int(b.group(1) or 1)}"
         m = re.match(r"^\s*(?:l|level\s*|floor\s*|storey\s*)?(\d+)\s*$", s, re.IGNORECASE)
-        return f"L{int(m.group(1))}" if m else s
+        return f"L{int(m.group(1))}" if m else s.upper() if len(s) <= 3 else s
 
-    @field_validator("side", mode="before")
+    @field_validator("axis", "which", mode="before")
     @classmethod
-    def _side(cls, v):
-        if v is None:
-            return None
-        s = str(v).strip().lower()
-        return {"n": "N", "north": "N", "s": "S", "south": "S", "e": "E", "east": "E", "w": "W", "west": "W"}.get(s, str(v).upper())
+    def _lower(cls, v):
+        return None if v is None else str(v).strip().lower()
 
 
 class RequirementsResponse(BaseModel):

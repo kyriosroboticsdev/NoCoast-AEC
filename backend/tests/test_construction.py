@@ -3,56 +3,51 @@ import time
 import ifcopenshell
 
 from core.construction import ConstructionJob, build_order
-from ifc.builder import compile_ifc
-from schemas.bim import (Beam, Column, Door, Fixture, LightFixture, Outlet, Panel, Pipe, Railing, Roof, Slab, Space,
-                         Stair, Wall, Window, Wire)
+from core.guids import ensure_guids
+from ifc.compile import compile_ifc
+from schemas.geo import GeoModel
+from schemas.geosteps import GeoStep, apply_step
 from store.db import VersionData
-from agents.template_planner import TemplatePlanner
 
 
-def _version(spec, guids) -> VersionData:
+def _geo() -> GeoModel:
+    geo = GeoModel()
+    for raw in (
+        {"step": "part", "id": "slab", "name": "floor", "ifc": "IfcSlab", "ifc_type": "FLOOR",
+         "solid": {"box": [6, 4, 0.2]}},
+        {"step": "part", "id": "wall", "name": "wall", "ifc": "IfcWall", "ifc_type": "SOLIDWALL",
+         "solid": {"wall": [[0, 0], [6, 0]], "thickness": 0.2, "height": 3}},
+        {"step": "part", "id": "roof", "name": "roof", "ifc": "IfcRoof", "ifc_type": "FLAT_ROOF", "at": [0, 0, 3],
+         "solid": {"box": [6, 4, 0.2]}},
+        {"step": "part", "id": "door", "name": "door", "ifc": "IfcDoor", "ifc_type": "DOOR",
+         "solid": {"box": [0.9, 0.05, 2.1]}},
+    ):
+        geo, _ = apply_step(geo, GeoStep.model_validate(raw))
+    return geo
+
+
+def _version(geo, guids) -> VersionData:
     return VersionData(
         project_id="p", number=1, parent=None, prompt=None, mode="design", llm=None, notes=[],
-        summary={}, ops=[], ifc_path="", created=0.0, spec=spec, design=None, guids=guids,
+        summary={}, ops=[], ifc_path="", created=0.0, geo=geo, guids=guids,
     )
 
 
-def test_build_order_is_phase_grouped_and_covers_every_element():
-    spec = TemplatePlanner().plan("two storey house with a kitchen, living room and two bedrooms, a garage and a front porch").spec
-    order = build_order(spec)
-
-    assert {el.id for el in order} == {el.id for el in spec.elements}  # every element appears exactly once
-    kinds = [type(el) for el in order]
-    phase_of = {Slab: 0, Wall: 1, Column: 1, Beam: 1, Stair: 1, Roof: 2, Pipe: 3, Space: 4, Outlet: 5, Panel: 5, Wire: 5,
-                Door: 6, Window: 6, Railing: 6, Fixture: 6, LightFixture: 6}
-    phases = [phase_of[k] for k in kinds]
-    assert phases == sorted(phases)  # foundation -> structure -> roof -> spaces -> details, never out of order
+def test_build_order_is_phase_grouped():
+    order = build_order(_geo())
+    phases = [p.ifc for p in order]
+    assert phases.index("IfcSlab") < phases.index("IfcWall") < phases.index("IfcRoof") < phases.index("IfcDoor")
 
 
-def test_construction_job_writes_one_valid_ifc_file_per_element_and_keeps_guids():
-    spec = TemplatePlanner().plan("one storey cabin").spec
-    _, guids = compile_ifc(spec, {})
-    job = ConstructionJob(_version(spec, guids), step_seconds=0.0)
-
-    deadline = time.perf_counter() + 60  # one compile per element; a cabin with MEP takes ~6 s
+def test_construction_job_writes_one_valid_ifc_per_part():
+    geo = _geo()
+    guids = ensure_guids(geo, {})
+    compile_ifc(geo, guids)
+    job = ConstructionJob(_version(geo, guids), step_seconds=0.0)
+    deadline = time.perf_counter() + 30
     while not job.done and time.perf_counter() < deadline:
         time.sleep(0.05)
-    assert job.done and job.error is None
-    assert job.total == len(spec.elements)
-    assert len(job.urls) == job.total
-
-    last_file = job._dir / f"step-{job.total - 1:04d}.ifc"
-    model = ifcopenshell.open(str(last_file))
-    # the last step has every element the final spec does, and the GlobalIds match the real compile
-    final_model, _ = compile_ifc(spec, guids)
-    tags = lambda m: sorted(p.Tag for p in m.by_type("IfcElement") if not p.is_a("IfcOpeningElement"))  # noqa: E731
-    assert tags(model) == tags(final_model)
-    wall = next(p for p in model.by_type("IfcWall"))
-    final_wall = next(p for p in final_model.by_type("IfcWall") if p.Tag == wall.Tag)
-    assert wall.GlobalId == final_wall.GlobalId
-
-    first_file = job._dir / "step-0000.ifc"
-    first_model = ifcopenshell.open(str(first_file))
-    first_products = [p for p in first_model.by_type("IfcElement") if not p.is_a("IfcOpeningElement")]
-    assert len(first_products) == 1
-    assert first_products[0].is_a("IfcSlab")  # foundation goes up first
+    assert job.done and job.error is None, job.error
+    assert job.index == len(geo.parts) == len(job.urls)
+    last = ifcopenshell.open(str(job._dir / f"step-{job.index - 1:04d}.ifc"))
+    assert len(last.by_type("IfcWall")) == 1 and len(last.by_type("IfcDoor")) == 1

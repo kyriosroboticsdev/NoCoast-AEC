@@ -1,7 +1,6 @@
-"""Planner interface: natural language → Design → BuildingSpec.
+"""Planner interface: natural language → GeoModel.
 
-Any planner (rule-based, local LLM, cloud LLM) implements `plan`. The API and the
-IFC builder only ever see a `PlanResult`, so planners are swappable.
+`/plan` and `/generate` see a PlanResult. There is no house template and no Design.
 """
 
 from __future__ import annotations
@@ -10,15 +9,13 @@ from typing import Protocol
 
 from pydantic import BaseModel
 
-from schemas.bim import BuildingSpec
-from schemas.design import Design
+from schemas.geo import GeoModel
 
 
 class PlanResult(BaseModel):
-    spec: BuildingSpec
+    model: GeoModel
     planner: str
-    design: Design | None = None
-    notes: list[str] = []  # how the prompt was interpreted — shown to the user
+    notes: list[str] = []
 
 
 class Planner(Protocol):

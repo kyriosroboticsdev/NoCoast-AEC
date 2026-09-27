@@ -1,902 +1,145 @@
 [
   {
     "id": "family-house",
-    "prompt": "A two-storey family house. Downstairs: entrance hall, living room facing south, kitchen next to the dining room, a WC and a garage. Upstairs: master bedroom with an en-suite bathroom, two more bedrooms and a family bathroom. Gable roof.",
+    "residential": true,
+    "prompt": "A two-storey family house. Downstairs: a hall, a living room, a kitchen and a garage. Upstairs: three bedrooms. Gable roof. The footprint is 12 by 8 metres.",
     "requirements": [
-      {
-        "text": "two storeys",
-        "kind": "storeys",
-        "value": 2
-      },
-      {
-        "text": "entrance hall downstairs",
-        "kind": "room",
-        "room": "hall",
-        "level": "L1"
-      },
-      {
-        "text": "living room facing south",
-        "kind": "orientation",
-        "room": "living",
-        "side": "S"
-      },
-      {
-        "text": "kitchen next to the dining room",
-        "kind": "adjacent",
-        "room": "kitchen",
-        "room2": "dining"
-      },
-      {
-        "text": "a WC downstairs",
-        "kind": "room",
-        "room": "bathroom",
-        "level": "L1"
-      },
-      {
-        "text": "a garage",
-        "kind": "feature",
-        "item": "garage"
-      },
-      {
-        "text": "three bedrooms upstairs",
-        "kind": "room",
-        "room": "bedroom",
-        "value": 3,
-        "level": "L2"
-      },
-      {
-        "text": "master bedroom with en-suite",
-        "kind": "adjacent",
-        "room": "master",
-        "room2": "bathroom"
-      },
-      {
-        "text": "two bathrooms upstairs",
-        "kind": "room",
-        "room": "bathroom",
-        "value": 2,
-        "level": "L2"
-      },
-      {
-        "text": "gable roof",
-        "kind": "roof",
-        "item": "gable"
-      },
-      {
-        "text": "a stair",
-        "kind": "stair"
-      }
+      {"text": "two storeys", "kind": "levels", "value": 2},
+      {"text": "a hall downstairs", "kind": "count", "ifc": "IfcSpace", "name": "hall", "level": "L1", "value": 1},
+      {"text": "a living room downstairs", "kind": "count", "ifc": "IfcSpace", "name": "living", "level": "L1", "value": 1},
+      {"text": "a kitchen downstairs", "kind": "count", "ifc": "IfcSpace", "name": "kitchen", "level": "L1", "value": 1},
+      {"text": "a garage", "kind": "count", "ifc": "IfcSpace", "name": "garage", "value": 1},
+      {"text": "three bedrooms upstairs", "kind": "count", "ifc": "IfcSpace", "name": "bedroom", "level": "L2", "value": 3},
+      {"text": "a stair", "kind": "entity", "ifc": "IfcStair", "value": 1},
+      {"text": "a gable roof", "kind": "count", "ifc": "IfcRoof", "name": "gable", "value": 1},
+      {"text": "footprint 12 by 8", "kind": "extent", "ifc": "IfcSlab", "name": "floor", "value": 12, "value2": 8}
     ]
   },
   {
     "id": "cabin",
-    "prompt": "A small one-room cabin, 6 by 4 metres, with a bed, a wood stove-style fireplace, a small kitchen counter and a window on each long side.",
+    "residential": true,
+    "prompt": "A small one-storey cabin, 6 by 4 metres, with a flat roof.",
     "requirements": [
-      {
-        "text": "one storey",
-        "kind": "storeys",
-        "value": 1
-      },
-      {
-        "text": "6 by 4 metres",
-        "kind": "dimension",
-        "value": 6,
-        "value2": 4
-      },
-      {
-        "text": "a bed",
-        "kind": "furniture",
-        "item": "bed"
-      },
-      {
-        "text": "a fireplace",
-        "kind": "furniture",
-        "item": "fireplace"
-      },
-      {
-        "text": "a kitchen counter",
-        "kind": "furniture",
-        "item": "kitchen counter"
-      },
-      {
-        "text": "windows on both long sides",
-        "kind": "window",
-        "value": 2
-      }
+      {"text": "one storey", "kind": "levels", "value": 1},
+      {"text": "a room", "kind": "count", "ifc": "IfcSpace", "value": 1},
+      {"text": "6 by 4 metres", "kind": "extent", "ifc": "IfcSlab", "name": "floor", "value": 6, "value2": 4},
+      {"text": "a flat roof", "kind": "count", "ifc": "IfcRoof", "name": "flat", "value": 1},
+      {"text": "a door", "kind": "entity", "ifc": "IfcDoor", "value": 1}
     ]
   },
   {
-    "id": "bungalow",
-    "prompt": "Single-storey bungalow with three bedrooms, two bathrooms, an open kitchen-living area and a covered front porch on the south side.",
+    "id": "party-wall",
+    "residential": true,
+    "prompt": "Two dwellings sharing a party wall, two storeys, a bedroom in each.",
     "requirements": [
-      {
-        "text": "single storey",
-        "kind": "storeys",
-        "value": 1
-      },
-      {
-        "text": "three bedrooms",
-        "kind": "room",
-        "room": "bedroom",
-        "value": 3
-      },
-      {
-        "text": "two bathrooms",
-        "kind": "room",
-        "room": "bathroom",
-        "value": 2
-      },
-      {
-        "text": "kitchen adjacent to living",
-        "kind": "adjacent",
-        "room": "kitchen",
-        "room2": "living"
-      },
-      {
-        "text": "front porch",
-        "kind": "feature",
-        "item": "porch"
-      }
+      {"text": "two storeys", "kind": "levels", "value": 2},
+      {"text": "a party wall", "kind": "count", "ifc": "IfcWall", "name": "party", "value": 1},
+      {"text": "two bedrooms", "kind": "count", "ifc": "IfcSpace", "name": "bedroom", "value": 2},
+      {"text": "a floor plate on each storey", "kind": "count", "ifc": "IfcSlab", "value": 2}
     ]
   },
   {
-    "id": "townhouse",
-    "prompt": "Narrow three-storey townhouse, 5 m wide and 12 m deep. Ground floor: garage at the front, utility room and kitchen at the back. First floor: living and dining. Top floor: two bedrooms and a bathroom. Balcony off the living room.",
+    "id": "openings",
+    "residential": true,
+    "prompt": "A house with a front door and windows.",
     "requirements": [
-      {
-        "text": "three storeys",
-        "kind": "storeys",
-        "value": 3
-      },
-      {
-        "text": "5 m wide, 12 m deep",
-        "kind": "dimension",
-        "value": 5,
-        "value2": 12
-      },
-      {
-        "text": "garage on the ground floor",
-        "kind": "room",
-        "room": "garage",
-        "level": "L1"
-      },
-      {
-        "text": "kitchen on the ground floor",
-        "kind": "room",
-        "room": "kitchen",
-        "level": "L1"
-      },
-      {
-        "text": "living on the first floor",
-        "kind": "room",
-        "room": "living",
-        "level": "L2"
-      },
-      {
-        "text": "two bedrooms on the top floor",
-        "kind": "room",
-        "room": "bedroom",
-        "value": 2,
-        "level": "L3"
-      },
-      {
-        "text": "balcony off the living room",
-        "kind": "feature",
-        "item": "balcony"
-      },
-      {
-        "text": "stairs",
-        "kind": "stair"
-      }
+      {"text": "a door", "kind": "entity", "ifc": "IfcDoor", "value": 1},
+      {"text": "a window", "kind": "entity", "ifc": "IfcWindow", "value": 1},
+      {"text": "the wall is cut", "kind": "opening", "ifc": "IfcWall", "value": 1}
     ]
   },
   {
-    "id": "office",
-    "prompt": "A one-storey office building: reception hall, four offices each with a desk, a meeting room with a large table, a kitchenette and two toilets. Flat roof, concrete walls.",
+    "id": "dome",
+    "residential": false,
+    "prompt": "A stone dome, a hemisphere.",
     "requirements": [
-      {
-        "text": "one storey",
-        "kind": "storeys",
-        "value": 1
-      },
-      {
-        "text": "reception hall",
-        "kind": "room",
-        "room": "hall"
-      },
-      {
-        "text": "four offices",
-        "kind": "room",
-        "room": "office",
-        "value": 4
-      },
-      {
-        "text": "a desk in each office",
-        "kind": "furniture",
-        "item": "desk",
-        "value": 4
-      },
-      {
-        "text": "meeting room",
-        "kind": "room",
-        "room": "meeting"
-      },
-      {
-        "text": "kitchenette",
-        "kind": "room",
-        "room": "kitchen"
-      },
-      {
-        "text": "two toilets",
-        "kind": "room",
-        "room": "bathroom",
-        "value": 2
-      },
-      {
-        "text": "flat roof",
-        "kind": "roof",
-        "item": "flat"
-      },
-      {
-        "text": "concrete walls",
-        "kind": "material",
-        "item": "concrete"
-      }
+      {"text": "a dome", "kind": "count", "ifc": "IfcRoof", "name": "dome", "value": 1},
+      {"text": "the dome is curved", "kind": "curved", "ifc": "IfcRoof", "name": "dome"}
     ]
   },
   {
-    "id": "villa",
-    "prompt": "Two-storey villa with a hip roof. Ground floor: double-height entrance hall, living room with fireplace, dining room, kitchen with island, study, guest bedroom with bathroom. Upstairs: master suite with bathroom and walk-in wardrobe, three bedrooms, two bathrooms, balconies on the south bedrooms.",
+    "id": "vault",
+    "residential": false,
+    "prompt": "A barrel vault over a nave.",
     "requirements": [
-      {
-        "text": "two storeys",
-        "kind": "storeys",
-        "value": 2
-      },
-      {
-        "text": "hip roof",
-        "kind": "roof",
-        "item": "hip"
-      },
-      {
-        "text": "fireplace in the living room",
-        "kind": "furniture",
-        "item": "fireplace",
-        "room": "living"
-      },
-      {
-        "text": "kitchen island",
-        "kind": "furniture",
-        "item": "island",
-        "room": "kitchen"
-      },
-      {
-        "text": "a study",
-        "kind": "room",
-        "room": "office"
-      },
-      {
-        "text": "guest bedroom downstairs",
-        "kind": "room",
-        "room": "guest",
-        "level": "L1"
-      },
-      {
-        "text": "four bedrooms upstairs",
-        "kind": "room",
-        "room": "bedroom",
-        "value": 4,
-        "level": "L2"
-      },
-      {
-        "text": "three bathrooms upstairs",
-        "kind": "room",
-        "room": "bathroom",
-        "value": 3,
-        "level": "L2"
-      },
-      {
-        "text": "balconies",
-        "kind": "feature",
-        "item": "balcony"
-      }
+      {"text": "a barrel vault", "kind": "count", "ifc": "IfcRoof", "name": "vault", "value": 1},
+      {"text": "the vault is curved", "kind": "curved", "ifc": "IfcRoof"}
     ]
   },
   {
-    "id": "student-flat",
-    "prompt": "Compact one-storey flat, about 45 square metres: a bedroom with a double bed and wardrobe, a bathroom with shower, and a living room with kitchen counter, sofa and a desk. Windows facing west.",
+    "id": "tunnel",
+    "residential": false,
+    "prompt": "An underground tunnel bore.",
     "requirements": [
-      {
-        "text": "one storey",
-        "kind": "storeys",
-        "value": 1
-      },
-      {
-        "text": "double bed",
-        "kind": "furniture",
-        "item": "double bed",
-        "room": "bedroom"
-      },
-      {
-        "text": "wardrobe",
-        "kind": "furniture",
-        "item": "wardrobe",
-        "room": "bedroom"
-      },
-      {
-        "text": "shower",
-        "kind": "furniture",
-        "item": "shower",
-        "room": "bathroom"
-      },
-      {
-        "text": "kitchen counter in living room",
-        "kind": "furniture",
-        "item": "kitchen counter",
-        "room": "living"
-      },
-      {
-        "text": "sofa",
-        "kind": "furniture",
-        "item": "sofa"
-      },
-      {
-        "text": "desk",
-        "kind": "furniture",
-        "item": "desk"
-      },
-      {
-        "text": "windows facing west",
-        "kind": "window",
-        "side": "W"
-      }
+      {"text": "a tunnel lining", "kind": "count", "ifc": "IfcCivilElement", "name": "tunnel", "value": 1},
+      {"text": "the bore is below ground", "kind": "count", "ifc": "IfcCivilElement", "level": "B1", "value": 1},
+      {"text": "the lining is swept", "kind": "curved", "name": "tunnel"}
     ]
   },
   {
-    "id": "duplex",
-    "prompt": "Two-storey house, timber exterior walls, with a large living room facing the garden to the north, a kitchen facing east, and upstairs two bedrooms each with a bathroom.",
+    "id": "helical-stair",
+    "residential": false,
+    "prompt": "A helical stair.",
     "requirements": [
-      {
-        "text": "two storeys",
-        "kind": "storeys",
-        "value": 2
-      },
-      {
-        "text": "timber walls",
-        "kind": "material",
-        "item": "timber"
-      },
-      {
-        "text": "living room facing north",
-        "kind": "orientation",
-        "room": "living",
-        "side": "N"
-      },
-      {
-        "text": "kitchen facing east",
-        "kind": "orientation",
-        "room": "kitchen",
-        "side": "E"
-      },
-      {
-        "text": "two bedrooms upstairs",
-        "kind": "room",
-        "room": "bedroom",
-        "value": 2,
-        "level": "L2"
-      },
-      {
-        "text": "two bathrooms upstairs",
-        "kind": "room",
-        "room": "bathroom",
-        "value": 2,
-        "level": "L2"
-      }
-    ]
-  },
-  {
-    "id": "large-family",
-    "prompt": "Five-bedroom house over two floors with a double garage, a big kitchen of about 30 square metres, a laundry room, and a home office on the ground floor.",
-    "requirements": [
-      {
-        "text": "five bedrooms",
-        "kind": "room",
-        "room": "bedroom",
-        "value": 5
-      },
-      {
-        "text": "two floors",
-        "kind": "storeys",
-        "value": 2
-      },
-      {
-        "text": "garage",
-        "kind": "feature",
-        "item": "garage"
-      },
-      {
-        "text": "kitchen about 30 m²",
-        "kind": "area",
-        "room": "kitchen",
-        "value": 30
-      },
-      {
-        "text": "laundry room",
-        "kind": "room",
-        "room": "utility"
-      },
-      {
-        "text": "office on the ground floor",
-        "kind": "room",
-        "room": "office",
-        "level": "L1"
-      }
-    ]
-  },
-  {
-    "id": "imperial",
-    "prompt": "A 40 by 30 foot single-storey house with two bedrooms, one bathroom, living room and kitchen.",
-    "requirements": [
-      {
-        "text": "40 by 30 feet",
-        "kind": "dimension",
-        "value": 12.19,
-        "value2": 9.14
-      },
-      {
-        "text": "one storey",
-        "kind": "storeys",
-        "value": 1
-      },
-      {
-        "text": "two bedrooms",
-        "kind": "room",
-        "room": "bedroom",
-        "value": 2
-      },
-      {
-        "text": "one bathroom",
-        "kind": "room",
-        "room": "bathroom",
-        "value": 1
-      },
-      {
-        "text": "living room",
-        "kind": "room",
-        "room": "living"
-      },
-      {
-        "text": "kitchen",
-        "kind": "room",
-        "room": "kitchen"
-      }
-    ]
-  },
-  {
-    "id": "unsupported",
-    "prompt": "A round two-storey house with a basement, a swimming pool and an elevator, three bedrooms upstairs.",
-    "requirements": [
-      {
-        "text": "round house",
-        "kind": "other",
-        "supported": false
-      },
-      {
-        "text": "basement",
-        "kind": "feature",
-        "item": "basement"
-      },
-      {
-        "text": "swimming pool",
-        "kind": "other",
-        "supported": false
-      },
-      {
-        "text": "elevator",
-        "kind": "other",
-        "supported": false
-      },
-      {
-        "text": "two storeys",
-        "kind": "storeys",
-        "value": 2
-      },
-      {
-        "text": "three bedrooms upstairs",
-        "kind": "room",
-        "room": "bedroom",
-        "value": 3,
-        "level": "L2"
-      }
-    ]
-  },
-  {
-    "id": "workshop",
-    "prompt": "A single-storey workshop with a large garage for two cars, a storage room, a small office and a toilet. Stone walls, hip roof.",
-    "requirements": [
-      {
-        "text": "one storey",
-        "kind": "storeys",
-        "value": 1
-      },
-      {
-        "text": "garage",
-        "kind": "feature",
-        "item": "garage"
-      },
-      {
-        "text": "two cars",
-        "kind": "furniture",
-        "item": "car",
-        "value": 2
-      },
-      {
-        "text": "storage room",
-        "kind": "room",
-        "room": "storage"
-      },
-      {
-        "text": "small office",
-        "kind": "room",
-        "room": "office"
-      },
-      {
-        "text": "toilet",
-        "kind": "room",
-        "room": "bathroom"
-      },
-      {
-        "text": "stone walls",
-        "kind": "material",
-        "item": "stone"
-      },
-      {
-        "text": "hip roof",
-        "kind": "roof",
-        "item": "hip"
-      }
-    ]
-  },
-  {
-    "id": "adjacency-chain",
-    "prompt": "One-storey house where the hall connects to the living room, the living room connects to the kitchen, and the kitchen connects to a pantry. Two bedrooms off the hall.",
-    "requirements": [
-      {
-        "text": "hall next to living room",
-        "kind": "adjacent",
-        "room": "hall",
-        "room2": "living"
-      },
-      {
-        "text": "door hall to living",
-        "kind": "door",
-        "room": "hall",
-        "room2": "living"
-      },
-      {
-        "text": "living next to kitchen",
-        "kind": "adjacent",
-        "room": "living",
-        "room2": "kitchen"
-      },
-      {
-        "text": "kitchen next to pantry",
-        "kind": "adjacent",
-        "room": "kitchen",
-        "room2": "pantry"
-      },
-      {
-        "text": "two bedrooms",
-        "kind": "room",
-        "room": "bedroom",
-        "value": 2
-      },
-      {
-        "text": "bedrooms off the hall",
-        "kind": "door",
-        "room": "bedroom",
-        "room2": "hall"
-      }
-    ]
-  },
-  {
-    "id": "tall",
-    "prompt": "A four-storey apartment block: each floor has two flats, every flat with a living room, kitchen, bedroom and bathroom, plus a stair hall.",
-    "requirements": [
-      {
-        "text": "four storeys",
-        "kind": "storeys",
-        "value": 4
-      },
-      {
-        "text": "eight bedrooms",
-        "kind": "room",
-        "room": "bedroom",
-        "value": 8
-      },
-      {
-        "text": "eight bathrooms",
-        "kind": "room",
-        "room": "bathroom",
-        "value": 8
-      },
-      {
-        "text": "eight kitchens",
-        "kind": "room",
-        "room": "kitchen",
-        "value": 8
-      },
-      {
-        "text": "a stair",
-        "kind": "stair"
-      }
-    ]
-  },
-  {
-    "id": "glass",
-    "prompt": "Modern one-storey pavilion with glass walls, an open living space with sofa and dining table, one bedroom and one bathroom with a bathtub. Flat roof.",
-    "requirements": [
-      {
-        "text": "glass walls",
-        "kind": "material",
-        "item": "glass"
-      },
-      {
-        "text": "sofa",
-        "kind": "furniture",
-        "item": "sofa"
-      },
-      {
-        "text": "dining table",
-        "kind": "furniture",
-        "item": "dining table"
-      },
-      {
-        "text": "one bedroom",
-        "kind": "room",
-        "room": "bedroom"
-      },
-      {
-        "text": "bathtub",
-        "kind": "furniture",
-        "item": "bathtub",
-        "room": "bathroom"
-      },
-      {
-        "text": "flat roof",
-        "kind": "roof",
-        "item": "flat"
-      },
-      {
-        "text": "modern",
-        "kind": "style"
-      }
-    ]
-  },
-  {
-    "id": "orientation-mix",
-    "prompt": "Two-storey house: kitchen on the east side with a window to the east, living room on the west with large windows, master bedroom above the living room with a balcony to the west.",
-    "requirements": [
-      {
-        "text": "two storeys",
-        "kind": "storeys",
-        "value": 2
-      },
-      {
-        "text": "kitchen on the east side",
-        "kind": "orientation",
-        "room": "kitchen",
-        "side": "E"
-      },
-      {
-        "text": "kitchen window to the east",
-        "kind": "window",
-        "room": "kitchen",
-        "side": "E"
-      },
-      {
-        "text": "living room on the west",
-        "kind": "orientation",
-        "room": "living",
-        "side": "W"
-      },
-      {
-        "text": "master bedroom upstairs",
-        "kind": "room",
-        "room": "master",
-        "level": "L2"
-      },
-      {
-        "text": "balcony to the west",
-        "kind": "feature",
-        "item": "balcony"
-      }
-    ]
-  },
-  {
-    "id": "l-shape",
-    "prompt": "A single-storey house with an L-shaped living room facing south, an open kitchen next to the living room, two bedrooms and a bathroom.",
-    "requirements": [
-      {
-        "text": "one storey",
-        "kind": "storeys",
-        "value": 1
-      },
-      {
-        "text": "L-shaped living room",
-        "kind": "feature",
-        "item": "l-shaped"
-      },
-      {
-        "text": "living room facing south",
-        "kind": "orientation",
-        "room": "living",
-        "side": "S"
-      },
-      {
-        "text": "kitchen next to the living room",
-        "kind": "adjacent",
-        "room": "kitchen",
-        "room2": "living"
-      },
-      {
-        "text": "two bedrooms",
-        "kind": "room",
-        "room": "bedroom",
-        "value": 2
-      },
-      {
-        "text": "a bathroom",
-        "kind": "room",
-        "room": "bathroom",
-        "value": 1
-      }
-    ]
-  },
-  {
-    "id": "basement-stair",
-    "prompt": "A two-storey family house with a basement containing a utility room and storage, reached by a stair from the hall. Three bedrooms upstairs, kitchen and living room on the ground floor.",
-    "requirements": [
-      {
-        "text": "two storeys",
-        "kind": "storeys",
-        "value": 2
-      },
-      {
-        "text": "a basement",
-        "kind": "feature",
-        "item": "basement"
-      },
-      {
-        "text": "utility room in the basement",
-        "kind": "room_level",
-        "room": "utility",
-        "level": "B1"
-      },
-      {
-        "text": "storage in the basement",
-        "kind": "room_level",
-        "room": "storage",
-        "level": "B1"
-      },
-      {
-        "text": "a stair",
-        "kind": "stair"
-      },
-      {
-        "text": "three bedrooms upstairs",
-        "kind": "room",
-        "room": "bedroom",
-        "value": 3,
-        "level": "L2"
-      },
-      {
-        "text": "kitchen on the ground floor",
-        "kind": "room_level",
-        "room": "kitchen",
-        "level": "L1"
-      },
-      {
-        "text": "living room on the ground floor",
-        "kind": "room_level",
-        "room": "living",
-        "level": "L1"
-      }
-    ]
-  },
-  {
-    "id": "carport",
-    "prompt": "A bungalow with two bedrooms, a bathroom, a kitchen and a living room, plus a carport on the east side that is open on three sides with one back wall against the house.",
-    "requirements": [
-      {
-        "text": "one storey",
-        "kind": "storeys",
-        "value": 1
-      },
-      {
-        "text": "two bedrooms",
-        "kind": "room",
-        "room": "bedroom",
-        "value": 2
-      },
-      {
-        "text": "a bathroom",
-        "kind": "room",
-        "room": "bathroom",
-        "value": 1
-      },
-      {
-        "text": "a kitchen",
-        "kind": "room",
-        "room": "kitchen"
-      },
-      {
-        "text": "a living room",
-        "kind": "room",
-        "room": "living"
-      },
-      {
-        "text": "a carport",
-        "kind": "feature",
-        "item": "carport"
-      }
-    ]
-  },
-  {
-    "id": "curved",
-    "prompt": "A modern single-storey house with a curved south wall on the living room, a kitchen, a study and two bedrooms, and a pergola in the garden.",
-    "requirements": [
-      {
-        "text": "one storey",
-        "kind": "storeys",
-        "value": 1
-      },
-      {
-        "text": "curved wall on the living room",
-        "kind": "feature",
-        "item": "curved wall"
-      },
-      {
-        "text": "a kitchen",
-        "kind": "room",
-        "room": "kitchen"
-      },
-      {
-        "text": "a study",
-        "kind": "room",
-        "room": "office"
-      },
-      {
-        "text": "two bedrooms",
-        "kind": "room",
-        "room": "bedroom",
-        "value": 2
-      },
-      {
-        "text": "a pergola",
-        "kind": "feature",
-        "item": "pergola"
-      },
-      {
-        "text": "modern",
-        "kind": "style"
-      }
+      {"text": "a spiral stair", "kind": "entity", "ifc": "IfcStair", "value": 1},
+      {"text": "the stair winds", "kind": "curved", "ifc": "IfcStair"}
     ]
   },
   {
     "id": "bridge",
-    "prompt": "Build a footbridge: a 24 m deck about 3 m wide on concrete piers, with railings on both sides. No building, just the bridge.",
+    "residential": false,
+    "prompt": "A bridge with piers and a curved deck.",
     "requirements": [
-      {
-        "text": "a bridge",
-        "kind": "feature",
-        "item": "bridge"
-      },
-      {
-        "text": "railings on both sides",
-        "kind": "feature",
-        "item": "railing"
-      }
+      {"text": "at least three piers", "kind": "count", "ifc": "IfcColumn", "name": "pier", "value": 3},
+      {"text": "a deck", "kind": "count", "ifc": "IfcSlab", "name": "deck", "value": 1},
+      {"text": "the deck curves", "kind": "curved", "name": "deck"},
+      {"text": "the deck is supported", "kind": "supported", "name": "deck"},
+      {"text": "clearance under the deck", "kind": "clearance", "name": "deck", "value": 7}
+    ]
+  },
+  {
+    "id": "retaining-wall",
+    "residential": false,
+    "prompt": "A battered retaining wall along a cutting.",
+    "requirements": [
+      {"text": "a retaining wall", "kind": "count", "name": "retaining", "value": 1},
+      {"text": "it is a wall", "kind": "entity", "ifc": "IfcWall", "value": 1}
+    ]
+  },
+  {
+    "id": "cantilever",
+    "residential": false,
+    "prompt": "A cantilever slab projecting past its support.",
+    "requirements": [
+      {"text": "a cantilever slab", "kind": "count", "name": "cantilever", "value": 1},
+      {"text": "a support", "kind": "count", "name": "support", "value": 1}
+    ]
+  },
+  {
+    "id": "truss",
+    "residential": false,
+    "prompt": "A timber roof truss.",
+    "requirements": [
+      {"text": "a chord", "kind": "count", "ifc": "IfcMember", "name": "chord", "value": 1},
+      {"text": "members", "kind": "entity", "ifc": "IfcMember", "value": 3}
+    ]
+  },
+  {
+    "id": "shell",
+    "residential": false,
+    "prompt": "A thin concrete shell of revolution.",
+    "requirements": [
+      {"text": "a shell", "kind": "count", "name": "shell", "value": 1},
+      {"text": "it is revolved", "kind": "curved", "name": "shell"}
+    ]
+  },
+  {
+    "id": "round-table",
+    "residential": true,
+    "prompt": "A small cabin with a round table in the room.",
+    "requirements": [
+      {"text": "one storey", "kind": "levels", "value": 1},
+      {"text": "a round table", "kind": "count", "ifc": "IfcFurniture", "name": "table", "value": 1}
     ]
   }
 ]

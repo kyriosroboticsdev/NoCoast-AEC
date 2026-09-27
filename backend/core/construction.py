@@ -1,12 +1,7 @@
-"""A version's elements, written to disk one construction step at a time — a live build, not a
-snapshot. Ordered the same way `ifc/builder.py::BUILDERS` compiles (foundation, structure, roof,
-spaces, fixtures last), bottom to top within each phase, so watching it progress looks like a real
-build sequence. Each step is a real, valid IFC file compiled with the version's own GuidMap, so a
-GlobalId a viewer already resolved keeps meaning the same element as more of the building appears.
+"""A version's parts, written to disk one construction step at a time.
 
-Distinct from `slicer/slice.py` (a client-side clip-plane sweep over the *finished* model, cut
-purely by height): this runs as a background job and writes one full file per step at a deliberate
-pace, so a client polling for "whatever's been built so far" every ~300ms has something to catch.
+Ordered by construction phase and then by level elevation, so watching it progress looks
+like a build. Each step is a real IFC file compiled with the version's own GuidMap.
 """
 
 from __future__ import annotations
@@ -17,53 +12,53 @@ import uuid
 from pathlib import Path
 
 import config
-from ifc.builder import compile_ifc
-from schemas.bim import (Beam, BuildingSpec, Column, CustomFixture, Door, Element, Fixture, LightFixture, Outlet,
-                          Panel, Pipe, Railing, Roof, Slab, Space, Stair, Wall, Window, Wire)
+from ifc.compile import compile_ifc
+from schemas.geo import GeoModel, GeoPart
 from store.db import VersionData
 
-CONSTRUCTION_DIR = config.OUTPUT_DIR / "construction"  # served by the /models static mount
-JOB_TTL = 1800           # seconds before a finished job's files and status are dropped
-STEP_SECONDS = 0.2       # backend pace between steps; independent of how often a client polls
+CONSTRUCTION_DIR = config.OUTPUT_DIR / "construction"
+JOB_TTL = 1800
+STEP_SECONDS = 0.2
 
-# Construction phases, in build order — mirrors ifc/builder.py's BUILDERS.
-PHASES: list[tuple[str, tuple[type, ...]]] = [
-    ("foundation", (Slab,)),
-    ("structure", (Wall, Column, Beam, Stair)),
-    ("roof", (Roof,)),
-    ("plumbing", (Pipe,)),
-    ("spaces", (Space,)),
-    ("electrical", (Outlet, Panel, Wire)),
-    ("details", (Door, Window, Railing, Fixture, CustomFixture, LightFixture)),
-]
-
-
-def _elevation(spec: BuildingSpec, el: Element) -> float:
-    """Sort key: an element's own level, its host wall's for a door/window, or a riser's bottom for a pipe."""
-    if isinstance(el, Pipe):
-        level_id = el.bottom_level
-    elif hasattr(el, "level"):
-        level_id = el.level
-    else:
-        level_id = next(w.level for w in spec.elements if isinstance(w, Wall) and w.id == el.wall)
-    return next(l.elevation for l in spec.levels if l.id == level_id)
+# IFC entity → phase index. Anything unlisted is structure: it is a solid that has to go up.
+PHASE = {
+    "IfcFooting": 0, "IfcPile": 0, "IfcSlab": 0,
+    "IfcWall": 1, "IfcColumn": 1, "IfcBeam": 1, "IfcMember": 1, "IfcStair": 1, "IfcStairFlight": 1,
+    "IfcRamp": 1, "IfcRampFlight": 1, "IfcCurtainWall": 1, "IfcPlate": 1, "IfcCivilElement": 1,
+    "IfcRoof": 2, "IfcCovering": 2,
+    "IfcSpace": 4,
+    "IfcDoor": 6, "IfcWindow": 6, "IfcRailing": 6, "IfcFurniture": 6, "IfcSanitaryTerminal": 6,
+    "IfcBuildingElementProxy": 6,
+}
 
 
-def build_order(spec: BuildingSpec) -> list[Element]:
-    """Elements in the order they'd really go up: by construction phase, bottom to top within it."""
-    ordered: list[Element] = []
-    for _, kinds in PHASES:
-        step = [el for el in spec.elements if isinstance(el, kinds)]
-        step.sort(key=lambda el: _elevation(spec, el))
-        ordered += step
-    return ordered
+def _phase(part: GeoPart) -> int:
+    return PHASE.get(part.ifc, 1)
+
+
+def build_order(geo: GeoModel) -> list[GeoPart]:
+    elevations = geo.elevations()
+    return sorted(geo.parts, key=lambda p: (_phase(p), elevations.get(p.level, 0.0), p.id))
+
+
+def _subset(geo: GeoModel, ids: set[str]) -> GeoModel:
+    parts = [p for p in geo.parts if p.id in ids]
+    openings = [o for o in geo.openings if o.host in ids and (o.fill is None or o.fill in ids)]
+    assemblies = []
+    for asm in geo.assemblies:
+        kept = [p for p in asm.parts if p in ids]
+        if kept:
+            assemblies.append(asm.model_copy(update={"parts": kept}))
+    live = {a.id for a in assemblies}
+    instances = [i for i in geo.instances if i.of in live]
+    return geo.model_copy(update={"parts": parts, "openings": openings, "assemblies": assemblies, "instances": instances})
 
 
 class ConstructionJob:
     def __init__(self, version: VersionData, step_seconds: float = STEP_SECONDS):
         self.id = uuid.uuid4().hex[:12]
         self.created = time.time()
-        self.total = len(version.spec.elements)
+        self.total = len(version.geo.parts)
         self.index = 0
         self.urls: list[str] = []
         self.done = False
@@ -74,12 +69,11 @@ class ConstructionJob:
 
     def _run(self, version: VersionData, step_seconds: float) -> None:
         try:
-            order = build_order(version.spec)
-            built: list[Element] = []
-            for i, el in enumerate(order):
-                built.append(el)
-                sub_spec = version.spec.model_copy(update={"elements": list(built)})
-                model, _ = compile_ifc(sub_spec, dict(version.guids), version.design.model_dump_json() if version.design else None)
+            order = build_order(version.geo)
+            built: list[str] = []
+            for i, part in enumerate(order):
+                built.append(part.id)
+                model, _ = compile_ifc(_subset(version.geo, set(built)), dict(version.guids))
                 name = f"step-{i:04d}.ifc"
                 model.write(str(self._dir / name))
                 self.urls.append(f"/models/construction/{self.id}/{name}")
@@ -113,7 +107,6 @@ def get(job_id: str) -> ConstructionJob | None:
 
 
 def prune() -> None:
-    """Drop finished jobs (and their files) older than JOB_TTL, same idea as preview.py's partials."""
     cutoff = time.time() - JOB_TTL
     with _LOCK:
         stale = [jid for jid, job in _JOBS.items() if job.done and job.created < cutoff]

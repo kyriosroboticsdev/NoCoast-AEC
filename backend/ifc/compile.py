@@ -238,12 +238,16 @@ def add_part(ctx: Built, part: GeoPart) -> ifcopenshell.entity_instance:
         kwargs["predefined_type"] = part.ifc_type
     element = ifcopenshell.api.root.create_entity(m, **kwargs)
     element.GlobalId = ctx.guids[key_for_part(part.id)]
-    if hasattr(element, "Tag"):
-        element.Tag = part.id
-    # The viewer and the summary both read a space's long name; the part name is the only
-    # word the model gave it ("bedroom", "pier"), so that is what shows up as a room label.
-    if part.ifc == "IfcSpace" and hasattr(element, "LongName"):
-        element.LongName = part.name or part.id
+    # IfcSpace is not an IfcElement, so it has no Tag. Its Name carries the id (what a click
+    # resolves to) and its LongName carries the words ("bedroom"), which the summary lists.
+    if part.ifc == "IfcSpace":
+        element.Name = part.id
+        if hasattr(element, "LongName"):
+            element.LongName = part.name or part.id
+    else:
+        element.Name = part.name or part.id
+        if hasattr(element, "Tag"):
+            element.Tag = part.id
 
     items = [build_solid(m, solid, outer=copy if not copy.is_identity else None)
              for copy in part.placements() for solid in part.solids]
@@ -296,6 +300,9 @@ def add_opening(ctx: Built, opening: GeoOpening) -> None:
         return
     void = ifcopenshell.api.root.create_entity(m, ifc_class="IfcOpeningElement", name=f"{opening.id} opening")
     void.GlobalId = ctx.guids[key_for_opening(opening.id)]
+    if hasattr(void, "Tag"):
+        void.Tag = opening.id
+    add_json_pset(m, void, PART_PSET, opening.model_dump_json())
     solid = opening_solid(part, opening)
     rep = m.createIfcShapeRepresentation(ctx.body, "Body", representation_kind([solid]), [build_solid(m, solid)])
     elevation = ctx.geo.elevations().get(part.level, 0.0)
@@ -315,6 +322,8 @@ def add_assembly(ctx: Built, key: str, name: str, part_ids: list[str], level: st
     m = ctx.model
     asm = ifcopenshell.api.root.create_entity(m, ifc_class="IfcElementAssembly", name=name)
     asm.GlobalId = ctx.guids[key]
+    if hasattr(asm, "Tag"):
+        asm.Tag = key.removeprefix("assembly:")
     elevation = ctx.geo.elevations().get(level or "", 0.0)
     ifcopenshell.api.geometry.edit_object_placement(m, product=asm, matrix=matrix_of(Placement(), elevation))
     # The members stay in their storey as well. An assembly is a grouping here, not a

@@ -1,38 +1,17 @@
-"""Deterministic verification of a design against its requirements.
+"""Geometric checks. Each requirement kind is a question about the compiled model.
 
-Each requirement kind maps to a check on the derived design (room list, adjacency,
-exterior sides, openings, fixtures, roof …). The result is a list of `CheckResult`s;
-unmet ones are fed back to the model as a fix round and shown to the user, and the
-evaluation script scores a model by the fraction met.
+The selector (`ifc`, `name`, `level`, `id`) is the only place a word like "bedroom" or
+"pier" is interpreted, and it is matched against the name the model itself chose.
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
-from core.derive import Derived
-from schemas.design import Design, RoomDef, guess_kind, slug
-from schemas.requirements import Requirement
+import ifcopenshell
 
-KIND_SYNONYMS = {
-    "bedroom": "bedroom", "bed": "bedroom", "bedrooms": "bedroom", "bathroom": "bathroom", "bath": "bathroom", "wc": "bathroom",
-    "toilet": "bathroom", "ensuite": "bathroom", "en-suite": "bathroom", "kitchen": "kitchen", "living": "living", "lounge": "living",
-    "living room": "living", "dining": "dining", "dining room": "dining", "office": "office", "study": "office", "hall": "hall",
-    "hallway": "hall", "entry": "hall", "garage": "garage", "utility": "utility", "laundry": "utility", "storage": "storage",
-    "pantry": "storage", "closet": "storage",
-}
-FURNITURE_SYNONYMS = {
-    "bed": ("bed", "double_bed", "bunk_bed"), "double bed": ("double_bed",), "bunk bed": ("bunk_bed",), "sofa": ("sofa",),
-    "couch": ("sofa",), "table": ("dining_table", "coffee_table", "desk"), "dining table": ("dining_table",),
-    "coffee table": ("coffee_table",), "desk": ("desk",), "wardrobe": ("wardrobe",), "closet": ("wardrobe",),
-    "counter": ("kitchen_counter", "island"), "kitchen counter": ("kitchen_counter",), "island": ("island",),
-    "fridge": ("fridge",), "refrigerator": ("fridge",), "oven": ("oven",), "stove": ("oven",), "sink": ("sink", "washbasin"),
-    "dishwasher": ("dishwasher",), "washing machine": ("washing_machine",), "toilet": ("toilet",), "shower": ("shower",),
-    "bathtub": ("bathtub",), "bath": ("bathtub",), "tub": ("bathtub",), "washbasin": ("washbasin",), "basin": ("washbasin",),
-    "fireplace": ("fireplace",), "car": ("car",), "tv": ("tv_stand",), "bookshelf": ("bookshelf",), "shelf": ("bookshelf",),
-    "armchair": ("armchair",), "chair": ("chair", "armchair"), "dresser": ("dresser",),
-}
+from core.facts import ElementFact, Facts, collect, select, union_bbox, union_footprint
+from schemas.requirements import Requirement
 
 
 @dataclass
@@ -50,229 +29,218 @@ class CheckResult:
         return f"{mark} {self.requirement.text} — {self.detail}"
 
 
-def _match_rooms(design: Design, ref: str | None, level: str | None = None) -> list[RoomDef]:
-    """Rooms matching a name ('Master Bedroom'), an id, or a kind keyword ('bedroom')."""
-    rooms = [r for r in design.rooms if level is None or r.level == level]
-    if not ref:
-        return rooms
-    key = ref.strip().lower()
-    exact = [r for r in rooms if r.id == slug(key) or r.name.lower() == key]
-    if exact:
-        return exact
-    kind = KIND_SYNONYMS.get(key) or (guess_kind(key) if guess_kind(key) != "other" else None)
-    by_kind = [r for r in rooms if kind and r.kind == kind]
-    by_name = [r for r in rooms if key in r.name.lower() or all(w in r.name.lower() for w in key.split())]
-    return list({r.id: r for r in by_name + by_kind}.values())
+def _near(have: float, want: float, frac: float = 0.2, abs_tol: float = 0.35) -> bool:
+    return abs(have - want) <= max(abs_tol, abs(want) * frac)
 
 
-def _fixtures_for(item: str | None) -> tuple[str, ...]:
-    if not item:
-        return ()
-    key = item.strip().lower().replace("_", " ")
-    if key in FURNITURE_SYNONYMS:
-        return FURNITURE_SYNONYMS[key]
-    norm = key.replace(" ", "_")
-    return (norm,)
+def _supports(element: ElementFact, others: list[ElementFact]) -> list[ElementFact]:
+    """Elements whose top meets this one's base and whose footprint overlaps it."""
+    if element.footprint is None or element.footprint.is_empty:
+        return []
+    zone = element.footprint.buffer(0.3)
+    found = []
+    for other in others:
+        if other is element or other.zmax < element.zmin - 0.05 or other.zmax > element.zmin + 0.45:
+            continue
+        if other.footprint is not None and not other.footprint.is_empty and zone.intersects(other.footprint):
+            found.append(other)
+    return found
 
 
-def check(design: Design, derived: Derived, requirements: list[Requirement]) -> list[CheckResult]:
+def _gap(selection: list[ElementFact], facts: Facts) -> float | None:
+    """Largest horizontal gap between the supports under a selection, along its long axis."""
+    if not selection:
+        return None
+    box = union_bbox(selection)
+    if box is None:
+        return None
+    horizontal = (box[3] - box[0]) >= (box[4] - box[1])
+    supports: list[ElementFact] = []
+    for element in selection:
+        supports += _supports(element, facts.elements)
+    if len(supports) < 2:
+        return None
+    coords = sorted({round(s.centroid[0 if horizontal else 1], 3) for s in supports})
+    if len(coords) < 2:
+        return 0.0
+    return max(b - a for a, b in zip(coords, coords[1:]))
+
+
+def _clearance(selection: list[ElementFact], facts: Facts) -> float | None:
+    """Smallest free height under the selection, ignoring solids that actually touch it."""
+    if not selection:
+        return None
+    underside = min(e.zmin for e in selection)
+    foot = union_footprint(selection).buffer(0.05)
+    tops = [0.0]
+    for other in facts.elements:
+        if other in selection or other.zmax > underside - 0.05:
+            continue
+        if other.footprint is not None and not other.footprint.is_empty and foot.intersects(other.footprint):
+            tops.append(other.zmax)
+    return underside - max(tops)
+
+
+def _enclosed(selection: list[ElementFact], facts: Facts) -> float | None:
+    """Fraction of the footprint that is walled around and covered above. 0..1."""
+    if not selection:
+        return None
+    foot = union_footprint(selection)
+    if foot.is_empty or foot.length == 0:
+        return None
+    others = [e for e in facts.elements if e not in selection and e.footprint is not None and not e.footprint.is_empty]
+    boundary = foot.boundary
+    near = unary_buffer(others, 0.45)
+    perimeter = boundary.length
+    covered = boundary.intersection(near).length if perimeter else 0.0
+    side = covered / perimeter if perimeter else 0.0
+    ztop = max(e.zmax for e in selection)
+    above = [e.footprint for e in others if e.zmin >= ztop - 0.35]
+    overhead = unary_buffer((), 0)
+    if above:
+        from shapely.ops import unary_union
+        overhead = unary_union(above)
+    top = foot.intersection(overhead).area / foot.area if foot.area and not overhead.is_empty else 0.0
+    return 0.5 * side + 0.5 * top
+
+
+def unary_buffer(elements, dist: float):
+    from shapely.ops import unary_union
+    if not elements:
+        from shapely.geometry import Polygon
+        return Polygon()
+    return unary_union([e.footprint for e in elements]).buffer(dist)
+
+
+def check(model: ifcopenshell.file, requirements: list[Requirement], facts: Facts | None = None) -> list[CheckResult]:
+    facts = facts or collect(model)
     out: list[CheckResult] = []
     for req in requirements:
-        if not req.supported:
-            out.append(CheckResult(req, "unsupported", "not supported by the builder"))
+        if not req.supported or req.kind in ("style", "other"):
+            status = "unsupported" if not req.supported else "skipped"
+            detail = "not supported by the builder" if not req.supported else "not automatically checkable"
+            out.append(CheckResult(req, status, detail))
             continue
         try:
-            out.append(_check_one(design, derived, req))
+            out.append(_one(facts, req))
         except Exception as exc:  # noqa: BLE001 - a check must never break the pipeline
             out.append(CheckResult(req, "skipped", f"check failed: {exc}"))
     return out
 
 
-def _check_one(design: Design, d: Derived, req: Requirement) -> CheckResult:
+def _one(facts: Facts, req: Requirement) -> CheckResult:
+    sel = select(facts, ifc=req.ifc, name=req.name, level=req.level, id=req.id)
     k = req.kind
-    n = int(req.value) if req.value else 1
+    n = req.value if req.value is not None else 1
 
-    if k == "storeys":
-        have = design.storeys()
-        return CheckResult(req, "met" if have == n else "unmet", f"{have} storey(s), wanted {n}")
+    if k in ("count", "entity"):
+        have = len(sel)
+        word = req.ifc or req.name or "elements"
+        return CheckResult(req, "met" if have >= n else "unmet", f"{have} {word}, wanted at least {n:g}")
 
-    if k == "room":
-        rooms = _match_rooms(design, req.room, req.level)
-        where = f" on {req.level}" if req.level else ""
-        if len(rooms) >= n:
-            return CheckResult(req, "met", f"{', '.join(r.name for r in rooms[:6])}{where}")
-        return CheckResult(req, "unmet", f"found {len(rooms)} '{req.room}' room(s){where}, wanted {n}")
+    if k == "levels":
+        have = facts.storeys()
+        return CheckResult(req, "met" if have == int(n) else "unmet", f"{have} storey(s), wanted {int(n)}")
 
-    if k == "room_level":
-        rooms = _match_rooms(design, req.room)
-        if not rooms:
-            return CheckResult(req, "unmet", f"no room matches '{req.room}'")
-        on = [r for r in rooms if r.level == req.level]
-        return CheckResult(req, "met" if on else "unmet", f"{rooms[0].name} is on {rooms[0].level}" if not on else f"{on[0].name} on {req.level}")
+    if k == "extent":
+        box = union_bbox(sel)
+        if box is None:
+            return CheckResult(req, "unmet", "nothing matches")
+        dims = {"x": box[3] - box[0], "y": box[4] - box[1], "z": box[5] - box[2]}
+        plan = sorted((dims["x"], dims["y"]))
+        axis = req.axis or ("z" if req.value2 is None and req.which == "z" else None)
+        if axis in dims:
+            have = dims[axis]
+            ok = _near(have, n)
+            return CheckResult(req, "met" if ok else "unmet", f"{axis} {have:.2f} m, wanted {n:g}")
+        if axis == "longest":
+            have = plan[1]
+            return CheckResult(req, "met" if _near(have, n) else "unmet", f"longest {have:.2f} m, wanted {n:g}")
+        if axis == "shortest":
+            have = plan[0]
+            return CheckResult(req, "met" if _near(have, n) else "unmet", f"shortest {have:.2f} m, wanted {n:g}")
+        want = sorted((n, req.value2 if req.value2 is not None else n))
+        ok = _near(plan[0], want[0]) and _near(plan[1], want[1])
+        return CheckResult(req, "met" if ok else "unmet",
+                           f"footprint {plan[1]:.1f} x {plan[0]:.1f} m, wanted {want[1]:g} x {want[0]:g}")
+
+    if k == "elevation":
+        if not sel:
+            return CheckResult(req, "unmet", "nothing matches")
+        which = req.which or "base"
+        have = min(e.zmin for e in sel) if which == "base" else max(e.zmax for e in sel)
+        return CheckResult(req, "met" if _near(have, n, abs_tol=0.5) else "unmet", f"{which} at {have:.2f} m, wanted {n:g}")
+
+    if k == "span":
+        gap = _gap(sel, facts)
+        if gap is None:
+            return CheckResult(req, "unmet", "fewer than two supports under the selection")
+        return CheckResult(req, "met" if _near(gap, n, frac=0.25, abs_tol=0.6) else "unmet", f"span {gap:.2f} m, wanted {n:g}")
+
+    if k == "clearance":
+        gap = _clearance(sel, facts)
+        if gap is None:
+            return CheckResult(req, "unmet", "nothing matches")
+        return CheckResult(req, "met" if gap + 0.3 >= n else "unmet", f"clearance {gap:.2f} m, wanted at least {n:g}")
+
+    if k == "enclosed":
+        frac = _enclosed(sel, facts)
+        if frac is None:
+            return CheckResult(req, "unmet", "nothing matches")
+        return CheckResult(req, "met" if frac + 1e-6 >= n else "unmet", f"closed fraction {frac:.2f}, wanted at least {n:g}")
+
+    if k == "connects":
+        other = select(facts, ifc=req.ifc2, name=req.name2, level=req.level)
+        if not sel or not other:
+            return CheckResult(req, "unmet", f"{len(sel)} and {len(other)} match the two selections")
+        a, b = union_footprint(sel).buffer(0.35), union_footprint(other).buffer(0.35)
+        touch = a.intersects(b)
+        return CheckResult(req, "met" if touch else "unmet", "they touch" if touch else "they do not touch")
+
+    if k == "supported":
+        if not sel:
+            return CheckResult(req, "unmet", "nothing matches")
+        floating = []
+        for element in sel:
+            if element.zmin <= 0.4 or _supports(element, facts.elements):
+                continue
+            floating.append(element.name or element.id)
+        if floating:
+            return CheckResult(req, "unmet", "nothing beneath " + ", ".join(floating[:6]))
+        return CheckResult(req, "met", f"{len(sel)} element(s) supported")
+
+    if k == "opening":
+        have = sum(e.openings for e in sel)
+        return CheckResult(req, "met" if have >= n else "unmet", f"{have} opening(s), wanted at least {n:g}")
+
+    if k == "volume":
+        have = sum(e.volume for e in sel)
+        return CheckResult(req, "met" if _near(have, n, frac=0.25, abs_tol=0.5) else "unmet", f"volume {have:.2f} m³, wanted {n:g}")
 
     if k == "area":
-        rooms = _match_rooms(design, req.room)
-        if not rooms or not req.value:
-            return CheckResult(req, "unmet" if not rooms else "skipped", f"no room matches '{req.room}'" if not rooms else "no target area")
-        r = rooms[0]
-        area = r.area_m2
-        ok = abs(area - req.value) <= 0.25 * req.value
-        return CheckResult(req, "met" if ok else "unmet", f"{r.name} is {area:.0f} m², wanted {req.value:.0f} m²")
+        have = sum(e.area for e in sel)
+        return CheckResult(req, "met" if _near(have, n, frac=0.25, abs_tol=1.0) else "unmet", f"area {have:.1f} m², wanted {n:g}")
 
-    if k == "adjacent":
-        a, b = _match_rooms(design, req.room), _match_rooms(design, req.room2)
-        if not a or not b:
-            return CheckResult(req, "unmet", f"no room matches '{req.room if not a else req.room2}'")
-        for ra in a:
-            for rb in b:
-                if rb.id in d.rooms[ra.id].neighbours:
-                    return CheckResult(req, "met", f"{ra.name} shares a wall with {rb.name}")
-        return CheckResult(req, "unmet", f"{a[0].name} touches {', '.join(d.rooms[a[0].id].neighbours) or 'nothing'}")
-
-    if k == "orientation":
-        rooms = _match_rooms(design, req.room)
-        if not rooms:
-            return CheckResult(req, "unmet", f"no room matches '{req.room}'")
-        for r in rooms:
-            info = d.rooms[r.id]
-            if req.side in info.sides:
-                return CheckResult(req, "met", f"{r.name} has an exterior {req.side} wall")
-            if req.side in info.open_sides:
-                return CheckResult(req, "met", f"{r.name} is open to the {req.side}")
-        info = d.rooms[rooms[0].id]
-        have = info.sides + [s for s in info.open_sides if s not in info.sides]
-        return CheckResult(req, "unmet", f"{rooms[0].name}'s exterior sides are {', '.join(have) or 'none'}")
-
-    if k == "window":
-        rooms = _match_rooms(design, req.room) if req.room else design.rooms
-        if req.room and not rooms:
-            return CheckResult(req, "unmet", f"no room matches '{req.room}'")
-        ids = {r.id for r in rooms}
-        wins = [w for w in design.windows if w.room in ids and (req.side is None or (w.side or d.sides.get(w.id)) == req.side)]
-        return CheckResult(req, "met" if len(wins) >= n else "unmet", f"{len(wins)} window(s)" + (f" on side {req.side}" if req.side else "") + f", wanted {n}")
-
-    if k == "door":
-        a = _match_rooms(design, req.room)
-        if not a:
-            # A gate in a garden wall: a door hosted by a free-standing wall element named like the "room".
-            key = (req.room or "").lower()
-            walls = [e for e in design.elements if e.kind == "wall" and e.name and (key in e.name.lower() or e.name.lower() in key)]
-            gates = [d for d in design.doors if d.wall and d.wall in {w.id for w in walls}]
-            if gates:
-                return CheckResult(req, "met", f"door {gates[0].id} in {walls[0].name}")
-            if walls:
-                return CheckResult(req, "unmet", f"{walls[0].name} has no door")
-            return CheckResult(req, "unmet", f"no room matches '{req.room}'")
-        to_out = (req.room2 or "outside").lower() in ("outside", "exterior", "garden", "street")
-        b = [] if to_out else _match_rooms(design, req.room2)
-        for ra in a:
-            for door in design.doors:
-                if to_out and door.room == ra.id and door.to == "outside":
-                    return CheckResult(req, "met", f"{ra.name} has an exterior door")
-                if not to_out and any((door.room == ra.id and door.to == rb.id) or (door.room == rb.id and door.to == ra.id) for rb in b):
-                    return CheckResult(req, "met", f"door between {ra.name} and {req.room2}")
-        return CheckResult(req, "unmet", f"no door from {a[0].name} to {req.room2 or 'outside'}")
-
-    if k == "stair":
-        stairs = design.stairs
-        if req.room:
-            ids = {r.id for r in _match_rooms(design, req.room)}
-            stairs = [s for s in stairs if s.room in ids]
-        return CheckResult(req, "met" if stairs else "unmet", f"{len(stairs)} stair(s)" + (f" in {req.room}" if req.room else ""))
-
-    if k == "furniture":
-        kinds = _fixtures_for(req.item)
-        fx = [f for f in design.fixtures if f.kind in kinds]
-        if req.room:
-            ids = {r.id for r in _match_rooms(design, req.room)}
-            fx = [f for f in fx if f.room in ids]
-        return CheckResult(req, "met" if len(fx) >= n else "unmet", f"{len(fx)} {req.item}(s)" + (f" in {req.room}" if req.room else "") + f", wanted {n}")
-
-    if k == "roof":
-        want = (req.item or "").lower()
-        want = {"pitched": "gable", "gabled": "gable", "hipped": "hip"}.get(want, want)
-        return CheckResult(req, "met" if design.roof.kind == want else "unmet", f"roof is {design.roof.kind}, wanted {want}")
-
-    if k == "feature":
-        item = (req.item or "").lower()
-        if "garage" in item and "carport" not in item:
-            have = [r for r in design.rooms if r.kind == "garage"]
-            return CheckResult(req, "met" if have else "unmet", "garage present" if have else "no garage room")
-        if "porch" in item or "veranda" in item:
-            return CheckResult(req, "met" if design.porch else "unmet", "porch present" if design.porch else "no porch")
-        if "basement" in item or "cellar" in item or "underground" in item:
-            have = design.basements()
-            return CheckResult(req, "met" if have else "unmet", f"{have} basement level(s)" if have else "no level below ground")
-        for kind, words in (("courtyard", ("courtyard", "patio", "atrium")), ("terrace", ("terrace", "roof deck", "deck")),
-                            ("carport", ("carport",)), ("pergola", ("pergola", "loggia", "gazebo"))):
-            if any(w in item for w in words):
-                rooms = [r for r in design.rooms if r.kind == kind]
-                named = [e for e in design.elements if e.name and any(w in e.name.lower() for w in words)]
-                if rooms or named:
-                    return CheckResult(req, "met", f"{kind} present" + (f" ({rooms[0].name})" if rooms else f" ({named[0].name})"))
-                return CheckResult(req, "unmet", f"no {kind} room or element")
-        if "bridge" in item or "viaduct" in item or "walkway" in item:
-            decks = [e for e in design.elements if e.kind in ("slab", "roof")]
-            supports = [e for e in design.elements if e.kind in ("column", "beam")]
-            named = [e for e in design.elements if e.name and any(w in e.name.lower() for w in ("bridge", "deck", "span"))]
-            if (decks and supports) or named:
-                return CheckResult(req, "met", f"{len(decks)} deck(s) on {len(supports)} pier(s)/girder(s)" if decks and supports
-                                   else f"free element '{named[0].name}'")
-            return CheckResult(req, "unmet", "no deck slab on piers or girders")
-        if "rail" in item or "parapet" in item or "balustrade" in item:
-            rails = [e for e in design.elements if e.kind == "wall" and e.height and e.height <= 1.5]
-            named = [e for e in design.elements if e.name and any(w in e.name.lower() for w in ("rail", "parapet", "balustrade"))]
-            unroofed = [r for r in design.rooms if not r.roofed]
-            if rails or named or unroofed or design.balconies:
-                return CheckResult(req, "met", f"{len(rails or named)} parapet wall(s)" if rails or named else "railings on open edges")
-            return CheckResult(req, "unmet", "no parapet or railing")
-        if "curved" in item or "round" in item or "arc" in item:
-            arcs = [r for r in design.rooms if r.poly and any(e.through for e in r.poly)] + [e for e in design.elements if e.kind == "wall" and e.path and any(x.through for x in e.path)]
-            return CheckResult(req, "met" if arcs else "unmet", f"{len(arcs)} curved wall(s)" if arcs else "no curved walls")
-        if "l-shaped" in item or "l shaped" in item or "polygon" in item:
-            polys = [r for r in design.rooms if r.poly]
-            return CheckResult(req, "met" if polys else "unmet", f"{len(polys)} non-rectangular room(s)" if polys else "all rooms are rectangles")
-        named = [e for e in design.elements if e.name and (item in e.name.lower() or e.name.lower() in item)]
-        if named:
-            return CheckResult(req, "met", f"free element '{named[0].name}'")
-        if "balcon" in item or "terrace" in item:
-            return CheckResult(req, "met" if design.balconies else "unmet", f"{len(design.balconies)} balcony(ies)")
-        if "open" in item:  # open plan: kitchen and living share a wall (best we can do without merged rooms)
-            return CheckResult(req, "skipped", "open-plan layouts are approximated by adjacent rooms")
-        return CheckResult(req, "skipped", f"feature '{req.item}' has no automatic check")
-
-    if k == "dimension":
-        if not req.value or not d.footprints.get("L1"):
-            return CheckResult(req, "skipped", "no footprint to compare")
-        minx, miny, maxx, maxy = d.footprints["L1"][0].bounds if len(d.footprints["L1"]) == 1 else _bounds(d.footprints["L1"])
-        w, dp = maxx - minx, maxy - miny
-        want = sorted([req.value, req.value2 or req.value])
-        have = sorted([w, dp])
-        ok = all(abs(h - x) <= 0.2 * x for h, x in zip(have, want))
-        return CheckResult(req, "met" if ok else "unmet", f"footprint {w:.1f} x {dp:.1f} m, wanted {want[0]:.1f} x {want[1]:.1f}")
+    if k == "curved":
+        if not sel:
+            return CheckResult(req, "unmet", "nothing matches")
+        hit = [e for e in sel if e.curved]
+        return CheckResult(req, "met" if hit else "unmet", f"{len(hit)} curved element(s) of {len(sel)}")
 
     if k == "material":
-        want = (req.item or "").lower()
-        return CheckResult(req, "met" if design.wall_material == want else "unmet", f"walls are {design.wall_material or 'default'}, wanted {want}")
+        want = (req.item or req.name or "").lower()
+        have = sorted({(e.material or "").lower() for e in (sel or facts.elements) if e.material})
+        ok = any(want and want in name for name in have)
+        return CheckResult(req, "met" if ok else "unmet", f"materials {have or ['none']}, wanted {want}")
 
     return CheckResult(req, "skipped", "not automatically checkable")
 
 
-def _bounds(polys):
-    xs = [b for p in polys for b in (p.bounds[0], p.bounds[2])]
-    ys = [b for p in polys for b in (p.bounds[1], p.bounds[3])]
-    return min(xs), min(ys), max(xs), max(ys)
-
-
 def score(results: list[CheckResult]) -> tuple[int, int]:
-    """(met, checkable) — unsupported and skipped requirements do not count."""
+    """(met, checkable). Unsupported and skipped requirements do not count."""
     checkable = [r for r in results if r.status in ("met", "unmet")]
     return sum(1 for r in checkable if r.status == "met"), len(checkable)
 
 
 def unmet_lines(results: list[CheckResult]) -> list[str]:
     return [f"{r.requirement.text} — {r.detail}" for r in results if r.status == "unmet"]
-
-
-def is_verifiable(text: str) -> bool:
-    return not re.search(r"\b(modern|cozy|cosy|beautiful|nice|elegant|minimal|style|feel|vibe)\b", text.lower())

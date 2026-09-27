@@ -21,16 +21,18 @@ import ifcopenshell.geom
 Point3 = tuple[float, float, float]
 Segment = tuple[float, float, float, float]  # x1, y1, x2, y2
 
-# Construction phases, in build order — mirrors ifc/builder.py's BUILDERS.
+# Construction phases, in build order. Entity names, not a closed list: anything the compiler
+# emits that is not named here is skipped, the same way a foreign product always was.
 PHASES: list[tuple[str, tuple[str, ...]]] = [
-    ("foundation", ("IfcSlab",)),
-    ("structure", ("IfcWall", "IfcColumn", "IfcBeam", "IfcStair")),
-    ("roof", ("IfcRoof",)),
-    ("plumbing", ("IfcPipeSegment", "IfcCableCarrierSegment")),  # water riser + electrical conduit stack, both rough-in
+    ("foundation", ("IfcSlab", "IfcFooting", "IfcPile")),
+    ("structure", ("IfcWall", "IfcColumn", "IfcBeam", "IfcMember", "IfcStair", "IfcStairFlight", "IfcRamp",
+                   "IfcRampFlight", "IfcCurtainWall", "IfcPlate", "IfcCivilElement")),
+    ("roof", ("IfcRoof", "IfcCovering")),
+    ("plumbing", ("IfcPipeSegment", "IfcCableCarrierSegment")),
     ("spaces", ("IfcSpace",)),
-    ("electrical", ("IfcOutlet", "IfcElectricDistributionBoard", "IfcCableSegment")),
+    ("electrical", ("IfcOutlet", "IfcElectricDistributionBoard", "IfcCableSegment", "IfcLightFixture")),
     ("details", ("IfcDoor", "IfcWindow", "IfcRailing", "IfcFurniture", "IfcSanitaryTerminal", "IfcElectricAppliance",
-                "IfcBuildingElementProxy", "IfcLightFixture")),
+                "IfcBuildingElementProxy")),
 ]
 
 
