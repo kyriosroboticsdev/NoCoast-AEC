@@ -6,6 +6,9 @@
                           llama.cpp server, a hosted provider, a future fine-tuned model…)
     LLM_PROVIDER=claude   Anthropic API via the official SDK (ANTHROPIC_API_KEY), structured outputs
     LLM_PROVIDER=llamacpp a local .gguf served by llama-server, started on demand (LLM_MODEL, LLM_MODELS_DIR)
+
+LLM_VISION=1|0 says whether the model can be shown screenshots (the look loop); by default Claude and
+Anthropic's endpoint can, the mock can, and other servers are assumed text-only.
 """
 
 from __future__ import annotations
@@ -24,7 +27,13 @@ _singletons: dict[str, LLM] = {}  # llamacpp owns a server process; keep one ins
 
 def get_llm(provider: str | None = None) -> LLM:
     config.reload()  # pick up .env edits (provider, model, key) without a restart
-    name = provider or config.LLM_PROVIDER
+    llm = _build(provider or config.LLM_PROVIDER)
+    if config.LLM_VISION is not None:
+        llm.vision = config.LLM_VISION
+    return llm
+
+
+def _build(name: str) -> LLM:
     if name not in PROVIDERS:
         raise LLMError(f"unknown LLM provider '{name}' (available: {', '.join(PROVIDERS)})")
     if name == "mock":
@@ -53,7 +62,7 @@ def get_llm(provider: str | None = None) -> LLM:
         headers["anthropic-workspace-id"] = config.ANTHROPIC_WORKSPACE_ID
     return OpenAICompatibleLLM(model=config.LLM_MODEL, base_url=base_url, api_key=config.LLM_API_KEY,
                                timeout=config.LLM_TIMEOUT, extra_headers=headers,
-                               temperature=None if anthropic_host else 0.0, schema_bounds=not anthropic_host)
+                               temperature=None if anthropic_host else 0.0, schema_bounds=not anthropic_host, vision=anthropic_host)
 
 
 __all__ = ["LLM", "LLMError", "LLMRequest", "get_llm", "PROVIDERS"]

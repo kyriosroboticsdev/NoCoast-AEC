@@ -9,6 +9,7 @@ still generating.
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 from dataclasses import dataclass, field
@@ -25,6 +26,16 @@ class LLMError(RuntimeError):
     """The model could not be reached or returned something that is not JSON."""
 
 
+@dataclass(frozen=True)
+class Image:
+    """A PNG shown to the model after the user text, introduced by its caption."""
+    png: bytes
+    caption: str
+
+    def b64(self) -> str:
+        return base64.b64encode(self.png).decode("ascii")
+
+
 @dataclass
 class LLMRequest:
     system: str
@@ -32,10 +43,16 @@ class LLMRequest:
     schema: dict            # JSON schema the reply must satisfy
     schema_name: str        # "program" | "edit" — lets adapters pick a grammar or route
     meta: dict = field(default_factory=dict)  # side channel (raw prompt, current state) for the mock adapter
+    images: list[Image] = field(default_factory=list)   # only sent to adapters with `vision`
+
+    def captioned_text(self) -> str:
+        """The user text with the image captions listed, for adapters that attach images without text parts."""
+        return self.user + "".join(f"\n\nImage {i}: {im.caption}" for i, im in enumerate(self.images, 1))
 
 
 class LLM(Protocol):
     name: str
+    vision: bool    # accepts images; the look loop is skipped for models that do not
 
     def complete(self, request: LLMRequest, on_text: OnText | None = None, on_note: OnNote | None = None) -> dict: ...
 

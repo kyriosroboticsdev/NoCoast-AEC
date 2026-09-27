@@ -15,8 +15,20 @@ from llm.schema import strict_schema
 DEFAULT_MODEL = "claude-opus-5"
 
 
+def user_content(request: LLMRequest) -> str | list[dict]:
+    """The user turn: plain text, or text followed by each image after its caption."""
+    if not request.images:
+        return request.user
+    parts: list[dict] = [{"type": "text", "text": request.user}]
+    for i, image in enumerate(request.images, 1):
+        parts.append({"type": "text", "text": f"Image {i}: {image.caption}"})
+        parts.append({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": image.b64()}})
+    return parts
+
+
 class ClaudeLLM:
     name = "claude"
+    vision = True
 
     def __init__(self, model: str = DEFAULT_MODEL, timeout: float = 600, workspace_id: str = ""):
         self.model = model or DEFAULT_MODEL
@@ -31,7 +43,7 @@ class ClaudeLLM:
                 model=self.model,
                 max_tokens=16000,
                 system=request.system,
-                messages=[{"role": "user", "content": request.user}],
+                messages=[{"role": "user", "content": user_content(request)}],
                 output_config={"format": {"type": "json_schema", "schema": strict_schema(request.schema, keep_bounds=False)}},
             ) as stream:
                 for piece in stream.text_stream:

@@ -24,11 +24,22 @@ from logsetup import log
 TOO_LARGE_MARKERS = ("grammar is too large", "too large", "too complex")
 
 
+def user_content(request: LLMRequest) -> str | list[dict]:
+    """The user message: plain text, or text followed by each image (as a data URL) after its caption."""
+    if not request.images:
+        return request.user
+    parts: list[dict] = [{"type": "text", "text": request.user}]
+    for i, image in enumerate(request.images, 1):
+        parts.append({"type": "text", "text": f"Image {i}: {image.caption}"})
+        parts.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image.b64()}"}})
+    return parts
+
+
 class OpenAICompatibleLLM:
     name = "openai"
 
     def __init__(self, model: str, base_url: str, api_key: str = "", timeout: float = 600, extra_headers: dict | None = None,
-                 temperature: float | None = 0.0, schema_bounds: bool = True):
+                 temperature: float | None = 0.0, schema_bounds: bool = True, vision: bool = False):
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
@@ -37,12 +48,13 @@ class OpenAICompatibleLLM:
         self.temperature = temperature  # None = omit (Claude 5 models reject the field)
         self.schema_bounds = schema_bounds  # False for Anthropic's endpoint, which rejects minimum/maximum/…
         self.unconstrained: set[str] = set()  # schema names this server refused to compile
+        self.vision = vision  # the server's model accepts image parts (LLM_VISION)
 
     def _body(self, request: LLMRequest, constrained: bool) -> dict:
         body = {
             "model": self.model,
             "stream": True,
-            "messages": [{"role": "system", "content": request.system}, {"role": "user", "content": request.user}],
+            "messages": [{"role": "system", "content": request.system}, {"role": "user", "content": user_content(request)}],
         }
         if constrained:
             body["response_format"] = {
