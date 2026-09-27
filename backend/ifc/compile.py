@@ -262,7 +262,13 @@ def add_part(ctx: Built, part: GeoPart) -> ifcopenshell.entity_instance:
     if part.material:
         ifcopenshell.api.material.assign_material(m, products=[element], material=_material(ctx, part.material))
     if part.level in ctx.storeys:
-        ifcopenshell.api.spatial.assign_container(m, products=[element], relating_structure=ctx.storeys[part.level])
+        # IfcSpace (and any other spatial element) is aggregated into its storey. Every other
+        # product is contained by it. assign_container only walks IfcElement's inverse.
+        storey = ctx.storeys[part.level]
+        if is_a(part.ifc, "IfcSpatialElement"):
+            ifcopenshell.api.aggregate.assign_object(m, products=[element], relating_object=storey)
+        else:
+            ifcopenshell.api.spatial.assign_container(m, products=[element], relating_structure=storey)
     add_json_pset(m, element, PART_PSET, part.model_dump_json())
     ctx.products[part.id] = element
     ctx.parts[part.id] = part
