@@ -135,6 +135,7 @@ class StepStream:
         self._last_draft = 0.0
         self._draft_key: str | None = None
         self._open_key: str | None = None       # rooms already previewed from the layout step still being written
+        self._speculative = False               # the last preview came from a step that has not been applied yet
         self._chars = 0
         self._last_chars = 0
         self._last_beat = time.time()
@@ -217,11 +218,12 @@ class StepStream:
         steps = data.get("steps")
         if isinstance(steps, dict):
             steps = [steps]
-        if not isinstance(steps, list) or len(steps) <= self.applied:
-            return
-        for raw in steps[self.applied:]:
-            self.applied += 1
-            self.apply(raw)
+        if isinstance(steps, list):
+            for raw in steps[self.applied:]:
+                self.applied += 1
+                self.apply(raw)
+        # Always, not only when a step just landed: most chunks carry another room of the storey
+        # currently being written, and those are what the viewer draws while the step is open.
         self._preview_open_layout(text)
 
     def _preview_open_layout(self, text: str) -> None:
@@ -260,6 +262,16 @@ class StepStream:
             return
         with self._cond:
             self._dirty = candidate
+            self._speculative = True
+            self._cond.notify_all()
+
+    def _resync(self) -> None:
+        """Put the viewer back on the applied design after a speculative preview that did not land."""
+        with self._cond:
+            if not self._speculative:
+                return
+            self._dirty = self.design
+            self._speculative = False
             self._cond.notify_all()
 
     def apply(self, raw) -> bool:
@@ -294,13 +306,17 @@ class StepStream:
         self.emit("step", headline, {"index": index, "ok": True, "message": message, "headline": headline,
                                      "why": raw.get("why"), "facts": facts, "phase": facts["phase"], "step": raw,
                                      "elements": len(derived.spec.elements)})
+        self._open_key = None
         with self._cond:
             self._dirty = candidate
+            self._speculative = False
             self._cond.notify_all()
         return True
 
     def _reject(self, index: int, raw: dict, error: str) -> None:
         self.rejected.append((index, raw, error))
+        self._open_key = None
+        self._resync()   # the rooms previewed while this step was being written are not in the design
         log.info("step %d rejected: %s", index, error)
         headline = narrate_draft(raw, self.design) if isinstance(raw, dict) else ""
         self.emit("step", f"step {index} rejected: {error}",
@@ -309,6 +325,7 @@ class StepStream:
 
     def close(self) -> None:
         """Render the last pending design, then stop. Called before the final compile so IfcOpenShell is not used from two threads."""
+        self._resync()   # a reply that broke off mid-step must not leave that step's rooms on screen
         with self._cond:
             self._closed = True
             self._cond.notify_all()  # both the preview worker and the heartbeat wait here
@@ -341,8 +358,9 @@ class StepStream:
                 log.debug("preview skipped: %s", exc)
 
     def _render(self, design: Design) -> None:
-        if not design.rooms and not design.elements:
+        if not design.rooms and not design.elements and self.count == 0:
             return  # nothing to look at yet (levels only); the first preview waits for a room
+            # An emptied design still renders: it clears rooms a rejected step had put on screen.
         derived = analyze(design)
         spec = derived.spec
         elements = {e.id: e.model_dump_json() for e in spec.elements}

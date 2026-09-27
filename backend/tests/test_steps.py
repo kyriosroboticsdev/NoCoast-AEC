@@ -1,10 +1,12 @@
 """Build steps: application, rejection messages, cascades, and the streaming runner."""
 
 import json
+import time
 from unittest.mock import patch
 
 import pytest
 
+from core.derive import analyze
 from core.stream import StepStream
 from schemas.design import Design
 from schemas.steps import Step, StepError, apply_step
@@ -90,6 +92,18 @@ def test_stream_applies_steps_as_they_complete_and_rejects_bad_ones():
     assert stream.count >= 1
 
 
+def drawn(events: list) -> list:
+    return [e for e in events if e[0] == "partial" and e[2] and "ifc_url" in e[2]]
+
+
+def wait_for_preview(events: list, count: int = 1, timeout: float = 10.0) -> list:
+    """Previews render on a worker thread; give it the moment a real run would."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and len(drawn(events)) < count:
+        time.sleep(0.02)
+    return drawn(events)
+
+
 def test_an_open_layout_is_previewed_before_the_step_closes():
     events = []
     stream = StepStream(lambda stage, msg, data=None: events.append((stage, msg, data)), Design(), {})
@@ -97,10 +111,28 @@ def test_an_open_layout_is_previewed_before_the_step_closes():
             '{"step":"layout","level":"L1","rooms":[{"name":"Hall","rect":[0,0,4,6]},{"name":"Kitchen","rect":[4,0,4,4]}]}]}')
     cut = text.index(',{"name":"Kitchen"')
     stream.feed(text[:cut])
-    stream.close()
+    previews = wait_for_preview(events)
+    assert previews and previews[0][2]["elements"] >= 4
     assert stream.design.rooms == []  # the layout step has not closed, so nothing is committed
-    partials = [e for e in events if e[0] == "partial" and e[2] and "ifc_url" in e[2]]
-    assert partials and partials[0][2]["elements"] >= 4
+    # The reply stops mid-step: the hall was never applied, so the viewer is put back on the real design.
+    stream.close()
+    assert drawn(events)[-1][2]["elements"] == 0
+
+
+def test_a_rejected_layout_takes_its_preview_back_off_the_screen():
+    events = []
+    design, _ = run(Design(), {"step": "level", "id": "L1"}, {"step": "room", "name": "Hall", "rect": [0, 0, 4, 6]})
+    stream = StepStream(lambda stage, msg, data=None: events.append((stage, msg, data)), design, {})
+    good = '{"steps":[{"step":"layout","level":"L1","rooms":[{"name":"Hall","rect":[0,0,4,6]},{"name":"Kitchen","rect":[4,0,4,4]}'
+    stream.feed(good)
+    shown = wait_for_preview(events)[-1][2]["elements"]
+    # The step ends up overlapping the hall, so it is rejected and the preview of it must not stay.
+    stream.feed(good.replace('{"name":"Kitchen","rect":[4,0,4,4]', '{"name":"Kitchen","rect":[1,0,4,4]') + "]}]}")
+    stream.close()
+    assert [r.id for r in stream.design.rooms] == ["hall"]
+    assert any("rejected" in e[1] for e in events if e[0] == "step")
+    back = drawn(events)[-1][2]["elements"]
+    assert back < shown and back == len(analyze(design).spec.elements)
 
 
 def test_an_unfinished_rewrite_does_not_preview_a_storey_with_rooms_missing():

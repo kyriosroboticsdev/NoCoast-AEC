@@ -681,9 +681,14 @@ export default function App() {
 
   // --- layout -------------------------------------------------------------------
 
-  const running = active?.messages.some((m) => m.run && !["done", "error"].includes(m.run.stage));
+  // While the model is still reasoning there is nothing to draw, so the empty viewport says what it is
+  // doing this second (its thinking, the step being written) rather than one unchanging line.
+  const liveRun = [...(active?.messages ?? [])].reverse().find((m) => m.run && !["done", "error"].includes(m.run.stage))?.run;
+  const running = !!liveRun;
+  const liveLine = liveRun?.drafting?.trim()
+    || [...(liveRun?.steps ?? [])].reverse().find((s) => s.status === "running")?.title;
   const status = loadError
-    ?? (!shown && running ? "Generating model… the first preview appears after the first elements." : null)
+    ?? (!shown && running ? liveLine || "Generating model… the first shapes appear as soon as the model draws them." : null)
     // A restored session has a model before the viewer has read it back.
     ?? (!shown && active?.model ? `Loading ${active.model.name}…` : null)
     ?? (!shown && active ? "No model in this session yet." : null);
