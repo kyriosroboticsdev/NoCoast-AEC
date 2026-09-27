@@ -181,7 +181,7 @@ class Stair(_Element):
     direction: float = Field(90.0, description="Ascent direction in degrees: 0 = east (+x), 90 = north (+y)")
     width: float = Field(1.0, gt=0)
     rise: Optional[float] = Field(None, gt=0, description="Total rise; defaults to the level height")
-    riser: float = Field(0.18, gt=0)
+    riser: float = Field(0.178, gt=0, description="Maximum riser: the flight takes as many risers as the rise needs at this height or less (IBC 1011.5.2)")
     going: float = Field(0.28, gt=0)
     to_level: Optional[str] = Field(None, description="Level whose floor slab gets the stair opening")
 

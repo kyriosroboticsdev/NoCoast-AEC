@@ -314,6 +314,7 @@ function Cost({ data, onExport }: { data: api.Analysis; onExport: Props["onExpor
             ["Doors", `${q.doors} (${q.exterior_doors} exterior)`],
             ["Stairs / columns", `${q.stairs} / ${q.columns}`],
             ["Fixtures and equipment", `${q.fixtures} + ${q.assets} library assets`],
+            ...(q.lifts ? [["Passenger elevators", `${q.lifts} (${q.lift_stops} stops)`]] : []),
           ].map(([k, v]) => <tr key={k}><td>{k}</td><td className="r">{v}</td></tr>)}
         </tbody>
       </table>
