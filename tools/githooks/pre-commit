@@ -1,0 +1,55 @@
+#!/bin/sh
+# Workstream guard (installed by tools/ws.ps1 setup). Stops the three ways parallel
+# work gets mixed up: committing on main, committing in a folder that belongs to a
+# different branch, and committing files another workstream owns.
+
+branch=$(git symbolic-ref --quiet --short HEAD) || exit 0   # detached HEAD (rebase etc.)
+
+# 1. Never commit straight to main.
+case "$branch" in
+  main|master)
+    if [ "$ALLOW_MAIN_COMMIT" != "1" ]; then
+      echo "✗ Refusing to commit on '$branch'. Work on a branch: tools/ws.ps1 new <name>" >&2
+      echo "  (override once with ALLOW_MAIN_COMMIT=1)" >&2
+      exit 1
+    fi ;;
+esac
+
+# 2. This folder was created for a specific branch; don't commit to another one here.
+claimed_file="$(git rev-parse --git-dir)/workstream"
+if [ -f "$claimed_file" ]; then
+  claimed=$(tr -d '\r\n' < "$claimed_file")
+  if [ -n "$claimed" ] && [ "$claimed" != "$branch" ]; then
+    echo "✗ This folder belongs to '$claimed', but '$branch' is checked out here." >&2
+    echo "  Someone switched branches in a shared folder. Switch back (git switch $claimed)" >&2
+    echo "  or open that branch's own folder: tools/ws.ps1 list" >&2
+    exit 1
+  fi
+fi
+
+# 3. File ownership, from WORKSTREAMS on main (one source of truth for every branch).
+[ "$ALLOW_CROSS" = "1" ] && exit 0
+map=$(git show origin/main:WORKSTREAMS 2>/dev/null || git show main:WORKSTREAMS 2>/dev/null) || exit 0
+
+# First line whose branch pattern (a shell glob) matches wins; the rest of the line is path prefixes.
+owned=$(printf '%s\n' "$map" | sed 's/#.*//' | while read -r pattern rest; do
+  [ -n "$pattern" ] && [ -n "$rest" ] || continue
+  case "$branch" in $pattern) echo "$rest"; break ;; esac
+done)
+[ -z "$owned" ] || [ "$owned" = "*" ] && exit 0
+
+stray=$(git diff --cached --name-only --diff-filter=ACMRD | while IFS= read -r f; do
+  ok=0
+  for prefix in $owned; do
+    case "$f" in "$prefix"*) ok=1; break ;; esac
+  done
+  [ $ok -eq 0 ] && echo "    $f"
+done)
+if [ -n "$stray" ]; then
+  echo "✗ '$branch' owns only: $owned" >&2
+  echo "  These staged files belong to another workstream:" >&2
+  echo "$stray" >&2
+  echo "  Commit them on the owning branch, update WORKSTREAMS on main, or override once with ALLOW_CROSS=1" >&2
+  exit 1
+fi
+exit 0
