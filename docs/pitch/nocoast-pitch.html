@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NoCoast-AEC — Prompt in. IFC out.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300;12..96,500;12..96,600;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ===========================================
+   THEME — "Blueprint" drafting-sheet system
+   Change these variables to restyle the whole deck.
+   =========================================== */
+:root {
+    --stage-bg: #030a18;          /* letterbox colour outside the 16:9 stage */
+    --slide-bg: #07162e;          /* drafting sheet */
+    --paper: #eaf4ff;             /* primary text */
+    --line: #8fd3ff;              /* drafting cyan: rules, labels, wireframes */
+    --line-dim: rgba(143,211,255,.22);
+    --line-faint: rgba(143,211,255,.10);
+    --grid: rgba(143,211,255,.07);
+    --orange: #ff7a1a;            /* single accent: the thing being built */
+    --orange-dim: rgba(255,122,26,.18);
+    --panel: rgba(7,22,46,.86);
+    --disp: 'Bricolage Grotesque', sans-serif;
+    --mono: 'IBM Plex Mono', monospace;
+    --ease: cubic-bezier(.16,1,.3,1);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* ===========================================
+   FIXED 16:9 STAGE: MANDATORY BASE STYLES
+   Include this ENTIRE file in every presentation.
+   Slides are authored at 1920×1080 and scaled as a whole.
+   =========================================== */
+
+/* 1. Lock the browser viewport */
+html,
+body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    background: var(--stage-bg, #000);
+}
+
+/* 2. Full-window deck viewport */
+.deck-viewport {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    background: var(--stage-bg, #000);
+}
+
+/* 3. Fixed 16:9 design canvas.
+   JavaScript sets transform: translate(...) scale(...). */
+.deck-stage {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    transform-origin: 0 0;
+    background: var(--slide-bg, #fff);
+}
+
+/* 4. Slides stack inside the fixed stage.
+   Content must be laid out at 1920×1080, not reflowed per device. */
+.slide {
+    position: absolute;
+    inset: 0;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    display: block;
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    background: var(--slide-bg, #fff);
+}
+
+.slide.active,
+.slide.visible {
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+    z-index: 1;
+}
+
+/* 5. Keep media inside authored slide bounds */
+img,
+video,
+canvas,
+svg {
+    max-width: 100%;
+    max-height: 100%;
+}
+
+/* 6. Presentation chrome stays outside the slide design system */
+.deck-controls {
+    position: fixed;
+    left: 50%;
+    bottom: 22px;
+    transform: translateX(-50%);
+    z-index: 1000;
+}
+
+/* 7. Print one fixed-size slide per page */
+@media print {
+    html,
+    body {
+        width: 1920px;
+        height: auto;
+        overflow: visible;
+        background: #fff;
+    }
+
+    .deck-viewport {
+        position: static;
+        overflow: visible;
+        background: #fff;
+    }
+
+    .deck-stage {
+        position: static;
+        width: auto;
+        height: auto;
+        transform: none !important;
+        background: none;
+    }
+
+    .slide {
+        position: relative;
+        display: block !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        pointer-events: auto !important;
+        width: 1920px;
+        height: 1080px;
+        break-after: page;
+        page-break-after: always;
+    }
+
+    .slide:last-child {
+        break-after: auto;
+        page-break-after: auto;
+    }
+
+    .deck-controls {
+        display: none !important;
+    }
+}
+
+/* 8. Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.2s !important;
+    }
+}
+
+/* ===========================================
+   SLIDE TRANSITION + SHEET BACKGROUND
+   Every slide is a drafting sheet: fine grid, coarse grid,
+   soft vignette, double border, and a title-block chrome.
+   =========================================== */
+.slide { transition: opacity .45s ease; }
+.slide::before {
+    content: ""; position: absolute; inset: 0;
+    background-image:
+        linear-gradient(var(--grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+        linear-gradient(rgba(143,211,255,.14) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(143,211,255,.14) 1px, transparent 1px);
+    background-size: 24px 24px, 24px 24px, 120px 120px, 120px 120px;
+}
+.slide::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at 60% 40%, transparent 30%, rgba(3,10,24,.72) 100%);
+}
+.sheet { position: absolute; inset: 48px; border: 1px solid var(--line-dim); z-index: 1; pointer-events: none; }
+.sheet::before { content: ""; position: absolute; inset: 10px; border: 1px solid var(--line-dim); }
+/* everything with content sits above the vignette */
+.slide > *:not(.sheet) { z-index: 2; }
+
+/* chrome: sheet id top-left, section top-right, credit + page bottom */
+.chrome { position: absolute; font: 400 20px/1 var(--mono); letter-spacing: .22em; text-transform: uppercase; color: var(--line); }
+.chrome.tl { top: 92px; left: 112px; }
+.chrome.tr { top: 92px; right: 112px; }
+.chrome.bl { bottom: 92px; left: 112px; }
+.chrome.br { bottom: 92px; right: 112px; }
+
+/* ===========================================
+   TYPE ROLES
+   =========================================== */
+.kick { font: 400 22px/1 var(--mono); letter-spacing: .24em; text-transform: uppercase; color: var(--line); }
+h1 { font: 800 168px/.92 var(--disp); letter-spacing: -.04em; color: var(--paper); }
+h2 { font: 800 104px/.95 var(--disp); letter-spacing: -.035em; color: var(--paper); }
+h3 { font: 600 40px/1.1 var(--disp); letter-spacing: -.02em; color: var(--paper); }
+.o { color: var(--orange); }
+.lead { font: 300 34px/1.4 var(--disp); color: var(--paper); }
+.lead b { font-weight: 600; color: var(--line); }
+.mono { font-family: var(--mono); }
+.label { font: 400 17px/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--line); }
+
+/* ===========================================
+   REVEAL ANIMATIONS — triggered by .visible on the slide
+   Add class "r" plus an optional delay class d1..d8.
+   =========================================== */
+.r { opacity: 0; transform: translateY(26px); transition: opacity .8s var(--ease), transform .8s var(--ease); }
+.slide.visible .r { opacity: 1; transform: none; }
+.d1 { transition-delay: .15s } .d2 { transition-delay: .3s } .d3 { transition-delay: .45s } .d4 { transition-delay: .6s }
+.d5 { transition-delay: .75s } .d6 { transition-delay: .9s } .d7 { transition-delay: 1.05s } .d8 { transition-delay: 1.2s }
+
+/* line-drawing for any SVG with class "draw" */
+.draw path, .draw line, .draw polyline, .draw circle, .draw rect {
+    fill: none; stroke: var(--line); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round;
+    stroke-dasharray: 2400; stroke-dashoffset: 2400;
+}
+.slide.visible .draw path, .slide.visible .draw line, .slide.visible .draw polyline,
+.slide.visible .draw circle, .slide.visible .draw rect { animation: draw 2s cubic-bezier(.4,0,.2,1) forwards; }
+.draw .o { stroke: var(--orange); stroke-width: 3; }
+.draw .dim { stroke: var(--line-dim); stroke-width: 1.2; stroke-dasharray: 6 6; stroke-dashoffset: 0; animation: none !important; }
+.draw text { font: 400 15px var(--mono); fill: var(--line); letter-spacing: .08em; opacity: 0; }
+.slide.visible .draw text { animation: fade .5s 1.9s forwards; }
+.draw .s1 { animation-delay: .2s !important } .draw .s2 { animation-delay: .6s !important }
+.draw .s3 { animation-delay: 1s !important } .draw .s4 { animation-delay: 1.4s !important } .draw .s5 { animation-delay: 1.8s !important }
+@keyframes draw { to { stroke-dashoffset: 0 } }
+@keyframes fade { to { opacity: 1 } }
+@keyframes blink { 50% { opacity: 0 } }
+@keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(255,122,26,.0) } 50% { box-shadow: 0 0 0 14px rgba(255,122,26,.18) } }
+
+/* ===========================================
+   SHARED COMPONENTS
+   =========================================== */
+/* title block (bottom-right table) */
+.tb { position: absolute; right: 58px; bottom: 58px; width: 640px; border: 1px solid var(--line); display: grid; grid-template-columns: 1.2fr 1fr 1fr; background: var(--panel); }
+.tb div { padding: 14px 18px; border-right: 1px solid var(--line-dim); font: 400 16px/1.5 var(--mono); color: var(--line); letter-spacing: .04em; text-transform: uppercase; }
+.tb div:last-child { border-right: 0; }
+.tb div b { display: block; font-weight: 500; color: var(--paper); font-size: 18px; text-transform: none; }
+.tb div.wide { grid-column: 1 / -1; border-top: 1px solid var(--line-dim); border-right: 0; }
+
+/* drafting panel */
+.panel { border: 1px solid var(--line-dim); background: var(--panel); position: relative; }
+.panel .cap { position: absolute; top: -13px; left: 18px; padding: 0 10px; background: var(--slide-bg); font: 500 15px/1.6 var(--mono); letter-spacing: .18em; text-transform: uppercase; color: var(--line); }
+
+/* code block */
+pre.code { font: 400 21px/1.55 var(--mono); color: var(--paper); white-space: pre; }
+pre.code .k { color: var(--line); } pre.code .s { color: #ffd6b0; } pre.code .n { color: var(--orange); } pre.code .c { color: rgba(234,244,255,.45); }
+
+/* chip */
+.chip { display: inline-flex; align-items: center; gap: 10px; padding: 9px 14px; border: 1px solid var(--line-dim); font: 500 18px/1 var(--mono); color: var(--paper); letter-spacing: .02em; background: rgba(143,211,255,.04); }
+.chip::before { content: ""; width: 8px; height: 8px; background: var(--line); }
+.chip.o { color: var(--paper); border-color: var(--orange); background: var(--orange-dim); }
+.chip.o::before { background: var(--orange); }
+
+/* ===========================================
+   SLIDE 1 — TITLE
+   =========================================== */
+.s-title .kick { position: absolute; left: 120px; top: 150px; }
+.s-title h1 { position: absolute; left: 112px; top: 220px; width: 1080px; }
+.s-title .lead { position: absolute; left: 120px; top: 780px; width: 900px; font-size: 32px; }
+.s-title .iso { position: absolute; right: 120px; top: 120px; width: 760px; height: 760px; }
+
+/* ===========================================
+   SLIDE 2 — TEAM
+   =========================================== */
+.s-team .kick { position: absolute; left: 112px; top: 150px; }
+.s-team h2 { position: absolute; left: 108px; top: 200px; }
+.team { position: absolute; left: 112px; right: 112px; top: 400px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 32px; }
+.person { border: 1px solid var(--line-dim); background: var(--panel); padding: 32px 30px 30px; height: 520px; position: relative; }
+.person::after { content: attr(data-n); position: absolute; top: 18px; right: 20px; font: 400 15px var(--mono); color: var(--line); letter-spacing: .2em; }
+.portrait { width: 168px; height: 168px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center; position: relative; margin-bottom: 28px; background: radial-gradient(circle at 50% 40%, rgba(143,211,255,.12), transparent 70%); overflow: hidden; }
+.portrait img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+.portrait span { font: 800 58px/1 var(--disp); letter-spacing: -.04em; color: var(--paper); }
+.portrait::before { content: ""; position: absolute; inset: 10px; border: 1px dashed var(--line-dim); border-radius: 50%; }
+.person h3 { margin-bottom: 14px; }
+.person p { font: 300 21px/1.4 var(--disp); color: var(--paper); opacity: .85; }
+.person .tag { position: absolute; left: 30px; bottom: 26px; font: 400 15px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--orange); }
+
+/* ===========================================
+   SLIDE 3 — THE FIELD (copilots vs. open standard)
+   =========================================== */
+.s-field h2 { position: absolute; left: 108px; top: 200px; width: 1000px; }
+.s-field .lead { position: absolute; left: 112px; top: 560px; width: 820px; }
+.vs { position: absolute; right: 112px; top: 200px; width: 700px; display: grid; grid-template-rows: 1fr 1fr; gap: 32px; height: 700px; }
+.vs .panel { padding: 40px 40px 36px; }
+.vs .panel h3 { font-size: 44px; margin-bottom: 18px; }
+.vs .panel p { font: 300 24px/1.45 var(--disp); color: var(--paper); opacity: .85; }
+.vs .panel.o { border-color: var(--orange); }
+.vs .panel.o .cap { color: var(--orange); }
+.vs .panel.x { opacity: .6; }
+.vs .panel.x h3 { text-decoration: line-through; text-decoration-color: var(--orange); text-decoration-thickness: 3px; }
+
+/* ===========================================
+   SLIDE 4 — WHAT WE BUILT (three layers)
+   =========================================== */
+.s-built h2 { position: absolute; left: 108px; top: 180px; width: 1700px; }
+.layers { position: absolute; left: 112px; right: 112px; top: 500px; display: grid; grid-template-columns: 1fr 64px 1fr 64px 1fr 64px 1fr; align-items: stretch; height: 330px; }
+.layer { border: 1px solid var(--line-dim); background: var(--panel); padding: 30px 30px 26px; position: relative; }
+.layer .label { margin-bottom: 14px; }
+.layer h3 { font-size: 40px; margin-bottom: 10px; }
+.layer p { font: 300 21px/1.4 var(--disp); color: var(--paper); opacity: .85; }
+.layer .who { position: absolute; left: 30px; bottom: 22px; font: 500 15px var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--line); }
+.layer.model { border-color: var(--orange); }
+.layer.model .who { color: var(--orange); }
+.arrow { display: grid; place-items: center; color: var(--line); font: 300 44px var(--disp); }
+.s-built .foot { position: absolute; left: 112px; bottom: 150px; display: flex; gap: 56px; }
+.s-built .foot div { font: 300 22px/1.4 var(--disp); color: var(--paper); opacity: .85; }
+.s-built .foot div b { display: block; font: 800 44px/1 var(--disp); color: var(--line); letter-spacing: -.03em; margin-bottom: 6px; }
+
+/* ===========================================
+   SLIDE 5 — HOW IT WORKS (pipeline)
+   =========================================== */
+.s-pipe h2 { position: absolute; left: 108px; top: 170px; font-size: 92px; }
+.s-pipe .lead { position: absolute; left: 112px; top: 300px; width: 1300px; font-size: 30px; }
+.pipe { position: absolute; left: 112px; right: 112px; top: 470px; height: 340px; }
+.pipe svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.stage { position: absolute; top: 40px; width: 220px; height: 190px; border: 1px solid var(--line-dim); background: var(--panel); padding: 22px 20px; }
+.stage .n { font: 500 15px var(--mono); color: var(--line); letter-spacing: .2em; margin-bottom: 12px; }
+.stage h3 { font-size: 30px; margin-bottom: 8px; }
+.stage p { font: 300 18px/1.35 var(--disp); color: var(--paper); opacity: .8; }
+.stage.o { border-color: var(--orange); }
+.stage.o .n { color: var(--orange); }
+.fixlbl { position: absolute; left: 640px; top: 292px; font: 400 16px var(--mono); letter-spacing: .18em; text-transform: uppercase; color: var(--orange); }
+.s-pipe .stat { position: absolute; left: 112px; bottom: 150px; font: 300 26px/1.4 var(--disp); color: var(--paper); }
+.s-pipe .stat b { font-weight: 600; color: var(--line); }
+
+/* ===========================================
+   SLIDE 6 — THE TOOL CALLS
+   =========================================== */
+.s-tools h2 { position: absolute; left: 108px; top: 170px; font-size: 92px; }
+.s-tools .codep { position: absolute; left: 112px; top: 330px; width: 780px; height: 560px; padding: 36px 34px; }
+.s-tools .groups { position: absolute; left: 950px; right: 112px; top: 330px; }
+.group { margin-bottom: 16px; }
+.group .label { margin-bottom: 8px; }
+.group .chips { display: flex; flex-wrap: wrap; gap: 10px; }
+.s-tools .research { position: absolute; left: 950px; right: 112px; top: 790px; padding: 24px 28px 22px; }
+.s-tools .research .chips { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+.s-tools .research .chip { font-size: 17px; padding: 8px 12px; }
+
+/* ===========================================
+   SLIDE 7 — EDIT IN PLACE (selection as context)
+   =========================================== */
+.s-edit h2 { position: absolute; left: 108px; top: 170px; width: 1000px; }
+.prompt { position: absolute; left: 112px; top: 470px; width: 900px; border: 1px solid var(--line); background: var(--panel); padding: 26px 30px; font: 400 30px/1.35 var(--mono); color: var(--paper); }
+.prompt .sel { display: inline-block; padding: 4px 14px; border: 1px solid var(--orange); color: var(--orange); background: var(--orange-dim); margin-right: 14px; }
+.prompt .cur { display: inline-block; width: 14px; height: 34px; background: var(--line); vertical-align: -6px; margin-left: 6px; animation: blink 1s steps(1) infinite; }
+.edit-facts { position: absolute; left: 112px; top: 640px; width: 900px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; }
+.edit-facts div { border-top: 1px solid var(--line-dim); padding-top: 16px; font: 300 21px/1.4 var(--disp); color: var(--paper); opacity: .9; }
+.edit-facts div b { display: block; font: 500 15px var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--line); margin-bottom: 8px; }
+.s-edit .iso { position: absolute; right: 120px; top: 140px; width: 700px; height: 700px; }
+.s-edit .iso .hl { stroke: var(--orange); stroke-width: 4; }
+.s-edit .iso .fill { fill: var(--orange-dim); stroke: none; stroke-dasharray: 0; animation: none !important; opacity: 0; }
+.s-edit.visible .iso .fill { animation: fade .6s 1.6s forwards !important; }
+
+/* ===========================================
+   SLIDE 8 + 9 — DEMO CUES
+   =========================================== */
+.s-demo .kick { position: absolute; left: 112px; top: 150px; }
+.s-demo h2 { position: absolute; left: 108px; top: 205px; }
+.s-demo .shot { position: absolute; left: 112px; top: 360px; width: 880px; border: 1px solid var(--line); background: var(--panel); padding: 10px; }
+.s-demo .shot img { display: block; width: 100%; height: auto; }
+.s-demo .shot .cap { color: var(--line); }
+.s-demo .side { position: absolute; left: 1060px; right: 112px; top: 380px; }
+.s-demo .side .label { margin-bottom: 16px; }
+.s-demo .side .q { font: 300 30px/1.4 var(--disp); color: var(--paper); border-left: 3px solid var(--orange); padding-left: 24px; margin-bottom: 40px; }
+.s-demo .side ul { list-style: none; }
+.s-demo .side li { font: 300 23px/1.4 var(--disp); color: var(--paper); opacity: .9; padding: 14px 0; border-top: 1px solid var(--line-dim); }
+.s-demo .side li::before { content: "→ "; color: var(--line); font-family: var(--mono); }
+.s-demo .cue { position: absolute; right: 112px; bottom: 150px; font: 500 18px var(--mono); letter-spacing: .2em; text-transform: uppercase; color: var(--orange); padding: 14px 22px; border: 1px solid var(--orange); animation: pulse 2.4s ease-in-out infinite; }
+/* live slide: giant prompt */
+.s-live .bigprompt { position: absolute; left: 112px; right: 112px; top: 380px; border: 1px solid var(--line); background: var(--panel); padding: 44px 48px; font: 500 46px/1.3 var(--disp); color: var(--paper); letter-spacing: -.01em; }
+.s-live .bigprompt .cap { color: var(--line); }
+.s-live .bigprompt .cur { display: inline-block; width: 18px; height: 48px; background: var(--line); vertical-align: -8px; margin-left: 8px; animation: blink 1s steps(1) infinite; }
+.s-live .watch { position: absolute; left: 112px; right: 112px; top: 660px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 32px; }
+.s-live .watch div { border-top: 1px solid var(--line-dim); padding-top: 18px; font: 300 22px/1.4 var(--disp); color: var(--paper); opacity: .9; }
+.s-live .watch div b { display: block; font: 500 15px var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--line); margin-bottom: 10px; }
+
+/* ===========================================
+   SLIDE 10 — CLOSE
+   =========================================== */
+.s-close h1 { position: absolute; left: 112px; top: 300px; width: 1300px; }
+.s-close .lead { position: absolute; left: 120px; top: 700px; width: 1000px; }
+.s-close .repo { position: absolute; left: 120px; top: 800px; font: 500 26px var(--mono); color: var(--line); letter-spacing: .04em; }
+.s-close .iso { position: absolute; right: 100px; top: 100px; width: 640px; height: 640px; opacity: .9; }
+
+/* ===========================================
+   DECK CHROME (outside the slide design system)
+   =========================================== */
+.deck-controls { display: flex; gap: 6px; align-items: center; opacity: 0; transition: opacity .3s; }
+body:hover .deck-controls { opacity: 1; }
+.deck-controls button { border: 1px solid var(--line-dim); background: rgba(3,10,24,.85); color: var(--line); font: 500 12px var(--mono); padding: 8px 12px; cursor: pointer; letter-spacing: .1em; }
+.deck-controls .pg { color: var(--line); font: 400 12px var(--mono); padding: 0 10px; letter-spacing: .1em; }
+.progress { position: fixed; left: 0; bottom: 0; height: 3px; background: var(--orange); width: 0; z-index: 1000; transition: width .4s var(--ease); }
+
+/* inline editing affordance */
+.edit-hotzone { position: fixed; top: 0; left: 0; width: 80px; height: 80px; z-index: 10000; cursor: pointer; }
+.edit-toggle { position: fixed; top: 14px; left: 14px; z-index: 10001; opacity: 0; pointer-events: none; transition: opacity .3s ease; border: 1px solid var(--line); background: rgba(3,10,24,.9); color: var(--line); font: 500 12px var(--mono); padding: 8px 12px; cursor: pointer; letter-spacing: .1em; }
+.edit-toggle.show, .edit-toggle.active { opacity: 1; pointer-events: auto; }
+.edit-toggle.active { border-color: var(--orange); color: var(--orange); }
+body.editing [contenteditable="true"] { outline: 1px dashed var(--orange); outline-offset: 4px; cursor: text; }
+</style>
+</head>
+<body>
+<div class="edit-hotzone"></div>
+<button class="edit-toggle" id="editToggle" title="Edit mode (E)">EDIT · E</button>
+<div class="progress" id="progress"></div>
+
+<div class="deck-viewport">
+<main class="deck-stage" id="deckStage">
+
+<!-- ================= SLIDE 1: TITLE ================= -->
+<section class="slide s-title">
+  <div class="sheet"></div>
+  <div class="kick r d1">Sheet A-000 · Product pitch · Rev 01</div>
+  <h1 class="r d2">Prompt in.<br><span class="o">IFC</span> out.</h1>
+  <p class="lead r d3">An agent harness that builds <b>vendor-neutral BIM</b> from scratch. The model never writes IFC, and never writes a wall.</p>
+  <svg class="iso draw" viewBox="0 0 760 760" aria-hidden="true">
+    <path class="s1" d="M120 470 L380 320 L640 470 L380 620 Z"/>
+    <path class="s2" d="M120 470 L120 340 L380 190 L640 340 L640 470"/>
+    <line class="s2" x1="380" y1="620" x2="380" y2="490"/>
+    <path class="s2" d="M120 340 L380 490 L640 340"/>
+    <path class="s3" d="M120 340 L120 230 L380 80 L640 230 L640 340"/>
+    <path class="s3" d="M120 230 L380 380 L640 230"/>
+    <line class="s3" x1="380" y1="490" x2="380" y2="380"/>
+    <path class="o s4" d="M120 230 L250 130 L510 280 L640 230"/>
+    <path class="o s4" d="M250 130 L380 80"/>
+    <path class="o s4" d="M510 280 L380 380"/>
+    <path class="s5" d="M200 420 L200 380 L250 410 L250 450 Z"/>
+    <path class="s5" d="M300 480 L300 440 L350 470 L350 510 Z"/>
+    <path class="s5" d="M480 400 L480 350 L530 320 L530 370 Z"/>
+    <path class="s5" d="M430 585 L430 520 L470 497 L470 562 Z"/>
+    <line class="dim" x1="100" y1="500" x2="360" y2="650"/>
+    <line class="dim" x1="660" y1="500" x2="400" y2="650"/>
+    <line class="dim" x1="80" y1="470" x2="80" y2="230"/>
+    <text x="40" y="360" transform="rotate(-90 40 360)">6.40 m</text>
+    <text x="190" y="640">12.00 m</text>
+    <text x="500" y="640">8.50 m</text>
+    <text x="560" y="120">IfcRoof · GABLE</text>
+    <text x="70" y="200">IfcBuildingStorey ×2</text>
+    <text x="560" y="560">IfcWindow · IfcDoor</text>
+  </svg>
+  <div class="tb r d4">
+    <div>Project<b>NoCoast-AEC</b></div>
+    <div>Schema<b>IFC4</b></div>
+    <div>Date<b>2026-09-27</b></div>
+    <div class="wide">Drawn by<b>Abhijyot Chadha · Kailash Kannan · Drona Thoka · kyriolexy</b></div>
+  </div>
+</section>
+
+<!-- ================= SLIDE 2: TEAM ================= -->
+<!-- Portraits are initials placeholders. To use photos: replace the <span> inside
+     .portrait with <img src="assets/name.jpg" alt="Name"> -->
+<section class="slide s-team">
+  <div class="sheet"></div>
+  <div class="chrome tl">Sheet A-001</div><div class="chrome tr">Team</div>
+  <div class="chrome bl">NoCoast-AEC · Product pitch</div><div class="chrome br">02 / 10</div>
+  <div class="kick r d1">Drawn by</div>
+  <h2 class="r d2">Four people, one harness.</h2>
+  <div class="team">
+    <div class="person r d3" data-n="01">
+      <div class="portrait"><span>AC</span></div>
+      <h3>Abhijyot Chadha</h3>
+      <p>MEP and IFC geometry. Risers, panels, wiring; the slicer; the raw three.js viewer engine.</p>
+      <div class="tag">Geometry · MEP</div>
+    </div>
+    <div class="person r d4" data-n="02">
+      <div class="portrait"><span>KK</span></div>
+      <h3>Kailash Kannan</h3>
+      <p>Product UI and the reasoning trace. Ported the redesigned interface onto the versioned projects API; docs.</p>
+      <div class="tag">Product · UI</div>
+    </div>
+    <div class="person r d5" data-n="03">
+      <div class="portrait"><span>DT</span></div>
+      <h3>Drona Thoka</h3>
+      <p>Desktop app and the IFC viewer package. Final-deliverable export as stamped IFC or a zip bundle.</p>
+      <div class="tag">Desktop · Viewer · Export</div>
+    </div>
+    <div class="person r d6" data-n="04">
+      <div class="portrait"><span>KY</span></div>
+      <h3>kyriolexy</h3>
+      <p>The agent pipeline. Step-streamed design layer, LLM adapters, requirement checks and live previews.</p>
+      <div class="tag">Agent · Pipeline</div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SLIDE 3: THE FIELD ================= -->
+<section class="slide s-field">
+  <div class="sheet"></div>
+  <div class="chrome tl">Sheet A-002</div><div class="chrome tr">Why</div>
+  <div class="chrome bl">NoCoast-AEC · Product pitch</div><div class="chrome br">03 / 10</div>
+  <h2 class="r d1">Everyone is building a Revit copilot.</h2>
+  <p class="lead r d2">We built an agent that writes the <b>open standard</b> instead. IFC is ISO 16739: one file that opens in Revit, ArchiCAD, Bentley, Solibri, Navisworks and BlenderBIM.</p>
+  <div class="vs">
+    <div class="panel x r d3">
+      <span class="cap">The crowd</span>
+      <h3>A plug-in inside one vendor's file</h3>
+      <p>Locked to a licence, a version and a UI. The model is an autocomplete for someone else's data model.</p>
+    </div>
+    <div class="panel o r d4">
+      <span class="cap">NoCoast</span>
+      <h3>An agent harness that builds IFC from scratch</h3>
+      <p>Vendor-neutral output, swappable model, every element with a stable GlobalId. Open it anywhere.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SLIDE 4: WHAT WE BUILT ================= -->
+<section class="slide s-built">
+  <div class="sheet"></div>
+  <div class="chrome tl">Sheet A-003</div><div class="chrome tr">What we built</div>
+  <div class="chrome bl">NoCoast-AEC · Product pitch</div><div class="chrome br">04 / 10</div>
+  <h2 class="r d1">The model never writes IFC.<br>It never writes <span class="o">a wall.</span></h2>
+  <div class="layers">
+    <div class="layer model r d2">
+      <div class="label">01 · Semantic</div>
+      <h3>Design</h3>
+      <p>Levels, rooms as rectangles or polygons, doors, windows, stairs, roof, bricks. About 600 tokens for a house.</p>
+      <div class="who">Written by the model</div>
+    </div>
+    <div class="arrow r d3">→</div>
+    <div class="layer model r d3">
+      <div class="label">02 · Deltas</div>
+      <h3>Steps</h3>
+      <p>Small typed edits, streamed one at a time. Each one carries a <span class="mono">why</span>.</p>
+      <div class="who">Written by the model</div>
+    </div>
+    <div class="arrow r d4">→</div>
+    <div class="layer r d4">
+      <div class="label">03 · Geometric IR</div>
+      <h3>BuildingSpec</h3>
+      <p>Walls, slabs, openings and roofs derived deterministically from the design. No hallucinated geometry.</p>
+      <div class="who">Derived by code</div>
+    </div>
+    <div class="arrow r d5">→</div>
+    <div class="layer r d5">
+      <div class="label">04 · Output</div>
+      <h3>IFC4</h3>
+      <p>Compiled with IfcOpenShell after every step. 50 to 200k tokens the model never has to emit.</p>
+      <div class="who">Compiled by code</div>
+    </div>
+  </div>
+  <div class="foot">
+    <div class="r d6"><b>0</b>broken STEP references</div>
+    <div class="r d7"><b>Stable</b>GlobalIds across every edit</div>
+    <div class="r d8"><b>Swappable</b>Opus 5.5 today, any model tomorrow</div>
+  </div>
+</section>
+
+<!-- ================= SLIDE 5: HOW IT WORKS ================= -->
+<section class="slide s-pipe">
+  <div class="sheet"></div>
+  <div class="chrome tl">Sheet A-004</div><div class="chrome tr">How it works</div>
+  <div class="chrome bl">NoCoast-AEC · Product pitch</div><div class="chrome br">05 / 10</div>
+  <h2 class="r d1">Seven stages, one preview per step.</h2>
+  <p class="lead r d2">The harness turns the brief into a checklist, researches the brick library, then streams build steps. Anything that fails a check goes back to the model as a fix round.</p>
+  <div class="pipe">
+    <svg viewBox="0 0 1696 340" aria-hidden="true" class="draw">
+      <line class="s1" x1="220" y1="135" x2="248" y2="135"/>
+      <line class="s1" x1="468" y1="135" x2="496" y2="135"/>
+      <line class="s2" x1="716" y1="135" x2="744" y2="135"/>
+      <line class="s2" x1="964" y1="135" x2="992" y2="135"/>
+      <line class="s3" x1="1212" y1="135" x2="1240" y2="135"/>
+      <line class="s3" x1="1460" y1="135" x2="1488" y2="135"/>
+      <!-- fix-round loop from verify + look back to build -->
+      <path class="o s4" d="M1350 232 L1350 300 L850 300 L850 232"/>
+      <path class="o s4" d="M840 244 L850 232 L860 244"/>
+    </svg>
+    <div class="stage r d2" style="left:0"><div class="n">01</div><h3>Checklist</h3><p>Brief becomes measurable requirements.</p></div>
+    <div class="stage r d3" style="left:248px"><div class="n">02</div><h3>Research</h3><p>Up to 3 rounds of tool calls into bricks and skills.</p></div>
+    <div class="stage r d3" style="left:496px"><div class="n">03</div><h3>Approach</h3><p>One paragraph: what will be built and why.</p></div>
+    <div class="stage o r d4" style="left:744px"><div class="n">04</div><h3>Build</h3><p>Steps stream in; each compiles a preview IFC.</p></div>
+    <div class="stage r d5" style="left:992px"><div class="n">05</div><h3>Coordinate</h3><p>Clashes, connectors, structural spans, checklist.</p></div>
+    <div class="stage r d5" style="left:1240px"><div class="n">06</div><h3>Look</h3><p>Headless renders reviewed by a vision model.</p></div>
+    <div class="stage r d6" style="left:1488px"><div class="n">07</div><h3>Compile</h3><p>Version stored, viewer updates, IFC ready.</p></div>
+    <div class="fixlbl r d6">fix round</div>
+  </div>
+  <p class="stat r d7">Measured on Opus 5.5: <b>77 steps</b>, a median <b>0.8 s</b> apart, <b>73 previews</b>, 15 of 16 requirements met on the first pass.</p>
+</section>
+
+<!-- ================= SLIDE 6: THE TOOL CALLS ================= -->
+<section class="slide s-tools">
+  <div class="sheet"></div>
+  <div class="chrome tl">Sheet A-005</div><div class="chrome tr">Tool calls</div>
+  <div class="chrome bl">NoCoast-AEC · Product pitch</div><div class="chrome br">06 / 10</div>
+  <h2 class="r d1">Eighteen step kinds. That is all.</h2>
+  <div class="panel codep r d2">
+    <span class="cap">One streamed step</span>
+<pre class="code"><span class="k">{</span>
+  <span class="k">"kind"</span>: <span class="n">"room"</span>,
+  <span class="k">"id"</span>: <span class="s">"kitchen"</span>,
+  <span class="k">"level"</span>: <span class="s">"L1"</span>,
+  <span class="k">"name"</span>: <span class="s">"Kitchen"</span>,
+  <span class="k">"rect"</span>: [<span class="s">0, 0, 5.2, 4.0</span>],
+  <span class="k">"why"</span>: <span class="s">"north light on the worktop,
+          one wall shared with the hall"</span>
+<span class="k">}</span>
+
+<span class="c">// code derives the walls, slab and openings,
+// compiles IFC, streams a preview, runs checks.
+// rejected → back to the model as a fix round.</span></pre>
+  </div>
+  <div class="groups">
+    <div class="group r d3"><div class="label">Structure</div><div class="chips">
+      <span class="chip">level</span><span class="chip">layout</span><span class="chip o">room</span><span class="chip">column</span><span class="chip">material</span><span class="chip">building</span></div></div>
+    <div class="group r d4"><div class="label">Openings &amp; circulation</div><div class="chips">
+      <span class="chip">door</span><span class="chip">window</span><span class="chip">stair</span></div></div>
+    <div class="group r d5"><div class="label">Envelope</div><div class="chips">
+      <span class="chip">roof</span><span class="chip">balcony</span><span class="chip">porch</span></div></div>
+    <div class="group r d6"><div class="label">Objects &amp; free geometry</div><div class="chips">
+      <span class="chip">furniture</span><span class="chip">brick</span><span class="chip">asset</span><span class="chip">custom</span><span class="chip">element</span></div></div>
+    <div class="group r d7"><div class="label">Control</div><div class="chips">
+      <span class="chip">remove</span><span class="chip">note</span></div></div>
+  </div>
+  <div class="panel research r d8">
+    <span class="cap">Research tools · read-only</span>
+    <div class="chips"><span class="chip">search_bricks</span><span class="chip">get_brick</span><span class="chip">check_asset</span><span class="chip">list_skills</span><span class="chip">get_skill</span><span class="chip">check_design</span><span class="chip">structure_report</span></div>
+  </div>
+</section>
+
+<!-- ================= SLIDE 7: EDIT IN PLACE ================= -->
+<section class="slide s-edit">
+  <div class="sheet"></div>
+  <div class="chrome tl">Sheet A-006</div><div class="chrome tr">Editing</div>
+  <div class="chrome bl">NoCoast-AEC · Product pitch</div><div class="chrome br">07 / 10</div>
+  <h2 class="r d1">Click a wall.<br>Say what you want.</h2>
+  <div class="prompt r d2"><span class="sel">west wall · Hall</span>add a window here<span class="cur"></span></div>
+  <div class="edit-facts">
+    <div class="r d3"><b>Selection as context</b>The viewer selection is described in words to the model, so "here" means something.</div>
+    <div class="r d4"><b>Edits are deltas</b>The model emits only the steps that change the design. Nothing is rebuilt from scratch.</div>
+    <div class="r d5"><b>Ids survive</b>Derived ids come from room ids, so GlobalIds hold across moves and versions.</div>
+  </div>
+  <svg class="iso draw" viewBox="0 0 760 760" aria-hidden="true">
+    <path class="s1" d="M120 470 L380 320 L640 470 L380 620 Z"/>
+    <path class="s1" d="M120 470 L120 340 L380 190 L640 340 L640 470"/>
+    <line class="s1" x1="380" y1="620" x2="380" y2="490"/>
+    <path class="s1" d="M120 340 L380 490 L640 340"/>
+    <path class="s2" d="M120 340 L120 230 L380 80 L640 230 L640 340"/>
+    <path class="s2" d="M120 230 L380 380 L640 230"/>
+    <line class="s2" x1="380" y1="490" x2="380" y2="380"/>
+    <path class="s3" d="M120 230 L250 130 L510 280 L640 230"/>
+    <path class="s3" d="M250 130 L380 80"/>
+    <path class="s3" d="M510 280 L380 380"/>
+    <!-- selected west wall, ground storey -->
+    <path class="fill" d="M120 470 L120 340 L380 490 L380 620 Z"/>
+    <path class="hl s4" d="M120 470 L120 340 L380 490 L380 620 Z"/>
+    <!-- the new window -->
+    <path class="hl s5" d="M210 435 L210 385 L290 431 L290 481 Z"/>
+    <line class="dim" x1="80" y1="470" x2="80" y2="340"/>
+    <text x="40" y="420" transform="rotate(-90 40 420)">3.20 m</text>
+    <text x="150" y="530">focus = wall-hall-w</text>
+    <text x="420" y="660">base_version = 3</text>
+  </svg>
+</section>
+
+<!-- ================= SLIDE 8: DEMO — PREBUILT ================= -->
+<section class="slide s-demo">
+  <div class="sheet"></div>
+  <div class="chrome tl">Sheet A-007</div><div class="chrome tr">Demo · 1 of 2</div>
+  <div class="chrome bl">NoCoast-AEC · Product pitch</div><div class="chrome br">08 / 10</div>
+  <div class="kick r d1">Demo · Prebuilt</div>
+  <h2 class="r d2">Here is one we made earlier.</h2>
+  <div class="panel shot r d3">
+    <span class="cap">Version history · live viewer · hierarchy</span>
+    <img src="assets/screenshot.png" alt="NoCoast-AEC workspace showing a two-storey house with a garage, version history and IFC hierarchy">
+  </div>
+  <div class="side">
+    <div class="label r d4">The prompt that built it</div>
+    <p class="q r d4">"Two storey house with a kitchen, living room and three bedrooms and a garage."</p>
+    <ul>
+      <li class="r d5">Walk the IFC hierarchy: site, storeys, walls, openings.</li>
+      <li class="r d6">Click an element: the inspector reads the design facts back.</li>
+      <li class="r d7">Open the same file in another BIM tool.</li>
+    </ul>
+  </div>
+  <div class="cue">Switch to the app</div>
+</section>
+
+<!-- ================= SLIDE 9: DEMO — LIVE ================= -->
+<section class="slide s-demo s-live">
+  <div class="sheet"></div>
+  <div class="chrome tl">Sheet A-008</div><div class="chrome tr">Demo · 2 of 2</div>
+  <div class="chrome bl">NoCoast-AEC · Product pitch</div><div class="chrome br">09 / 10</div>
+  <div class="kick r d1">Demo · Live</div>
+  <h2 class="r d2">Now let's build one.</h2>
+  <div class="panel bigprompt r d3">
+    <span class="cap">Prompt</span>
+    A two-storey house with three bedrooms, an open kitchen and living room, a study, and a gable roof.<span class="cur"></span>
+  </div>
+  <div class="watch">
+    <div class="r d4"><b>Watch for</b>The checklist appearing before any geometry.</div>
+    <div class="r d5"><b>Then</b>Steps streaming in, each with its reason.</div>
+    <div class="r d6"><b>Then</b>The preview growing in the viewer, storey by storey.</div>
+    <div class="r d7"><b>Finally</b>Requirements ticking off, and an IFC you can export.</div>
+  </div>
+  <div class="cue">Switch to the app</div>
+</section>
+
+<!-- ================= SLIDE 10: CLOSE ================= -->
+<section class="slide s-close">
+  <div class="sheet"></div>
+  <div class="chrome tl">Sheet A-009</div><div class="chrome tr">Close</div>
+  <div class="chrome bl">NoCoast-AEC · Product pitch · 10 / 10</div>
+  <h1 class="r d1">Prompt in.<br><span class="o">IFC</span> out.</h1>
+  <p class="lead r d2">Open standard, open source, model-agnostic. 201 parametric bricks, 510 tests, one harness.</p>
+  <div class="repo r d3">github.com/nocoastaec/NoCoast-AEC</div>
+  <svg class="iso draw" viewBox="0 0 760 760" aria-hidden="true">
+    <path class="s1" d="M120 470 L380 320 L640 470 L380 620 Z"/>
+    <path class="s2" d="M120 470 L120 340 L380 190 L640 340 L640 470"/>
+    <line class="s2" x1="380" y1="620" x2="380" y2="490"/>
+    <path class="s2" d="M120 340 L380 490 L640 340"/>
+    <path class="s3" d="M120 340 L120 230 L380 80 L640 230 L640 340"/>
+    <path class="s3" d="M120 230 L380 380 L640 230"/>
+    <line class="s3" x1="380" y1="490" x2="380" y2="380"/>
+    <path class="o s4" d="M120 230 L250 130 L510 280 L640 230"/>
+    <path class="o s4" d="M250 130 L380 80"/>
+    <path class="o s4" d="M510 280 L380 380"/>
+  </svg>
+  <div class="tb r d4">
+    <div>Project<b>NoCoast-AEC</b></div>
+    <div>Schema<b>IFC4</b></div>
+    <div>Date<b>2026-09-27</b></div>
+    <div class="wide">Drawn by<b>Abhijyot Chadha · Kailash Kannan · Drona Thoka · kyriolexy</b></div>
+  </div>
+</section>
+
+</main>
+</div>
+
+<nav class="deck-controls" aria-label="Slide navigation">
+  <button id="prevBtn">←</button>
+  <span class="pg" id="pg">1 / 10</span>
+  <button id="nextBtn">→</button>
+</nav>
+
+<script>
+/* ===========================================
+   SLIDE PRESENTATION CONTROLLER
+   - Scales the 1920×1080 stage to the window (letterbox, never reflow)
+   - Keyboard: ← → Space PageUp PageDown Home End
+   - Wheel and touch swipe
+   - URL hash #N jumps to slide N (1-based) and stays in sync
+   =========================================== */
+class SlidePresentation {
+    constructor() {
+        this.slides = Array.from(document.querySelectorAll('.slide'));
+        this.stage = document.getElementById('deckStage');
+        this.current = 0;
+        this.setupStageScale();
+        this.setupKeyboardNav();
+        this.setupTouchNav();
+        this.setupWheelNav();
+        document.getElementById('prevBtn').addEventListener('click', () => this.prev());
+        document.getElementById('nextBtn').addEventListener('click', () => this.next());
+        const fromHash = parseInt(location.hash.replace('#', ''), 10);
+        this.show(Number.isFinite(fromHash) ? fromHash - 1 : 0);
+        window.addEventListener('hashchange', () => {
+            const n = parseInt(location.hash.replace('#', ''), 10);
+            if (Number.isFinite(n) && n - 1 !== this.current) this.show(n - 1);
+        });
+    }
+    setupStageScale() {
+        const scale = () => {
+            const k = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+            const x = (window.innerWidth - 1920 * k) / 2;
+            const y = (window.innerHeight - 1080 * k) / 2;
+            this.stage.style.transform = `translate(${x}px, ${y}px) scale(${k})`;
+        };
+        scale();
+        window.addEventListener('resize', scale);
+    }
+    setupKeyboardNav() {
+        document.addEventListener('keydown', (e) => {
+            if (e.target.getAttribute('contenteditable')) return;
+            switch (e.key) {
+                case 'ArrowRight': case ' ': case 'PageDown': e.preventDefault(); this.next(); break;
+                case 'ArrowLeft': case 'PageUp': e.preventDefault(); this.prev(); break;
+                case 'Home': this.show(0); break;
+                case 'End': this.show(this.slides.length - 1); break;
+            }
+        });
+    }
+    setupTouchNav() {
+        let x0 = null;
+        document.addEventListener('touchstart', (e) => { x0 = e.touches[0].clientX; }, { passive: true });
+        document.addEventListener('touchend', (e) => {
+            if (x0 === null) return;
+            const dx = e.changedTouches[0].clientX - x0;
+            if (Math.abs(dx) > 50) (dx < 0 ? this.next() : this.prev());
+            x0 = null;
+        });
+    }
+    setupWheelNav() {
+        let lock = false;
+        document.addEventListener('wheel', (e) => {
+            if (lock || Math.abs(e.deltaY) < 20) return;
+            lock = true; setTimeout(() => lock = false, 700);
+            (e.deltaY > 0 ? this.next() : this.prev());
+        }, { passive: true });
+    }
+    show(i) {
+        this.current = Math.max(0, Math.min(i, this.slides.length - 1));
+        this.slides.forEach((s, j) => {
+            s.classList.toggle('active', j === this.current);
+            s.classList.toggle('visible', j === this.current);
+        });
+        document.getElementById('pg').textContent = `${this.current + 1} / ${this.slides.length}`;
+        document.getElementById('progress').style.width = `${((this.current + 1) / this.slides.length) * 100}%`;
+        history.replaceState(null, '', `#${this.current + 1}`);
+    }
+    next() { this.show(this.current + 1); }
+    prev() { this.show(this.current - 1); }
+}
+const deck = new SlidePresentation();
+
+/* ===========================================
+   INLINE EDITOR
+   Hover the top-left corner or press E. Click any text to edit.
+   Ctrl+S saves the edited HTML as a download; edits also persist
+   in localStorage for this file.
+   =========================================== */
+const editor = {
+    isActive: false,
+    key: 'nocoast-pitch-edits',
+    targets: 'h1, h2, h3, p, li, .chip, .label, .kick, .chrome, .tb b, .stage .n, .prompt, .bigprompt, .repo, .who, .tag, .fixlbl, .cue, .cap, pre.code',
+    toggleEditMode() {
+        this.isActive = !this.isActive;
+        document.body.classList.toggle('editing', this.isActive);
+        document.getElementById('editToggle').classList.toggle('active', this.isActive);
+        document.querySelectorAll(this.targets).forEach(el => {
+            if (this.isActive) el.setAttribute('contenteditable', 'true'); else el.removeAttribute('contenteditable');
+        });
+        if (!this.isActive) this.persist();
+    },
+    persist() {
+        try { localStorage.setItem(this.key, document.getElementById('deckStage').innerHTML); } catch (e) {}
+    },
+    restore() {
+        try {
+            const saved = localStorage.getItem(this.key);
+            if (saved) { document.getElementById('deckStage').innerHTML = saved; }
+        } catch (e) {}
+    },
+    download() {
+        const clone = document.documentElement.cloneNode(true);
+        clone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+        clone.querySelector('body').classList.remove('editing');
+        const blob = new Blob(['<!DOCTYPE html>\n' + clone.outerHTML], { type: 'text/html' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob); a.download = 'nocoast-pitch.html'; a.click();
+    }
+};
+// restore() is intentionally not called on load so the file on disk
+// stays the source of truth; call editor.restore() from the console if needed.
+const hotzone = document.querySelector('.edit-hotzone');
+const editToggle = document.getElementById('editToggle');
+let hideTimeout = null;
+const hideLater = () => { hideTimeout = setTimeout(() => { if (!editor.isActive) editToggle.classList.remove('show'); }, 400); };
+hotzone.addEventListener('mouseenter', () => { clearTimeout(hideTimeout); editToggle.classList.add('show'); });
+hotzone.addEventListener('mouseleave', hideLater);
+editToggle.addEventListener('mouseenter', () => clearTimeout(hideTimeout));
+editToggle.addEventListener('mouseleave', hideLater);
+editToggle.addEventListener('click', () => editor.toggleEditMode());
+hotzone.addEventListener('click', () => editor.toggleEditMode());
+document.addEventListener('keydown', (e) => {
+    if ((e.key === 'e' || e.key === 'E') && !e.target.getAttribute('contenteditable') && !e.ctrlKey && !e.metaKey) editor.toggleEditMode();
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); editor.persist(); editor.download(); }
+});
+</script>
+</body>
+</html>

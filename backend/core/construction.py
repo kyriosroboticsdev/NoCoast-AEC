@@ -100,8 +100,10 @@ class ConstructionJob:
             self.done = True
 
     def status(self) -> dict:
+        # `urls` is every step so far, oldest first, so a client can play them back
+        # one at a time instead of only ever seeing the latest file.
         return {"job_id": self.id, "done": self.done, "error": self.error, "index": self.index,
-                "total": self.total, "ifc_url": self.urls[-1] if self.urls else None}
+                "total": self.total, "ifc_url": self.urls[-1] if self.urls else None, "urls": list(self.urls)}
 
 
 _JOBS: dict[str, ConstructionJob] = {}

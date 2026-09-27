@@ -187,6 +187,7 @@ body.resizing * { cursor: var(--drag-cursor, col-resize) !important; }
 .view-icons { display: grid; grid-template-columns: 1fr 1fr; }
 .view-icons button { height: 46px; border-radius: 8px; display: grid; place-items: center; color: var(--text-2); }
 .view-icons button.on { background: var(--accent-soft); color: var(--accent-text); }
+.view-icons button.replay { grid-column: span 2; height: 34px; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px; font-weight: 550; }
 
 /* The card itself only positions and sizes; its content scrolls inside, so the corner
    handle can sit on the edge without the card scrolling sideways or losing the grip. */

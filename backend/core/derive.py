@@ -23,7 +23,9 @@ from dataclasses import dataclass, field
 from shapely.geometry import LineString, MultiLineString, Point as ShpPoint, Polygon
 from shapely.ops import unary_union
 
+from core.clash import solid as clash_solid
 from core.derive_bricks import ROOF_T, SLAB_T, building_frames, derive_bricks, needs_water
+from core.routing import blocks_at, route_cable, with_drop
 from core.rooms import (CLEAR, DesignError, RoomInfo, WallSeg, compass, exterior_walls, fits, pick_wall, place_piece,
                         r2, rect_at, side_name)
 from ifc.fixtures import default_size
@@ -537,11 +539,45 @@ def _free(e: FreeDef, design: Design, levels: dict[str, Level], els: list, free_
                          width=e.width or 1.2, rise=rise, to_level=e.to_level))
 
 
+def _level_walls(level_id: str, rooms: list, infos: dict[str, RoomInfo]) -> list:
+    seen: dict[str, WallSeg] = {}
+    for room in rooms:
+        info = infos.get(room.id)
+        if info is None:
+            continue
+        for wall in info.walls:
+            seen.setdefault(wall.id, wall)
+    return list(seen.values())
+
+
+def _obstacles(els: list, level: Level, elevation: float) -> list[Polygon]:
+    """Columns and stairs that reach the cable, so the roof stub can step aside when another wall does."""
+    heights = {level.id: level.height}
+    out: list[Polygon] = []
+    for el in els:
+        if getattr(el, "level", None) != level.id or not isinstance(el, (Column, Stair)):
+            continue
+        body = clash_solid(el, heights)
+        if body is not None and body.z0 < elevation < body.z1 and isinstance(body.footprint, Polygon):
+            out.append(body.footprint)
+    return out
+
+
+def _branch(start: Pt, goal: Pt, walls: list, blocked: dict, contain: Polygon, avoid: list[Polygon],
+            run_z: float, end_z: float) -> tuple[list[Pt], list[float] | None] | None:
+    path = route_cable(start, goal, walls, blocked, contain=contain, avoid=avoid)
+    if path is None:
+        return None
+    path, heights = with_drop(path, walls, run_z, end_z)
+    if sum(math.dist(a, b) for a, b in zip(path, path[1:])) < 0.05 or path[0] == path[-1]:
+        return None
+    return path, heights
+
+
 def _mep(design: Design, levels: list[Level], infos: dict[str, RoomInfo], els: list) -> None:
     """Electrical and plumbing rough-in — always added, on top of whatever furniture/fixtures the
     design already specified: every enclosed room gets a ceiling light and two outlets, wired back to
-    one riser; every kitchen or bathroom also gets its own plumbing riser. Not a routed network, see
-    ifc/mep.py."""
+    one riser along the walls and roof; every kitchen or bathroom also gets its own plumbing riser."""
     if not design.rooms:
         return  # nothing to wire yet
     ground = next((l for l in levels if design.level(l.id).index >= 0), levels[0])
@@ -560,7 +596,14 @@ def _mep(design: Design, levels: list[Level], infos: dict[str, RoomInfo], els: l
     wet_rooms = {a.ref for a in els if isinstance(a, Asset) and a.ref and needs_water(design, a.brick)}
     wet_risers: list[tuple[tuple[float, float], str]] = []
     for level in levels:
-        for room in design.rooms_on(level.id):
+        on_level = design.rooms_on(level.id)
+        walls = _level_walls(level.id, on_level, infos)
+        # The horizontal run sits in the ceiling void, inside the wall head and the roof. A drop at
+        # the wall brings an outlet circuit down to the device; doors below the head stay clear.
+        ceiling = r2(max(0.5, level.height - 0.15))
+        blocked = blocks_at(walls, els, ceiling)
+        avoid = _obstacles(els, level, ceiling)
+        for room in on_level:
             if not room.roofed:
                 continue
             poly = infos[room.id].polygon
@@ -583,13 +626,18 @@ def _mep(design: Design, levels: list[Level], infos: dict[str, RoomInfo], els: l
             # A run whose device sits exactly at the riser tap (the ground-floor reference room's own
             # corner can coincide with riser_xy) would be a zero-length path; skip it, nothing to draw.
             if math.dist(riser_xy, (cx, cy)) > 0.05:
-                els.append(Wire(id=f"{level.id}-wire-{sid}-light", level=level.id, path=[riser_xy, (cx, cy)]))
+                branch = _branch(riser_xy, (cx, cy), walls, blocked, poly, avoid, ceiling, ceiling)
+                if branch is not None:
+                    path, heights = branch
+                    els.append(Wire(id=f"{level.id}-wire-{sid}-light", level=level.id, path=path,
+                                    elevation=ceiling, heights=heights))
             for i, outlet in enumerate(outlet_objs, 1):
                 if math.dist(riser_xy, outlet.position) > 0.05:
-                    # Run at the outlet's own height, not the ceiling: a ceiling-height run reads as a
-                    # wire floating with no connection down to an outlet mounted near the floor.
-                    els.append(Wire(id=f"{level.id}-wire-{sid}-outlet-{i}", level=level.id,
-                                    path=[riser_xy, outlet.position], elevation=outlet.height))
+                    branch = _branch(riser_xy, outlet.position, walls, blocked, poly, avoid, ceiling, outlet.height)
+                    if branch is not None:
+                        path, heights = branch
+                        els.append(Wire(id=f"{level.id}-wire-{sid}-outlet-{i}", level=level.id, path=path,
+                                        elevation=outlet.height, heights=heights))
             if room.kind in ("kitchen", "bathroom") or room.id in wet_rooms:
                 wet_risers.append(((cx, cy), level.id))
 

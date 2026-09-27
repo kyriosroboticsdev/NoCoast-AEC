@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import * as OBC from "@thatopen/components";
 import type { FragmentsModel } from "@thatopen/fragments";
+import { preferGridOverFloor } from "./coplanar";
 import { requireWorkerUrl } from "./config";
 import type { SnapshotView } from "./types";
 
@@ -89,6 +90,9 @@ export class IfcViewport {
 
     if (opts.grid !== false) {
       this.grid = this.components.get(OBC.Grids).create(this.world);
+      // Infinite shader plane. Lines win against a coplanar floor; discarded gaps show it.
+      this.grid.three.renderOrder = 1;
+      preferGridOverFloor(this.grid.material);
     }
 
     this.fragments = this.components.get(OBC.FragmentsManager);
@@ -232,8 +236,9 @@ export class IfcViewport {
     const c = sphere.center;
     await this.world.camera.controls.setLookAt(pos.x, pos.y, pos.z, c.x, c.y, c.z, animate);
     if (this.grid) {
-      // Keep the grid under the model rather than at the world origin.
-      this.grid.three.position.set(c.x, box.min.y - 0.01, c.z);
+      // On the model's base, not the world origin. Depth bias keeps the lines in front;
+      // a Y drop flickers as the camera moves and reads as a gap under the floor.
+      this.grid.three.position.set(c.x, box.min.y, c.z);
     }
     await this.fragments.core.update(true);
     this.invalidate();

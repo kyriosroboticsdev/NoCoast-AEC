@@ -201,6 +201,24 @@ export const sendPrompt = (
 /** The structured BIM instructions behind a version, and its design record (null for imports and pre-design-layer versions). */
 export const getSpec = (id: string, n: number) => getJson<{ spec: unknown; design: Design | null }>(`/projects/${id}/versions/${n}/spec`);
 
+/** One construction-replay job: an IFC per element, in build order, as the files land. */
+export interface ConstructionStatus {
+  job_id: string;
+  done: boolean;
+  error: string | null;
+  index: number;
+  total: number;
+  ifc_url: string | null;
+  urls: string[];
+}
+
+/** Start a step-by-step rebuild of a stored version. Poll `constructionStatus` for new files. */
+export const startConstruction = (id: string, n: number) =>
+  post<ConstructionStatus>(`/projects/${id}/versions/${n}/construction`, {});
+
+export const constructionStatus = (id: string, n: number, job: string) =>
+  getJson<ConstructionStatus>(`/projects/${id}/versions/${n}/construction/${job}`);
+
 /** Make an older version the new head (recorded as a new version). */
 export const revert = (id: string, to: number, onEvent: (e: StageEvent) => void) =>
   stream(`/projects/${id}/revert/${to}`, { method: "POST" }, onEvent);

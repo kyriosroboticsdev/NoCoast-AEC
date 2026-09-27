@@ -23,7 +23,7 @@ TOOL_HELP: dict[ToolName, str] = {
     "check_asset": '{"tool":"check_asset","definition":"<asset JSON>"}   validate an asset you are writing: its card, or what is wrong',
     "list_skills": '{"tool":"list_skills"}   every skill with its title',
     "get_skill": '{"tool":"get_skill","id":"<skill name>"}   one skill: how to write or assemble a kind of thing',
-    "check_design": '{"tool":"check_design"}   clashes, missing services and structure issues of the current design',
+    "check_design": '{"tool":"check_design"}   clashes, blocked doors, intersecting elements, bad hosts (floating, partly buried, wrong wall/roof/slab, wrong orientation), missing services and structure issues',
     "structure_report": '{"tool":"structure_report"}   spans and overhangs only',
 }
 assert set(TOOL_HELP) == set(get_args(ToolName)), "every tool needs a TOOL_HELP line"

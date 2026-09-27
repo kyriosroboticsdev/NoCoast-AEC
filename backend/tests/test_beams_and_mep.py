@@ -73,11 +73,14 @@ def test_panel_prefers_a_utility_or_garage_room_over_the_first_room_found():
     assert 5 <= panel.position[0] <= 10 and 0 <= panel.position[1] <= 5  # inside the garage, not the living room
 
 
-def test_outlet_wire_ends_at_the_outlet_height_not_the_ceiling():
+def test_outlet_wire_drops_down_the_wall_to_the_outlet():
     d = analyze(_design(rooms=[RoomDef(id="a", name="A", kind="living", rect=(0, 0, 5, 4))]))
-    outlet = next(e for e in d.spec.elements if isinstance(e, Outlet))
+    outlet = next(e for e in d.spec.elements if isinstance(e, Outlet) and e.position != (0.3, 0.3))
     wire = next(e for e in d.spec.elements if isinstance(e, Wire) and e.id.startswith(f"{outlet.level}-wire-a-outlet"))
-    assert wire.elevation == outlet.height  # the run reaches the outlet instead of floating at ceiling height
+    # The run sits in the ceiling void and drops at the wall, so the cable actually reaches the outlet.
+    assert wire.heights is not None and wire.heights[-1] == outlet.height
+    assert wire.heights[0] > outlet.height
+    assert any(wire.path[i] == wire.path[i + 1] and wire.heights[i] != wire.heights[i + 1] for i in range(len(wire.path) - 1))
 
 
 def test_electrical_riser_and_panel_always_present_and_span_every_storey():

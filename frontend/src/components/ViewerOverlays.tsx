@@ -1,4 +1,4 @@
-import { BedDouble, RotateCcw, X } from "lucide-react";
+import { BedDouble, Play, RotateCcw, Square, X } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import type { Facts } from "../state/design";
@@ -13,12 +13,14 @@ interface ViewProps {
   viewer: LegacyViewer;
   roomsVisible: boolean;
   onRooms: () => void;
+  /** Set when the model on screen is a stored version that can be rebuilt step by step. */
+  replay: { playing: boolean; onToggle: () => void } | null;
   width: number;
   onResize: (width: number) => void;
   onResetSize: () => void;
 }
 
-export function ViewControls({ viewer, roomsVisible, onRooms, width, onResize, onResetSize }: ViewProps) {
+export function ViewControls({ viewer, roomsVisible, onRooms, replay, width, onResize, onResetSize }: ViewProps) {
   const views: [ViewName, string][] = [
     ["top", "Top"], ["bottom", "Bottom"], ["front", "Front"], ["back", "Back"], ["left", "Left"], ["right", "Right"],
   ];
@@ -38,6 +40,14 @@ export function ViewControls({ viewer, roomsVisible, onRooms, width, onResize, o
         <button title={roomsVisible ? "Hide room volumes" : "Show room volumes"} className={roomsVisible ? "on" : ""} onClick={onRooms}>
           <BedDouble size={17} />
         </button>
+        {replay && (
+          <button className={`replay ${replay.playing ? "on" : ""}`}
+            title={replay.playing ? "Stop the build replay" : "Replay the build, one element at a time, framed on the whole building"}
+            onClick={replay.onToggle}>
+            {replay.playing ? <Square size={13} /> : <Play size={14} />}
+            {replay.playing ? "Stop" : "Replay"}
+          </button>
+        )}
       </div>
     </div>
   );
