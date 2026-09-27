@@ -148,7 +148,8 @@ def template_steps(prompt: str) -> list[dict]:
     if basement:
         steps.append({"step": "level", "id": "B1"})
     for i in range(storeys):
-        steps.append({"step": "level", "id": f"L{i + 1}"})
+        steps.append({"step": "level", "id": f"L{i + 1}",
+                      "why": "3 m floor-to-floor keeps the stair to a single straight flight" if i else None})
     # Every storey gets a hall so there is somewhere for the stair and the doors to meet.
     design = Design(levels=[])
     level_ids = (["B1"] if basement else []) + [f"L{i + 1}" for i in range(storeys)]
@@ -193,10 +194,14 @@ def template_steps(prompt: str) -> list[dict]:
                     r.rect = None
         steps.append({"step": "layout", "level": level, "rooms": [
             {"name": r.name, "kind": r.kind, **({"poly": [e.model_dump(exclude_none=True, exclude_defaults=True) for e in r.poly]} if r.poly else {"rect": list(r.rect)})}
-            for r in defs]})
+            for r in defs],
+            "why": ("service rooms grouped below ground where they need no daylight" if level.startswith("B")
+                    else "public rooms on the ground floor, hall in the middle so nothing is reached through another room"
+                    if level == "L1" else "sleeping rooms stacked over the ground-floor plate so the load paths line up")})
     m = re.search(r"(gable|pitched|hip(ped)?)\s*roof", text)
     if m:
-        steps.append({"step": "roof", "kind": {"pitched": "gable", "hipped": "hip"}.get(m.group(1), m.group(1))})
+        steps.append({"step": "roof", "kind": {"pitched": "gable", "hipped": "hip"}.get(m.group(1), m.group(1)),
+                      "why": "a pitched roof over a rectangular plate sheds water to two sides and needs no gutters at the gable ends"})
     # Doors: each room to the hall of its storey if adjacent, else to its first neighbour.
     derived = analyze(design)
     for level in level_ids:
@@ -210,7 +215,8 @@ def template_steps(prompt: str) -> list[dict]:
                 steps.append({"step": "door", "room": r.id, "to": to})
         if level == "L1":
             side = "S" if "S" in derived.rooms[hall].sides else derived.rooms[hall].sides[0]
-            steps.append({"step": "door", "room": hall, "to": "outside", "side": side})
+            steps.append({"step": "door", "room": hall, "to": "outside", "side": side,
+                          "why": "the entrance opens straight into the hall, so the circulation starts at the front door"})
     big = bool(re.search(r"natural light|lots of windows|large windows|bright|glass", text))
     for r in design.rooms:
         info = derived.rooms[r.id]
@@ -224,9 +230,11 @@ def template_steps(prompt: str) -> list[dict]:
             else:
                 steps.append({"step": "window", "room": r.id, "side": sides[0], "kind": "large" if big else "standard"})
     if storeys > 1:
-        steps.append({"step": "stair", "room": "hall", "side": "W"})
+        steps.append({"step": "stair", "room": "hall", "side": "W",
+                      "why": "the flight runs along the hall's west wall, clear of the front door and the room openings"})
     if basement:
-        steps.append({"step": "stair", "room": "landing-b1", "side": "W"})
+        steps.append({"step": "stair", "room": "landing-b1", "side": "W",
+                      "why": "the basement flight sits directly under the upper one so the wells align"})
     if re.search(r"porch|pillars?|veranda", text):
         steps.append({"step": "porch", "side": "S"})
     for r in design.rooms:

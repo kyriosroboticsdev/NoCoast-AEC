@@ -85,3 +85,21 @@ def parse_partial(text: str):
                 return None
             text = text[:cut] if text[cut] == "," else text[: cut + 1]
     return None
+
+
+def peek_element(text: str, key: str) -> dict | None:
+    """The element of the `key` array the model is *still writing*, with the fields finished so far.
+
+    `parse_partial` deliberately drops that half-written element; this looks at exactly it, so the UI
+    can say "drafting a window in the kitchen…" a second before the step itself lands. None when
+    nothing of the current element is readable yet."""
+    start = text.rfind(f'"{key}"')
+    if start < 0:
+        return None
+    stack, _ = _scan(text)
+    cut = next((idx for k, (ch, idx) in reversed(list(enumerate(stack)))
+                if ch == "{" and k > 0 and stack[k - 1][0] == "[" and stack[k - 1][1] > start), None)
+    if cut is None:
+        return None
+    value = parse_partial(text[cut:])
+    return value if isinstance(value, dict) and value else None

@@ -46,7 +46,9 @@ def test_design_then_edit_keeps_guids():
     # Steps are applied while the mock streams; every one is reported, and geometry-checked previews are emitted.
     steps = [e for e in evs if e["stage"] == "step"]
     assert len(steps) > 20 and all(e["data"]["ok"] for e in steps), [e["message"] for e in steps if not e["data"]["ok"]]
-    assert steps[0]["data"]["index"] == 1 and "building" in steps[0]["message"]
+    assert steps[0]["data"]["index"] == 1 and steps[0]["data"]["step"]["step"] == "building"
+    # Every step reads as a sentence about the building, not as internal shorthand.
+    assert "Opening the project" in steps[0]["message"], steps[0]["message"]
     partials = [e for e in evs if e["stage"] == "partial" and "ifc_url" in e["data"]]
     assert partials, stages
     assert client.get(partials[-1]["data"]["ifc_url"]).status_code == 200
@@ -57,13 +59,16 @@ def test_design_then_edit_keeps_guids():
 
     v2, evs = prompt(pid, "remove the garage", base=1)
     assert v2["number"] == 2 and v2["mode"] == "edit"
-    assert any("removed room garage" in e["message"] for e in evs if e["stage"] == "step")
+    # The event's message is the readable headline; data.message keeps the applier's exact words.
+    removals = [e for e in evs if e["stage"] == "step" and "removed room garage" in (e["data"].get("message") or "")]
+    assert removals and "Taking out the garage" in removals[0]["message"]
     g1, g2 = guids_by_tag(pid, 1), guids_by_tag(pid, 2)
     assert "L1-space-garage" in g1 and "L1-space-garage" not in g2 and "car-garage" not in g2
     assert g1["L1-wall-hall-W"] == g2["L1-wall-hall-W"] and g1["L2-floor"] == g2["L2-floor"]
 
     v3, evs = prompt(pid, "add a window to the kitchen on the west")
-    assert v3["mode"] == "edit" and any(e["message"].startswith("step") and "window" in e["message"] for e in evs if e["stage"] == "step")
+    assert v3["mode"] == "edit" and any("Window to the west elevation of the kitchen" in e["message"]
+                                        for e in evs if e["stage"] == "step")
     assert v3["summary"]["counts"]["IfcWindow"] == v2["summary"]["counts"]["IfcWindow"] + 1
 
     v4, _ = prompt(pid, "add a bedroom")

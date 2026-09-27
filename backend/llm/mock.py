@@ -10,7 +10,9 @@ installed, and it is the fallback when the configured model is down.
 from __future__ import annotations
 
 import json
+import os
 import re
+import time
 
 from agents import shapes
 from agents.brick_words import mentioned_bricks
@@ -24,7 +26,10 @@ from skills import skillbook
 from solver.layout import place_rooms
 
 NUM = r"(\d+(?:\.\d+)?)"
-STREAM_STEPS = 8  # the mock "streams" its answer in slices so the preview path gets exercised
+# The mock "streams" its answer in slices so the preview/draft path gets exercised. More slices means
+# the UI updates more often; BIM_MOCK_DELAY paces them (seconds per slice) for demos and screenshots.
+STREAM_STEPS = int(os.environ.get("BIM_MOCK_SLICES", 32))
+STREAM_DELAY = float(os.environ.get("BIM_MOCK_DELAY", 0))
 
 
 def _custom_parts(item: str) -> list[dict]:
@@ -35,6 +40,32 @@ def _custom_parts(item: str) -> list[dict]:
         return [{"shape": "round", "x": 0.0, "y": 0.0, "z": 0.72, "w": 1.1, "h": 0.05}] + [
             {"shape": "box", "x": x, "y": y, "z": 0.0, "w": 0.06, "d": 0.06, "h": 0.72} for x, y in legs]
     return [{"shape": "box", "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0, "d": 0.6, "h": 0.75}]  # generic table-ish block
+
+
+def approach_for(prompt: str, steps: list[dict]) -> str:
+    """The mock's stand-in for the design strategy a real model writes before it starts drawing."""
+    levels = [s for s in steps if s.get("step") == "level"]
+    plates = [s for s in steps if s.get("step") == "layout"]
+    rooms = [r for s in plates for r in (s.get("rooms") or [])]
+    free = [s for s in steps if s.get("step") == "element"]
+    if free and not rooms:
+        return ("A structure rather than a building: piers carry paired girders, the deck spans between them and "
+                "parapets edge both sides. Everything is set out from the centreline so the spans stay equal.")
+    parts = []
+    if levels:
+        above = [l for l in levels if not str(l.get("id", "L1")).startswith("B")]
+        below = len(levels) - len(above)
+        parts.append(f"{len(above)} storey{'s' if len(above) != 1 else ''} on a compact rectangular footprint"
+                     + (f" over {below} basement level{'s' if below != 1 else ''}" if below else ""))
+    if rooms:
+        parts.append(f"{len(rooms)} rooms packed edge to edge so every shared edge becomes a partition and the "
+                     f"outline of each plate becomes its slab and roof")
+    strategy = "; ".join(parts) if parts else "a single compact volume"
+    circ = ("A central hall carries the stair and links every room, so no room is reached through another. "
+            if any(r.get("kind") == "hall" for r in rooms) else "")
+    light = ("Habitable rooms are given a window on the first exterior side they own, which puts most glazing on "
+             "the south and east elevations. " if rooms else "")
+    return f"The parti: {strategy}. {circ}{light}Service rooms and the garage take the sides that get the least sun."
 
 
 class MockLLM:
@@ -56,12 +87,15 @@ class MockLLM:
                 reply = {"steps": self._edit(prompt, Design.model_validate(request.meta["design"]), request.meta.get("focus"))}
             else:
                 reply = {"steps": template_steps(prompt)}
+            reply = {"approach": approach_for(prompt, reply["steps"]), **reply}
         else:
             raise ValueError(f"mock has no answer for schema '{request.schema_name}'")
         if on_text:
             text = json.dumps(reply)
             for i in range(1, STREAM_STEPS + 1):
                 on_text(text[: len(text) * i // STREAM_STEPS])
+                if STREAM_DELAY:
+                    time.sleep(STREAM_DELAY)
         return reply
 
     # --- research --------------------------------------------------------------

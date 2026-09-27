@@ -99,9 +99,10 @@ def test_a_structure_issue_is_fixed_by_a_coordination_round():
 def test_fix_round_labels_name_only_what_is_being_fixed():
     warning = Issue("structure", "warning", "long span")
     error = Issue("structure", "error", "no support")
-    assert Feedback().label(False) == "building the design"
-    assert Feedback(issues=[warning]).label(True) == "editing the design"
-    assert Feedback(unmet=["x"], issues=[error]).label(False) == "fixing unmet requirements and coordination issues"
+    assert Feedback().label(False) == "designing the building"
+    assert Feedback(issues=[warning]).label(True) == "working out what to change"
+    assert Feedback(unmet=["x"], issues=[error]).label(False) == \
+        "reworking the gaps against the brief and the coordination issues"
 
 
 def _prompt(pid: str, text: str):

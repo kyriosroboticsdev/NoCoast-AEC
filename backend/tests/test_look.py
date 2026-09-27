@@ -65,7 +65,7 @@ def test_what_the_model_sees_goes_into_a_fix_round(tmp_path):
     _, _, _, seen = _run(llm, tmp_path=tmp_path)
     fix = [r for r in llm.requests if r.schema_name == "build" and r.meta.get("seen")]
     assert len(fix) == 1 and SEEN_INTRO in fix[0].user and problem in fix[0].user
-    assert any(s == "build" and msg.startswith("fixing what the screenshots showed") for s, msg, _ in seen)
+    assert any(s == "build" and msg.startswith("reworking what the screenshots showed") for s, msg, _ in seen)
 
 
 def test_models_that_cannot_see_skip_the_look(tmp_path):

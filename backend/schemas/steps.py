@@ -132,6 +132,12 @@ class Step(BaseModel):
     ref: Optional[str] = Field(None, description="brick: id of what it goes in or on (a room, wall, brick, element, 'site', 'roof'); null = the level")
     params: Optional[list[BrickParamStep]] = Field(None, description="brick: parameters that differ from the brick's defaults")
     definition: Optional[str] = Field(None, description="asset: a complete brick definition as a JSON string (see the ASSETS section)")
+    why: Optional[str] = Field(
+        None, max_length=200,
+        description="One clause of design reasoning in an architect's voice — why this move, here, at this size "
+                    "('south-facing so the living room gets afternoon light', 'kept under 6 m so the span needs no "
+                    "intermediate column'). Shown to the user as the reasoning behind the step; never a restatement "
+                    "of the numbers already in the step.")
 
     @field_validator("definition", mode="before")
     @classmethod
@@ -220,6 +226,11 @@ class Step(BaseModel):
 
 
 class StepsResponse(BaseModel):
+    approach: Optional[str] = Field(
+        None, max_length=600,
+        description="Written FIRST, before the steps: two or three sentences of design strategy in an architect's "
+                    "voice — the parti, how the plan is organised, where circulation sits, what drives the massing "
+                    "and orientation. The user reads this while the steps stream in.")
     steps: list[Step] = Field(default_factory=list)
 
     @field_validator("steps", mode="before")
