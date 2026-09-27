@@ -142,11 +142,12 @@ export class SectionControl {
     this.apply();
   }
 
-  /** Forget everything model-specific (new session). */
+  /** Forget everything model-specific (new session), including a build that is still following on another one. */
   reset() {
     this.cut = null;
     this.followLevel = null;
     this.roomLevels = {};
+    this.following = false;
     this.refresh();
   }
 }

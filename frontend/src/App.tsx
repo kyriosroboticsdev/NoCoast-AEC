@@ -70,6 +70,13 @@ export default function App() {
   const [viewerReady, setViewerReady] = useState(false);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const loadedKey = useRef<string | null>(null); // sync copy, avoids double loads
+  // Loads are slow (a big IFC parses for seconds) and several can be in flight: a preview of the
+  // session you left, the model of the one you opened, a version you clicked. Only the latest claim
+  // may touch the viewer, and claims run one at a time so a late parse cannot draw over a newer one.
+  const loadSeq = useRef(0);
+  const desiredKey = useRef<string | null>(null);
+  const loadChain = useRef(Promise.resolve());
+  const runsInFlight = useRef(0);
   const [shown, setShown] = useState<Shown | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [section, setSection] = useState<SectionView | null>(null);
@@ -181,30 +188,59 @@ export default function App() {
     s.applyFollow();
   }, []);
 
+  /** Take the viewer for `key`. Anything claimed earlier must not draw. */
+  const claim = (key: string) => {
+    desiredKey.current = key;
+    loadSeq.current += 1;
+    return loadSeq.current;
+  };
+  const isCurrent = (seq: number, key: string) => loadSeq.current === seq && desiredKey.current === key;
+  const enqueue = <T,>(task: () => Promise<T>) => {
+    const run = loadChain.current.then(task, task);
+    loadChain.current = run.then(() => undefined, () => undefined);
+    return run;
+  };
+
   const showModel = useCallback(async (
     bytes: Uint8Array, name: string, key: string,
-    opts: { keepCamera?: boolean; label: string; preview: boolean; design?: Design | null; version?: { project: string; number: number } | null },
-  ) => {
+    opts: { seq: number; keepCamera?: boolean; label: string; preview: boolean; design?: Design | null; version?: { project: string; number: number } | null },
+  ) => enqueue(async () => {
+    if (!isCurrent(opts.seq, key)) return null;
     const v = viewerRef.current!;
-    loadedKey.current = key;
     setLoadError(null);
     if (opts.design !== undefined) designRef.current = opts.design;
     if (!opts.preview) v.clearSelection();
     await loadIntoViewer(bytes, !!opts.keepCamera);
+    if (!isCurrent(opts.seq, key)) {
+      // This parse lost the race and just drew the wrong session. Wipe it only when nothing newer
+      // has committed yet — a later preview of the same model replaces the scene itself.
+      const newerCommitted = loadedKey.current !== null && loadedKey.current !== key;
+      if (desiredKey.current !== key && !newerCommitted) viewerRef.current?.clear();
+      return null;
+    }
+    loadedKey.current = key;
     const head = new TextDecoder().decode(bytes.subarray(0, 4000));
     const schema = head.match(/FILE_SCHEMA\s*\(\s*\(\s*'([^']+)'/i)?.[1] ?? "";
     setLoaded({ key, name, schema, bytes });
     setShown({ label: opts.label, preview: opts.preview, version: opts.version ?? null });
     return { levels: v.storeys().length };
-  }, [loadIntoViewer]);
+  }), [loadIntoViewer]);
 
   const clearModel = useCallback(() => {
+    loadSeq.current += 1;
+    desiredKey.current = null;
     loadedKey.current = null;
     designRef.current = null;
     setLoaded(null);
     setShown(null);
-    viewerRef.current?.clear();
-    sectionRef.current?.refresh();
+    setPicked(null);
+    setFacts(null);
+    setProperties([]);
+    setFocus(null);
+    void enqueue(async () => {
+      viewerRef.current?.clear();
+      sectionRef.current?.reset();
+    });
   }, []);
 
   const fetchDesign = async (project: string, number: number): Promise<Design | null> => {
@@ -219,56 +255,100 @@ export default function App() {
   const inSession = (sid: string) => activeRef.current === sid && !!loadedKey.current?.startsWith(`${sid}:`);
 
   const loadVersion = useCallback(async (sid: string, v: api.Version) => {
+    const key = `${sid}:${versionName(v)}`;
+    const seq = claim(key);
     const design = await fetchDesign(v.project_id, v.number);
+    if (!isCurrent(seq, key)) return null;
     const bytes = await api.fetchBytes(v.ifc_url);
-    return showModel(bytes, versionName(v), `${sid}:${versionName(v)}`, {
-      keepCamera: inSession(sid), label: versionLabel(v), preview: false, design,
+    if (!isCurrent(seq, key)) return null;
+    return showModel(bytes, versionName(v), key, {
+      seq, keepCamera: inSession(sid), label: versionLabel(v), preview: false, design,
       version: { project: v.project_id, number: v.number },
     });
   }, [showModel]);
 
   // Switching sessions loads that session's model and registers its version turn cards.
+  const seenSession = useRef<string | null | undefined>(undefined);
   useEffect(() => {
     if (!viewerReady) return;
     for (const m of active?.messages ?? []) if (m.run?.version) ensureTurn(m.run.version);
+    const sid = active?.id ?? null;
+    const switched = seenSession.current !== undefined && seenSession.current !== sid;
+    seenSession.current = sid;
     const model = active?.model;
+    const owned = !!sid && (desiredKey.current ?? loadedKey.current)?.startsWith(`${sid}:`);
+    if (switched) {
+      setPicked(null);
+      setFacts(null);
+      setProperties([]);
+      setFocus(null);
+      setTab("model");
+      setRoomsVisible(false);
+      viewerRef.current?.setRoomsVisible(false);
+      framed.current = 0;
+      sectionRef.current?.reset();
+      if (active?.messages.some((m) => m.run && m.run.stage !== "done" && m.run.stage !== "error")) {
+        sectionRef.current?.startRun();
+      }
+      // Drop the previous session's version immediately. A load this session already claimed
+      // (opening a file) fills the viewer when it finishes, so leave that one alone.
+      if (!owned) {
+        setShown(null);
+        setLoaded(null);
+        loadedKey.current = null;
+        setLoadError(null);
+      }
+    }
     if (!active || !model) {
-      // A load for this same session may be in flight (its model is attached when it finishes).
-      const mine = active && loadedKey.current?.startsWith(`${active.id}:`);
-      if (loadedKey.current && !mine && !busy) clearModel();
+      if (!owned && (desiredKey.current || loadedKey.current)) clearModel();
       return;
     }
     const key = `${active.id}:${model.name}`;
-    if (loadedKey.current === key) return;
-    const sid = active.id;
+    if (desiredKey.current === key) return;
+    const seq = claim(key);
+    let cancelled = false;
     (async () => {
       try {
+        let bytes: Uint8Array;
+        let design: Design | null = null;
+        let version: { project: string; number: number } | null = null;
+        let label = model.name;
         if (model.url) {
           const ver = versionOf(model.url);
-          const design = ver ? await fetchDesign(ver.project, ver.number) : null;
-          await showModel(await api.fetchBytes(model.url), model.name, key,
-            { label: ver ? `v${ver.number} · final` : model.name, preview: false, design, version: ver });
-          return;
-        }
-        // Opened from disk: this run's bytes, or the copy kept for the session since an earlier run.
-        let local = localFiles.current.get(sid);
-        if (!local) {
-          const stored = await getFile(sid);
-          if (stored) {
-            local = stored.bytes;
-            localFiles.current.set(sid, local);
+          version = ver;
+          if (ver) {
+            design = await fetchDesign(ver.project, ver.number);
+            label = `v${ver.number} · final`;
           }
+          if (cancelled || !isCurrent(seq, key)) return;
+          bytes = await api.fetchBytes(model.url);
+        } else {
+          let local = localFiles.current.get(active.id);
+          if (!local) {
+            const stored = await getFile(active.id);
+            if (stored) {
+              local = stored.bytes;
+              localFiles.current.set(active.id, local);
+            }
+          }
+          if (cancelled || !isCurrent(seq, key)) return;
+          if (!local) {
+            clearModel();
+            setLoadError(`${model.name} was opened from disk and is no longer available. Open it again to view it.`);
+            return;
+          }
+          bytes = local;
+          design = null;
         }
-        if (local) await showModel(local, model.name, key, { label: model.name, preview: false, design: null });
-        else {
-          clearModel();
-          setLoadError(`${model.name} was opened from disk and is no longer available. Open it again to view it.`);
-        }
+        if (cancelled || !isCurrent(seq, key)) return;
+        await showModel(bytes, model.name, key, { seq, label, preview: false, design, version });
       } catch (e) {
+        if (cancelled || !isCurrent(seq, key)) return;
         setLoadError(`Couldn't load ${model.name}: ${e instanceof Error ? e.message : e}`);
       }
     })();
-  }, [viewerReady, active?.id, active?.model?.name]); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => { cancelled = true; };
+  }, [viewerReady, active?.id, active?.model?.name, active?.model?.url]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
    * Take the head of an open session's project from the backend. Versions live there,
@@ -321,6 +401,7 @@ export default function App() {
   ) => {
     const aid = uid();
     update(sid, addMessage({ id: aid, role: "assistant", text, run: { stage: "planning", steps: [], startedAt: Date.now() } }));
+    runsInFlight.current += 1;
     setBusy(true);
     // A session created for this prompt becomes active on the next render, so "is this the session on
     // screen" is decided when events arrive, not now.
@@ -358,10 +439,12 @@ export default function App() {
         pending = null;
         if (!next || finalArrived || !forActive()) return;
         ensureRun();
+        const key = `${sid}:preview`;
+        const seq = claim(key);
         try {
           const bytes = await api.fetchBytes(next.url);
-          if (finalArrived || !forActive()) return;
-          await showModel(bytes, "preview.ifc", `${sid}:preview`, { keepCamera: inSession(sid), label: next.label.toLowerCase(), preview: true });
+          if (finalArrived || !forActive() || !isCurrent(seq, key)) return;
+          await showModel(bytes, "preview.ifc", key, { seq, keepCamera: inSession(sid), label: next.label.toLowerCase(), preview: true });
         } catch {
           // A preview is best effort: the final version replaces it anyway.
         }
@@ -412,7 +495,9 @@ export default function App() {
       if (forActive()) {
         current = step("Loading the finished model", version.ifc_url);
         const shownNow = await loadVersion(sid, version);
-        current.done(`${name} · ${shownNow.levels} level${shownNow.levels === 1 ? "" : "s"} · ${version.summary.elements} elements`);
+        current.done(shownNow
+          ? `${name} · ${shownNow.levels} level${shownNow.levels === 1 ? "" : "s"} · ${version.summary.elements} elements`
+          : name);
         current = null;
       }
       update(sid, (s) => ({ ...patchRun(aid, { stage: "done", drafting: null, endedAt: Date.now() })(s), model: { name, url: version.ifc_url } }));
@@ -426,8 +511,11 @@ export default function App() {
       return false;
     } finally {
       finalArrived = true;
-      setBusy(false);
-      if (runStarted) sectionRef.current?.finishRun();
+      runsInFlight.current = Math.max(0, runsInFlight.current - 1);
+      setBusy(runsInFlight.current > 0);
+      // The section cut belongs to the session on screen. A run that finishes in the background
+      // must not release the cut of the one you switched to.
+      if (runStarted && forActive()) sectionRef.current?.finishRun();
     }
   }, [loadVersion, showModel, update]);
 
@@ -508,6 +596,8 @@ export default function App() {
 
   const openSessionWithModel = async (name: string, bytes: Uint8Array, url?: string) => {
     const sid = create(name);
+    const key = `${sid}:${name}`;
+    const seq = claim(key); // before the first await, so the session effect leaves this load alone
     if (!url) {
       localFiles.current.set(sid, bytes);
       void putFile(sid, name, bytes); // so the session still has its model after a restart
@@ -515,7 +605,8 @@ export default function App() {
     update(sid, addMessage({ id: uid(), role: "assistant", text: `Opened ${name}. Explore it in the viewer, or describe a change below.` }));
     const ver = versionOf(url);
     const design = ver ? await fetchDesign(ver.project, ver.number) : null;
-    await showModel(bytes, name, `${sid}:${name}`, { label: ver ? `v${ver.number} · final` : name, preview: false, design, version: ver });
+    if (!isCurrent(seq, key)) return;
+    await showModel(bytes, name, key, { seq, label: ver ? `v${ver.number} · final` : name, preview: false, design, version: ver });
     update(sid, (s) => ({ ...s, model: { name, url } }));
   };
 
