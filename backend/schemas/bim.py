@@ -14,7 +14,8 @@ from typing import Annotated, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
 
-from schemas.brick_types import Discipline, Finish, Host, Phase, Port
+from bricks.geometry import Bounds, Solid
+from bricks.model import Connector, Material, PropertyValue
 
 Point = tuple[float, float]
 
@@ -212,31 +213,43 @@ class CustomFixture(_Element):
 
 
 class Asset(_Element):
-    """A placed library brick (bricks/): any IFC element class, drawn from its evaluated parts.
-    `position` is the footprint centre, `rotation` turns it (back at -y before rotation, like Fixture),
-    `elevation` lifts the local frame above the level (negative for footings and piles)."""
+    """A placed brick (bricks/): any IFC element class, drawn from its evaluated solids.
+
+    The solids are in the brick's own frame (its origin at 0, 0, 0); `position` + `elevation` put that
+    origin on the level and `rotation` (about z) then `pitch` (raising the local x axis, for paths that
+    climb) turn it. `bounds` is the solids' box in the brick's frame, `keepout` the boxes nothing else
+    may enter, `path` the start and end it was placed along, if any."""
 
     type: Literal["asset"] = "asset"
     level: str
     brick: str
     ifc_class: str
     predefined_type: Optional[str] = None
-    discipline: Discipline
-    phase: Phase = "details"
-    finish: Finish = "device"
-    host: Host = "floor"
-    room: Optional[str] = None
+    tags: list[str] = Field(default_factory=list)
+    ref: Optional[str] = None
     position: Point
-    rotation: float = 0.0
     elevation: float = 0.0
-    size: tuple[float, float, float] = Field(description="Nominal width (or length for spans), depth and height")
-    parts: list[ShapePart] = Field(min_length=1, max_length=24)
+    rotation: float = 0.0
+    pitch: float = 0.0
+    bounds: Bounds
+    solids: list[Solid] = Field(min_length=1)
+    materials: dict[str, Material] = Field(default_factory=dict)
     params: dict[str, float] = Field(default_factory=dict)
-    ports: list[Port] = Field(default_factory=list)
-    structural: bool = False
-    overlap_ok: bool = False
-    clearance: float = 0.0
+    connectors: list[Connector] = Field(default_factory=list)
+    properties: dict[str, PropertyValue] = Field(default_factory=dict)
+    keepout: list[Bounds] = Field(default_factory=list)
+    collides: bool = True
+    path: Optional[tuple[tuple[float, float, float], tuple[float, float, float]]] = None
     note: Optional[str] = None
+
+    @property
+    def size(self) -> tuple[float, float, float]:
+        x0, y0, z0, x1, y1, z1 = self.bounds
+        return (round(x1 - x0, 4), round(y1 - y0, 4), round(z1 - z0, 4))
+
+    @property
+    def load_bearing(self) -> bool:
+        return bool(self.properties.get("load_bearing"))
 
 
 class Railing(_Element):

@@ -16,14 +16,16 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from bricks import given_fields, library
+import json
+
+from bricks import Brick, library
 from schemas.bim import FixtureKind, RoofShape, WallMaterial
 from schemas.design import (MAX_STOREYS, ROOM_OWNED, UNROOFED_KINDS, UNWALLED_KINDS, BalconyDef, BrickDef, ColumnDef, CustomShapeDef, Design,
                             DoorDef, DoorKind, Edge, FixtureDef, FreeDef, FreeKind, LevelDef, PorchDef, RoofDef, RoomDef, RoomKind,
                             ShapePartDef, StairDef, WindowDef, WindowKind, guess_kind, slug)
 
-StepKind = Literal["building", "level", "room", "layout", "door", "window", "stair", "furniture", "custom", "brick", "balcony",
-                   "porch", "roof", "column", "material", "element", "remove", "note"]
+StepKind = Literal["building", "level", "room", "layout", "door", "window", "stair", "furniture", "custom", "asset", "brick",
+                   "balcony", "porch", "roof", "column", "material", "element", "remove", "note"]
 
 
 class StepError(ValueError):
@@ -94,9 +96,9 @@ class Step(BaseModel):
     near: Optional[list[float]] = Field(None, description="[x, y]: a point on or next to the wall meant (any room shape)")
     wall: Optional[str] = Field(None, description="door/window: id of a free-standing wall element to sit in")
     at: Optional[float] = Field(None, description="0..1 position along the wall (0 = west/south end)")
-    position: Optional[list[float]] = Field(None, description="element column: [x, y]")
-    start: Optional[list[float]] = Field(None, description="element beam: [x, y]")
-    end: Optional[list[float]] = Field(None, description="element beam: [x, y]")
+    position: Optional[list[float]] = Field(None, description="element column / brick: [x, y] (brick: or [x, y, z])")
+    start: Optional[list[float]] = Field(None, description="element beam / path brick: [x, y] (brick: or [x, y, z])")
+    end: Optional[list[float]] = Field(None, description="element beam / path brick: [x, y] (brick: or [x, y, z])")
     thickness: Optional[float] = Field(None, description="element wall/slab/roof")
     width: Optional[float] = None
     height: Optional[float] = None
@@ -115,8 +117,15 @@ class Step(BaseModel):
     parts: Optional[list[ShapePartStep]] = Field(
         None, description="custom: 1-12 solids (box or round) that together make the shape, e.g. a round table top "
                           "plus box legs; each part's x,y,z is its own min corner in the shape's local frame")
-    brick: Optional[str] = Field(None, description="brick: id of a library brick (see search_bricks)")
+    brick: Optional[str] = Field(None, description="brick: id of a library brick (see search_bricks) or of an asset you defined")
+    ref: Optional[str] = Field(None, description="brick: id of what it goes in or on (a room, wall, brick, element, 'site', 'roof'); null = the level")
     params: Optional[list[BrickParamStep]] = Field(None, description="brick: parameters that differ from the brick's defaults")
+    definition: Optional[str] = Field(None, description="asset: a complete brick definition as a JSON string (see the ASSETS section)")
+
+    @field_validator("definition", mode="before")
+    @classmethod
+    def _definition(cls, v):
+        return json.dumps(v) if isinstance(v, dict) else v
 
     @field_validator("params", mode="before")
     @classmethod
@@ -125,7 +134,7 @@ class Step(BaseModel):
             return [{"name": k, "value": val} for k, val in v.items()]
         return v
 
-    @field_validator("id", "room", "to", "to_level", "name", mode="before")
+    @field_validator("id", "room", "ref", "to", "to_level", "name", mode="before")
     @classmethod
     def _str(cls, v):
         return str(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else v
@@ -229,6 +238,10 @@ def _pt_or_none(v):
     return None if v is None else (float(v[0]), float(v[1]))
 
 
+def _pt3_or_none(v):
+    return None if v is None else tuple(float(c) for c in v[:3])
+
+
 def _fmt(exc: Exception) -> str:
     text = str(exc)
     if "Value error, " in text:
@@ -261,7 +274,7 @@ def _remove(design: Design, id_: str) -> str:
         for rid in gone:
             _remove(design, rid)
         design.stairs = [s for s in design.stairs if s.to_level != id_]
-        design.bricks = [b for b in design.bricks if b.level != id_]
+        _drop_bricks(design, {b.id for b in design.bricks if b.level == id_})
         return f"removed level {id_}" + (f" and its rooms ({', '.join(gone)})" if gone else "")
     room = design.room(id_)
     if room is not None:
@@ -272,6 +285,7 @@ def _remove(design: Design, id_: str) -> str:
             setattr(design, attr, [x for x in getattr(design, attr) if x.room != rid])
         design.doors = [d for d in design.doors if d.to != rid]
         n -= sum(len(getattr(design, attr)) for attr in ROOM_OWNED)
+        n += _drop_bricks(design, {rid})
         return f"removed room {rid}" + (f" and {n} item(s) in it" if n else "")
     free = design.element(id_)
     if free is not None:
@@ -279,6 +293,13 @@ def _remove(design: Design, id_: str) -> str:
         design.doors = [x for x in design.doors if x.wall != id_]
         design.windows = [x for x in design.windows if x.wall != id_]
         return f"removed {free.kind} {id_}"
+    if any(b.id == id_ for b in design.bricks):
+        n = _drop_bricks(design, {id_}) - 1
+        return f"removed brick {id_}" + (f" and {n} brick(s) on it" if n else "")
+    if any(b.id == id_ for b in design.library):
+        design.library = [b for b in design.library if b.id != id_]
+        n = _drop_bricks(design, {b.id for b in design.bricks if b.brick == id_})
+        return f"removed asset {id_}" + (f" and its {n} placement(s)" if n else "")
     for attr in (*ROOM_OWNED, "columns"):
         items = getattr(design, attr)
         keep = [i for i in items if i.id != id_]
@@ -293,56 +314,75 @@ def _remove(design: Design, id_: str) -> str:
                     f"(known ids: {', '.join(known[:60])}{', …' if len(known) > 60 else ''})")
 
 
+def _drop_bricks(design: Design, gone: set[str]) -> int:
+    """Remove the bricks with these ids and every brick placed in or on anything removed; returns how many."""
+    before = len(design.bricks)
+    while True:
+        keep = [b for b in design.bricks if b.id not in gone and b.ref not in gone]
+        if len(keep) == len(design.bricks):
+            break
+        gone |= {b.id for b in design.bricks} - {b.id for b in keep}
+        design.bricks = keep
+    return before - len(design.bricks)
+
+
+def _apply_asset(d: Design, step: Step) -> tuple[Design, str]:
+    text = _need(step, "definition")
+    try:
+        brick = Brick.model_validate(json.loads(text) if isinstance(text, str) else text)
+        solids = brick.solids(brick.resolve())
+    except json.JSONDecodeError as exc:
+        raise StepError(f"asset: `definition` is not valid JSON ({exc.msg} at char {exc.pos})") from exc
+    except ValueError as exc:
+        raise StepError(f"asset: {_fmt(exc)}") from exc
+    if library().get(brick.id) is not None:
+        raise StepError(f"asset: '{brick.id}' is a library brick; place it with a brick step, or give your asset another id")
+    d.library = [b for b in d.library if b.id != brick.id] + [brick]
+    return d, f"asset {brick.id}: {brick.name} ({len(solids)} solid(s), {brick.size_text()}, mount {brick.mount})"
+
+
 def _apply_brick(d: Design, step: Step) -> tuple[Design, str]:
     name = _need(step, "brick")
-    brick = library().get(name)
+    brick = d.find_brick(name)
     if brick is None:
-        hints = library().suggest(name.replace("_", " "))
-        raise StepError(f"brick: no brick '{name}' in the library" + (f"; closest: {', '.join(hints)}" if hints else "")
-                        + " (search_bricks finds more)")
+        hints = [b.id for b in d.library][:3] + library().suggest(name.replace("_", " "))
+        raise StepError(f"brick: no brick '{name}'" + (f"; closest: {', '.join(hints)}" if hints else "")
+                        + " (search_bricks finds more, or define it with an asset step)")
     given = {p.name: p.value for p in step.params or []}
     try:
         brick.resolve(given)
     except ValueError as exc:
         raise StepError(str(exc)) from exc
-    room = None
-    if step.room:
-        room = d.room(step.room)
-        if room is None:
-            raise StepError(f"brick {brick.id}: unknown room '{step.room}' (rooms: {', '.join(r.id for r in d.rooms)})")
-    problem = brick.placement_error(given_fields(step))
-    if problem:
-        raise StepError(problem)
-    ground = d.ground_level()
-    level = step.level or (room.level if room else ground.id)
-    level_def = d.level(level)
-    if level_def is None:
-        raise StepError(f"brick {brick.id}: unknown level '{level}' (levels: {', '.join(l.id for l in d.levels)})")
-    if room is not None and room.level != level:
-        raise StepError(f"brick {brick.id}: room {room.id} is on {room.level}, not {level}")
-    if brick.rules.not_below_ground and level_def.below_ground:
-        raise StepError(f"brick {brick.id} cannot go below ground")
-    if brick.rules.ground_only and level != ground.id:
-        raise StepError(f"brick {brick.id} belongs on the ground floor ({ground.id})")
-    bid = step.id or d.unique_id(f"{brick.id.replace('_', '-')}-{room.id if room else level.lower()}")
-    if brick.rules.one_per_building and any(b.brick == brick.id and b.id != bid for b in d.bricks):
-        raise StepError(f"brick {brick.id}: one per building, and there already is one")
+    on_path = step.start is not None or step.end is not None
+    if brick.mount == "path" and (step.start is None or step.end is None):
+        raise StepError(f"brick {brick.id} runs along a path: give `start` and `end`")
+    if brick.mount != "path" and on_path:
+        raise StepError(f"brick {brick.id} is mount {brick.mount}, not a path: give `position`, `side` or `near` instead of start/end")
+    room = d.room(step.ref) if step.ref else None
+    ref = room.id if room else step.ref
+    if step.level is not None and d.level(step.level) is None:
+        raise StepError(f"brick {brick.id}: unknown level '{step.level}' (levels: {', '.join(l.id for l in d.levels)})")
+    level = room.level if room else step.level
+    bid = step.id or d.unique_id(f"{brick.id.replace('_', '-')}-{ref or (level or d.ground_level().id).lower()}")
     if bid in d.all_ids() and not any(b.id == bid for b in d.bricks):
         raise StepError(f"brick: id '{bid}' is already used by something else")
+    if ref == bid:
+        raise StepError(f"brick {bid} cannot be placed on itself")
     side = _literal(step, step.side or "center", ("N", "S", "E", "W", "center"), "side")
-    d.bricks = [b for b in d.bricks if b.id != bid]
-    d.bricks.append(BrickDef(id=bid, brick=brick.id, room=room.id if room else None, level=level, side=side,
-                             near=_pt_or_none(step.near), at=step.at if step.at is not None else 0.5,
-                             position=_pt_or_none(step.position), start=_pt_or_none(step.start), end=_pt_or_none(step.end),
-                             rotation=step.rotation, params=given))
-    if brick.spans:
-        where = f" from {step.start} to {step.end}"
-    elif step.position:
-        where = f" at {step.position}"
-    elif room is not None:
-        where = f" in {room.id}" + (f" near {step.near}" if step.near else f" against side {side}" if side != "center" else "")
+    try:
+        placed = BrickDef(id=bid, brick=brick.id, ref=ref, level=level, side=side, near=_pt_or_none(step.near),
+                          at=step.at if step.at is not None else 0.5, position=_pt3_or_none(step.position),
+                          start=_pt3_or_none(step.start), end=_pt3_or_none(step.end), rotation=step.rotation, params=given)
+    except ValueError as exc:
+        raise StepError(f"brick {bid}: {_fmt(exc)}") from exc
+    d.bricks = [b for b in d.bricks if b.id != bid] + [placed]
+    if on_path:
+        where = f" from {list(placed.start)} to {list(placed.end)}"
+    elif placed.position is not None:
+        where = f" at {list(placed.position)}"
     else:
-        where = f" on {level}"
+        where = f" against side {side}" if side != "center" else f" near {list(placed.near)}" if placed.near else ""
+    where = (f" in/on {ref}" if ref else f" on {level or d.ground_level().id}") + where
     extra = f" ({', '.join(f'{k}={v:g}' for k, v in given.items())})" if given else ""
     return d, f"{brick.id} {bid}: {brick.name}{where}{extra}"
 
@@ -568,6 +608,9 @@ def apply_step(design: Design, step: Step) -> tuple[Design, str]:
         d.custom_shapes.append(CustomShapeDef(id=cid, room=room.id, name=name, side=side, near=_pt_or_none(step.near),
                                               at=step.at if step.at is not None else 0.5, rotation=step.rotation, parts=parts))
         return d, f"custom {cid}: \"{name}\" in {room.id} ({len(parts)} part(s))"
+
+    if k == "asset":
+        return _apply_asset(d, step)
 
     if k == "brick":
         return _apply_brick(d, step)

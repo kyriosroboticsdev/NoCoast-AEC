@@ -27,6 +27,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from bricks import Brick, library
+from bricks.place import Placement
 from schemas.bim import FixtureKind, RoofShape, WallMaterial
 
 Side = Literal["N", "S", "E", "W"]
@@ -414,27 +416,14 @@ class CustomShapeDef(BaseModel):
         return None if v is None else _pt(v)
 
 
-class BrickDef(BaseModel):
-    """One placed brick from the library (bricks/library): what it is, where, and any parameters that
-    differ from the brick's defaults. How it is placed depends on the brick's host — see bricks/model.py."""
+class BrickDef(Placement):
+    """One placed brick — from the shared library or the design's own `library` — where it goes (see
+    bricks/place.py: `ref` is any room, wall, element, brick, "site" or "roof" id), and any parameters
+    that differ from its defaults."""
 
     id: str
-    brick: str = Field(description="Brick id from the library")
-    room: Optional[str] = Field(None, description="Room it stands in (floor/wall/ceiling hosts); optional for free/roof/span")
-    level: Optional[str] = Field(None, description="Storey for bricks without a room; default the room's, else the ground floor")
-    side: Literal["N", "S", "E", "W", "center"] = "center"
-    near: Optional[Pt] = None
-    at: float = Field(0.5, ge=0, le=1)
-    position: Optional[Pt] = Field(None, description="Exact plan position of its centre")
-    start: Optional[Pt] = Field(None, description="span bricks: from")
-    end: Optional[Pt] = Field(None, description="span bricks: to")
-    rotation: Optional[float] = None
+    brick: str = Field(description="Brick id")
     params: dict[str, float] = Field(default_factory=dict)
-
-    @field_validator("near", "position", "start", "end", mode="before")
-    @classmethod
-    def _p(cls, v):
-        return None if v is None else _pt(v)
 
 
 class BalconyDef(BaseModel):
@@ -524,7 +513,7 @@ class RoofDef(BaseModel):
 
 
 # Collections whose items stand in a room (`.room`) and go when the room does.
-ROOM_OWNED = ("doors", "windows", "stairs", "fixtures", "custom_shapes", "balconies", "bricks")
+ROOM_OWNED = ("doors", "windows", "stairs", "fixtures", "custom_shapes", "balconies")
 
 
 class Design(BaseModel):
@@ -537,7 +526,8 @@ class Design(BaseModel):
     stairs: list[StairDef] = Field(default_factory=list)
     fixtures: list[FixtureDef] = Field(default_factory=list)
     custom_shapes: list[CustomShapeDef] = Field(default_factory=list)
-    bricks: list[BrickDef] = Field(default_factory=list, description="Placed library bricks: equipment, services, structure, site")
+    library: list[Brick] = Field(default_factory=list, description="Bricks the model wrote for this design")
+    bricks: list[BrickDef] = Field(default_factory=list, description="Placed bricks")
     balconies: list[BalconyDef] = Field(default_factory=list)
     columns: list[ColumnDef] = Field(default_factory=list)
     elements: list[FreeDef] = Field(default_factory=list, description="Free-standing walls, slabs, roofs, columns, beams")
@@ -573,7 +563,14 @@ class Design(BaseModel):
         return [r for r in self.rooms if r.level == level_id]
 
     def all_ids(self) -> set[str]:
-        return {x.id for attr in ("levels", "rooms", "columns", "elements", *ROOM_OWNED) for x in getattr(self, attr)}
+        return {x.id for attr in ("levels", "rooms", "columns", "elements", "bricks", *ROOM_OWNED) for x in getattr(self, attr)}
+
+    def find_brick(self, brick_id: str | None) -> Brick | None:
+        """A brick definition: the design's own first, then the shared library."""
+        if brick_id is None:
+            return None
+        key = brick_id.strip().lower().replace("-", "_").replace(" ", "_")
+        return next((b for b in self.library if b.id == key), None) or library().get(key)
 
     def unique_id(self, base: str) -> str:
         ids = self.all_ids()
