@@ -100,20 +100,63 @@ export default function App() {
 
   // --- loading models into the viewer -----------------------------------------
 
-  const showModel = useCallback(async (bytes: Uint8Array, name: string, key: string, onProgress?: (p: number) => void) => {
+  const showModel = useCallback(async (
+    bytes: Uint8Array,
+    name: string,
+    key: string,
+    opts?: { keepCamera?: boolean; quiet?: boolean },
+  ) => {
     const v = viewerRef.current!;
     loadedKey.current = key;
     setLoadError(null);
-    setProgress(0);
-    setPicked(null);
-    setProperties([]);
-    await v.loadIfc(bytes, name, (p) => { setProgress(p); onProgress?.(p); });
+    if (!opts?.quiet) {
+      setProgress(0);
+      setPicked(null);
+      setProperties([]);
+    }
+    await v.loadIfc(bytes, name, (p) => { if (!opts?.quiet) setProgress(p); }, opts?.keepCamera ?? false);
     const head = new TextDecoder().decode(bytes.subarray(0, 4000));
     const schema = head.match(/FILE_SCHEMA\s*\(\s*\(\s*'([^']+)'/i)?.[1] ?? "";
     setLoaded({ key, name, schema, bytes });
     setProgress(null);
     return { levels: v.storeys().length };
   }, []);
+
+  // Newest-pending-only: a preview that arrives while another is still parsing replaces it.
+  const liveLoad = useRef<{
+    inflight: boolean;
+    framed: boolean;
+    pending: { sid: string; url: string; name: string } | null;
+    done: Promise<void> | null;
+  }>({ inflight: false, framed: false, pending: null, done: null });
+
+  const showPreview = useCallback((sid: string, url: string, name: string) => {
+    const q = liveLoad.current;
+    q.pending = { sid, url, name };
+    if (q.inflight && q.done) return q.done;
+    q.inflight = true;
+    q.done = (async () => {
+      try {
+        while (q.pending) {
+          const job = q.pending;
+          q.pending = null;
+          if (activeRef.current !== job.sid) continue;
+          try {
+            const bytes = await api.fetchBytes(job.url);
+            if (q.pending || activeRef.current !== job.sid) continue;
+            const keep = q.framed;
+            await showModel(bytes, job.name, `${job.sid}:${job.name}`, { keepCamera: keep, quiet: true });
+            q.framed = true;
+          } catch (e) {
+            console.warn("[nocoast] live preview failed:", e);
+          }
+        }
+      } finally {
+        q.inflight = false;
+      }
+    })();
+    return q.done;
+  }, [showModel]);
 
   const clearModel = useCallback(async () => {
     loadedKey.current = null;
@@ -197,9 +240,15 @@ export default function App() {
         update(sid, (s) => ({ ...s, project: created }));
       }
 
+      liveLoad.current.framed = !!loadedKey.current?.startsWith(`${sid}:`);
+
       const version = await call(project, (e) => {
-        tracer.event(e);
-        if (["apply", "solve", "compile", "build", "step"].includes(e.stage)) update(sid, patchRun(aid, { stage: "building" }));
+        if (e.stage !== "stream" && e.stage !== "partial") tracer.event(e);
+        if (["apply", "solve", "compile", "build", "step", "partial"].includes(e.stage)) {
+          update(sid, patchRun(aid, { stage: "building" }));
+        }
+        const url = e.stage === "partial" && typeof e.data?.ifc_url === "string" ? e.data.ifc_url : null;
+        if (url && activeRef.current === sid) void showPreview(sid, url, "live.ifc");
       });
       update(sid, (s) => ({
         ...patchRun(aid, { version, stage: "loading" })(s),
@@ -209,13 +258,9 @@ export default function App() {
 
       const name = versionName(version);
       if (activeRef.current === sid) {
-        current = step("Downloading the IFC", version.ifc_url);
-        const bytes = await api.fetchBytes(version.ifc_url);
-        current.done(`${name} · ${Math.round(bytes.length / 1024)} KB`);
-
-        current = step("Loading into the 3D viewer", "parsing IFC with web-ifc");
-        const loaded = await showModel(bytes, name, `${sid}:${name}`);
-        current.done(`${loaded.levels} levels`);
+        current = step("Loading the finished model", version.ifc_url);
+        await showPreview(sid, version.ifc_url, name);
+        current.done(name);
         current = null;
       }
       update(sid, (s) => ({ ...patchRun(aid, { stage: "done", endedAt: Date.now() })(s), model: { name, url: version.ifc_url } }));
@@ -231,7 +276,7 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }, [showModel, update]);
+  }, [showModel, showPreview, update]);
 
   /** First prompt in a session designs a building; later prompts edit its head version. */
   const generate = useCallback((sid: string, prompt: string) => {
