@@ -1,0 +1,29 @@
+{
+  "discipline": "energy",
+  "phase": "electrical",
+  "bricks": [
+    {"id": "solar_pv_array", "name": "Solar PV array", "category": "renewables", "ifc_class": "IfcSolarDevice", "predefined_type": "SOLARPANEL",
+     "host": "roof", "finish": "solar", "tags": ["solar panels", "photovoltaic", "pv", "renewable", "roof panels"],
+     "description": "Rows of PV modules on a frame on the roof; about 1 kWp per 5 m². Face south in the northern hemisphere.",
+     "params": {"w": [5.0, 1.0, 20.0], "d": [3.4, 1.0, 12.0], "h": [0.35, 0.1, 0.8]},
+     "parts": [[0, 0, 0, "w", 0.05, 0.1], [0, "d - 0.05", 0, "w", 0.05, "h - 0.05"], [0, 0, "h - 0.05", "w", "d", 0.04]],
+     "ports": [{"kind": "power", "direction": "out"}], "rules": {"overlap_ok": false}},
+    {"id": "solar_thermal_collector", "name": "Solar thermal collector", "category": "renewables", "ifc_class": "IfcSolarDevice", "predefined_type": "SOLARCOLLECTOR",
+     "host": "roof", "phase": "plumbing", "finish": "solar", "tags": ["solar hot water", "evacuated tube", "thermal", "renewable"],
+     "params": {"w": [2.0, 1.0, 6.0], "d": [1.2, 1.0, 2.5], "h": [0.3, 0.1, 0.6]},
+     "ports": [{"kind": "water_cold"}, {"kind": "water_hot", "direction": "out"}]},
+    {"id": "home_battery", "name": "Home battery", "category": "storage", "ifc_class": "IfcElectricFlowStorageDevice", "predefined_type": "BATTERY",
+     "host": "wall", "mount": 0.3, "finish": "appliance", "tags": ["battery", "powerwall", "energy storage"],
+     "params": {"w": [0.75, 0.5, 1.2], "d": [0.15, 0.1, 0.3], "h": [1.15, 0.6, 1.5]},
+     "ports": [{"kind": "power", "direction": "out"}], "rules": {"rooms": ["garage", "utility", "storage", "carport", "other"], "not_below_ground": false, "clearance": 0.6}},
+    {"id": "solar_inverter", "name": "Solar inverter", "category": "renewables", "ifc_class": "IfcTransformer", "predefined_type": "INVERTER",
+     "host": "wall", "mount": 1.2, "finish": "appliance", "tags": ["inverter", "pv inverter", "hybrid inverter"],
+     "params": {"w": [0.45, 0.3, 0.7], "d": [0.2, 0.12, 0.3], "h": [0.55, 0.3, 0.8]},
+     "ports": [{"kind": "power"}], "rules": {"rooms": ["garage", "utility", "storage", "other"], "overlap_ok": true}},
+    {"id": "small_wind_turbine", "name": "Small wind turbine", "category": "renewables", "ifc_class": "IfcElectricGenerator", "predefined_type": "STANDALONE",
+     "host": "free", "phase": "site", "finish": "metal", "tags": ["wind", "turbine", "renewable"],
+     "params": {"w": [2.5, 1.5, 5.0], "d": [0.4, 0.3, 1.0], "h": [9.0, 6.0, 18.0]},
+     "parts": [["round", "w / 2 - 0.1", "d / 2 - 0.1", 0, 0.2, 0.2, "h - 0.3"], [0, "d / 2 - 0.05", "h - 0.3", "w", 0.1, 0.3]],
+     "ports": [{"kind": "power", "direction": "out"}], "rules": {"exterior": true}}
+  ]
+}
