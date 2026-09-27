@@ -20,10 +20,11 @@ roof from those and compiles them to IFC after every step.
 
 ```
  prompt ──► LLM: REQUIREMENTS checklist  (atomic, typed, "supported" flag)
+        ──► LLM: RESEARCH turns — tool calls into the brick library and skills (search_bricks, get_brick, get_skill …)
         ──► LLM: BUILD STEPS, streamed ──► each complete step ─► apply to DESIGN ─► derive ─► preview IFC ─► viewer
-                                              (room, door, window, stair, furniture, roof …)      ▲     (≤ 1 s apart)
+                                   (room, door, window, stair, brick, roof …)                     ▲     (≤ 1 s apart)
                  rejected steps ─────────────────────────────── fix round (≤ N) ──────────────────┘
-        ──► deterministic CHECK of the design against the checklist ──► unmet → fix round
+        ──► COORDINATE (clashes, ports/services, structural spans) + CHECK against the checklist ──► errors/unmet → fix round
         ──► derive BuildingSpec (IR) ─► IfcOpenShell compiler (stable GlobalIds) ─► version store ─► viewer
  edit:  the same, starting from the head version's DESIGN; the model emits only the steps that change it
 ```
@@ -51,6 +52,10 @@ backend/
   schemas/ops.py        Raw element ops (UI/scripts escape hatch; stored as design overrides)
   core/derive.py        Design → BuildingSpec: walls from room edges, opening placement, stairs, roofs, balconies, porch
   core/checks.py        deterministic verification of a design against its requirements
+  bricks/               the brick library: parametric JSON assets per discipline (bricks/library/*.json), search, index
+  skills/               assembly know-how the model reads on demand (skills/library/*.md)
+  core/research.py      the research loop: the model's tool calls into bricks and skills, collected into a toolbox
+  core/coordinate.py    coordination: clash.py (hard/clearance clashes), assembly.py (ports, room rules), structure.py (spans)
   core/stream.py        apply steps as they stream; worker thread compiles previews (geometry-checks only what changed)
   core/pipeline.py      the run: requirements → build stream → fix rounds → check → compile → version
   core/ops.py           apply raw ops to a spec (pure, cascading deletes, re-validates)
@@ -292,13 +297,13 @@ requirements with a `kind` the checker understands:
 wall on side) · window (count, side) · door (room ↔ room/outside) · stair · furniture (kind, room, count) ·
 roof · feature (garage/porch/balcony/basement) · dimension · material · style · other`
 
-plus `supported: false` for what the builder cannot do (curved walls, pools, elevators …) — those are
+plus `asset` and `structure` (§4.14) and `supported: false` for what the builder cannot do — those are
 listed in the version notes instead of being silently dropped. After the build stream, `check()` runs each
 requirement against the design deterministically (`[met]`, `[UNMET] living room facing south — Living
 Room's exterior sides are N, W`, `[unsupported]`, `[not checked]` for style), the result goes to the step
 log and the version record, and unmet items trigger one fix round with the same build prompt.
 
-The same format is the evaluation set (`tests/evals/prompts.json`, 16 detailed prompts with hand-written
+The same format is the evaluation set (`tests/evals/prompts.json`, 24 detailed prompts with hand-written
 requirements). `python tools/eval.py` runs the real pipeline on each and prints met/checkable per case
 and overall — the number to watch when changing prompts, schemas or models.
 
@@ -446,6 +451,9 @@ History is linear; `revert/{n}` appends a copy of *n*; `base_version` gives opti
 | `GET /projects/{id}/versions/{n}/slices`, `…/gcode` | `?layer_height=` | horizontal slices of the compiled IFC in construction-phase order; slicer-style preview G-code (`slicer/`) |
 | `POST /projects/{id}/versions/{n}/construction`, `GET …/construction/{job}` | | live-build job: one IFC per element in construction order, polled by the viewer (`core/construction.py`) |
 | `POST /plan`, `/build`, `/generate` | | stateless one-shots (scripts, tests) |
+| `GET /bricks` | `?q=&discipline=&limit=` | brick search (the same ranking the model's `search_bricks` tool uses) |
+| `GET /bricks/{id}` | | the full brick card; 404 lists the closest ids |
+| `GET /skills`, `GET /skills/{name}` | | skill index; one skill's markdown |
 
 SSE events: `event: <stage>` + `data: {"seq", "t", "stage", "message", "data"}`, stages as in §4.5.
 `done.data` is the version record incl. `ifc_url` and `checks`.
@@ -479,7 +487,54 @@ port (skip with `BIM_NO_BACKEND=1`). A Windows Job Object ties the backend to th
 on a crash or force-quit. The shell also provides native open/save dialogs and raw-bytes
 `read_ifc`/`write_ifc` commands. `src/platform.ts` is the only frontend file that knows about Tauri.
 
-## 4.14 Troubleshooting
+### 4.14 Bricks, skills, research and coordination
+
+Instead of a fixed furniture vocabulary, the model searches a **library of bricks** and places them
+with one generic step. 169 bricks across 11 disciplines (architecture, interior, plumbing, hvac,
+electrical, data, fire, energy, structure, transport, site), each a JSON card in `bricks/library/`:
+
+- `ifc_class` / `predefined_type` (IfcSolarDevice, IfcBoiler, IfcTransportElement, IfcBeam, IfcGeographicElement …),
+  `host` (`floor`, `wall`, `ceiling`, `roof`, `free`, `span`), `phase`, `finish`, `tags`, `description`;
+- `params` as `[default, min, max]` and `parts` — boxes whose dimensions are expressions over the params
+  (`"w"`, `"d - 0.05"`), so one card resizes;
+- `ports` (`needs` / `provides`: water, drain, gas, flue, power, data …), `clearance`, and `rules`
+  (`rooms`, `exterior`, `ground_only`, `not_below_ground`, `one_per_building`, `overlap_ok`, `max_span`, `structural`).
+
+```json
+{"step": "brick", "brick": "solar_pv_array", "id": "pv-1", "params": [{"name": "w", "value": 8}]}
+{"step": "brick", "brick": "passenger_elevator", "room": "hall", "level": "L1"}
+{"step": "brick", "brick": "hedge", "start": [-2, -2], "end": [14, -2]}
+```
+
+`schemas/steps.py::_apply_brick` rejects an unknown id (with the closest matches), out-of-range params and
+broken rules; `core/derive.py` turns each placement into an `Asset` element (floor/wall/ceiling/roof hosted,
+free, or a span between two points), adds wet risers for rooms whose bricks need water, and
+`ifc/assets.py` compiles it to the card's IFC class with a `NoCoast_Brick` pset (id, params, phase).
+
+**Skills** (`skills/library/*.md`, 14 of them) are how-to notes: kitchen and bathroom layout, plumbing and
+hot water, HVAC, electrical, fire safety, accessibility, structural spans, energy, site, placing bricks.
+
+**Research** (`core/research.py`). Between the checklist and the build, the model gets up to
+`BIM_TOOL_ROUNDS` (default 3) turns of at most 8 tool calls each — `search_bricks`, `get_brick`,
+`list_skills`, `get_skill`, `check_design`, `structure_report` — or says it is done. Results stream as
+`research` / `tool` SSE stages and are collected into a toolbox (capped at 14k chars) that goes into every
+build and fix prompt as `LIBRARY`. The build prompt always carries the one-line brick and skill index.
+
+**Coordination** (`core/coordinate.py`) runs with the checks after the build:
+
+- `clash.py` — footprint + height overlap for any pair involving an asset (skipping `overlap_ok` and
+  structural-on-structural) and intrusions into clearance zones; the stream rejects a clashing brick step
+  immediately;
+- `assembly.py` — every port a brick needs beyond the base services must be provided by some brick
+  (a gas boiler needs a gas meter and a flue); room rules give warnings;
+- `structure.py` — clear spans against the wall material's limit (timber 6 m, masonry 7, concrete 8,
+  glass 5), beams against their `max_span`, overhangs over 1 m.
+
+Each issue carries suggested steps (found by `first_fit`, which tries candidate placements until one
+derives without a clash); errors join unmet requirements in the fix round. Requirements gain the kinds
+`asset` (brick, room, count) and `structure`.
+
+## 4.15 Troubleshooting
 
 Both sides log verbosely so a failure can be diagnosed from two pastes:
 
@@ -501,7 +556,9 @@ shows each reason (usually an edit request the model could not map onto existing
 
 ## 5. Tests
 
-`cd backend && python -m pytest` — 104 tests on the mock LLM, no network: derivation (walls from shared
+`cd backend && python -m pytest` — 346 tests on the mock LLM, no network: every brick placing with
+its defaults and compiling to valid IFC, brick rules, clashes, ports and spans, the research loop and an
+end-to-end prompt with a lift, solar, heat pump, boiler and trees · derivation (walls from shared
 and free edges, opening placement, stairs and wells, roofs over partial footprints, id stability when a
 room moves, basements) · polygons (L-shaped rooms and their wall ids, ambiguous sides, curved walls as one
 faceted wall with a window, open edges and carports, courtyards, `near` errors, free elements with a gate
@@ -522,6 +579,8 @@ compiling. `python tools/eval.py` measures accuracy on the real model.
 | curved walls as one faceted IfcWall | every IFC toolchain copes with a polygon profile; openings in true curved profiles are where they break; the radius is kept in a pset |
 | steps streamed and applied one at a time | small deltas, ≤ 1 s cadence, each rejection is local and explained; nothing invalid is ever rendered |
 | requirements checklist + deterministic checker + fix round | accuracy becomes measurable and unmet detail is fed back instead of lost; unsupported wishes are surfaced |
+| a searchable brick library + skills, not a hard-coded vocabulary | coverage grows by adding JSON cards and markdown, not code; the model looks up what it needs instead of carrying it all in the prompt |
+| coordination issues carry suggested steps | the fix round gets a concrete, already clash-checked placement rather than just a complaint |
 | ids derived from room ids | GlobalIds survive moves and resizes without a diffing step |
 | raw ops kept as overrides | element-level edits from the UI survive later design edits |
 | mock adapter in the tree | the whole system is testable and demoable with no model installed |
