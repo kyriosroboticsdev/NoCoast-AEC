@@ -1,5 +1,5 @@
 import {
-  BookOpen, Box, Check, ChevronDown, ChevronRight, ClipboardList, DoorOpen, FileDown, Frame, Hammer, Layers,
+  AlertTriangle, BookOpen, Box, Calculator, Check, FileStack, Info, ChevronDown, ChevronRight, ClipboardList, DoorOpen, FileDown, Frame, Hammer, Layers,
   LayoutGrid, LoaderCircle, Ruler, ShieldCheck, Sofa, Sparkles, X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -17,10 +17,17 @@ const PHASE_ICON: Partial<Record<TracePhase, typeof Sparkles>> = {
   fitout: Sofa,
   review: ShieldCheck,
   output: FileDown,
+  code: ShieldCheck,
+  cost: Calculator,
+  issue: FileStack,
   // older sessions, persisted before the trace was grouped by phase
   validate: ShieldCheck,
   build: Hammer,
   load: Box,
+};
+
+const TONE_ICON: Record<NonNullable<TraceStep["tone"]>, typeof Sparkles> = {
+  pass: Check, warn: AlertTriangle, fail: X, info: Info,
 };
 
 /** Live, nested trace of what the agent is doing — streamed from the backend step by step. */
@@ -95,19 +102,22 @@ function StepRow({ step, kids, depth, layers }: {
   const children = kids.get(step.id) ?? [];
   const [open, setOpen] = useState(true);
   const Icon = step.layer ? Layers : PHASE_ICON[step.phase] ?? Sparkles;
+  const ToneIcon = step.tone && depth > 0 ? TONE_ICON[step.tone] : null;
   const icon =
     step.status === "running" ? <LoaderCircle size={14} className="spin" /> :
     step.status === "error" ? <X size={14} /> :
+    ToneIcon ? <ToneIcon size={12} /> :
     depth === 0 || step.layer ? <Icon size={14} /> : <Check size={12} />;
   const layerIndex = step.layer ? layers.findIndex((l) => l.id === step.id) : -1;
 
   return (
-    <li className={`trace-row ${step.status} ${depth ? "child" : ""} ${step.layer ? "layer" : ""}`}>
+    <li className={`trace-row ${step.status} ${depth ? "child" : ""} ${step.layer ? "layer" : ""} ${step.tone ? `tone-${step.tone}` : ""}`}>
       <span className="trace-dot">{icon}</span>
       <div className="trace-main">
         <div className="trace-line" onClick={() => children.length && setOpen(!open)} style={{ cursor: children.length ? "pointer" : undefined }}>
           <span className="trace-title">{step.title}</span>
           {layerIndex >= 0 && <span className="layer-badge">storey {layerIndex + 1}/{layers.length}</span>}
+          {step.badge && <span className="trace-badge">{step.badge}</span>}
           {step.metric && <span className="trace-metric">{step.metric}</span>}
           <span className="grow" />
           {step.ms !== undefined && step.ms > 0 && <span className="trace-ms">{fmtMs(step.ms)}</span>}
