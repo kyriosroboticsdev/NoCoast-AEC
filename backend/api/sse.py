@@ -20,6 +20,7 @@ from logsetup import log
 
 _END = object()
 KEEPALIVE = 1.0  # seconds of silence after which a `: ping` comment is sent
+CHATTY = {"stream", "draft"}  # several a second: logged at DEBUG so the INFO log stays a readable timeline
 
 
 def sse_response(work: Callable[[Callable[[str, str, dict | None], None]], object]) -> StreamingResponse:
@@ -32,7 +33,8 @@ def sse_response(work: Callable[[Callable[[str, str, dict | None], None]], objec
     def emit(stage: str, message: str, data: dict | None = None) -> None:
         nonlocal seq
         seq += 1
-        log.info("stage %s (%.1fs): %s", stage, time.time() - t0, message)
+        live = stage in CHATTY or (stage == "think" and data is not None and "live" in data)
+        log.log(10 if live else 20, "stage %s (%.1fs): %s", stage, time.time() - t0, message)
         q.put({"seq": seq, "t": round(time.time() - t0, 2), "stage": stage, "message": message, "data": data})
 
     def run() -> None:

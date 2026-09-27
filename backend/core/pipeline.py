@@ -20,6 +20,7 @@ are stored with the version, so the history shows what the request really was.
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import time
@@ -41,10 +42,10 @@ from core.issues import Issue
 from core.look import Review, look_rounds, look_turns, review_design
 from core.research import Toolbox, research, tool_rounds
 from core.ops import OpError, apply_ops
-from core.stream import StepStream
+from core.stream import StepStream, ThoughtStream
 from ifc.builder import GeometryError, compile_ifc, summarize
 from llm import LLM, LLMError, LLMRequest
-from llm.base import EmptyReply, Image
+from llm.base import EmptyReply, Image, thinking_of
 from llm.prompts import (build_system, build_user_message, look_system, look_user_message, requirements_system,
                          requirements_user_message, research_system, research_user_message)
 from render import Shot
@@ -104,8 +105,17 @@ def _call(llm: LLM, request: LLMRequest, emit: Emit = _noop, stream: StepStream 
          {"provider": llm.name, "model": model, "schema": request.schema_name, "system_chars": len(request.system),
           "user_chars": len(request.user), "user": request.user[-6000:]})
     t = time.perf_counter()
+    thoughts = ThoughtStream(emit, request.schema_name, stream.touch if stream else None)
+
+    def on_text(text: str) -> None:
+        if "<think>" in text:
+            thoughts.feed(thinking_of(text))
+        if stream:
+            stream.feed(text)
+
+    reasoning = {"on_thinking": thoughts.feed} if "on_thinking" in inspect.signature(llm.complete).parameters else {}
     try:
-        raw = llm.complete(request, stream.feed if stream else None, lambda note: emit("llm", note, None))
+        raw = llm.complete(request, on_text, lambda note: emit("llm", note, None), **reasoning)
     except EmptyReply as exc:
         # Nothing to do is a valid answer to "fix these problems"; it is not one to "list the brief".
         if stream is None:
@@ -126,6 +136,7 @@ def _call(llm: LLM, request: LLMRequest, emit: Emit = _noop, stream: StepStream 
                                                          "accepted": len(stream.accepted)})
         raw = {"steps": []}
     finally:
+        thoughts.flush()
         if stream:
             stream.close()
     text = json.dumps(raw)
