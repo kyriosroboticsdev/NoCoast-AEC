@@ -21,6 +21,8 @@ import { LegacyViewer, type Picked, type PropertySet } from "./viewer/LegacyView
 import { SectionControl, type SectionView } from "./viewer/section";
 
 const SAMPLE_URL = "samples/sample-house.ifc";
+/** How much faster than live a recorded run plays back by default: a nine-minute model run in about a minute. */
+const REPLAY_SPEED = 10;
 
 const versionName = (v: api.Version) => `v${v.number}.ifc`;
 const versionLabel = (v: api.Version) => `v${v.number} · final · ${v.summary.elements} elements`;
@@ -475,9 +477,25 @@ export default function App() {
     remove(id);
   };
 
-  const startSession = (prompt: string, images: Attachment[] = []) => {
-    const title = prompt.length > 48 ? `${prompt.slice(0, 46).trimEnd()}…` : prompt;
-    return generate(create(title), prompt, null, images);
+  const titleOf = (prompt: string) => (prompt.length > 48 ? `${prompt.slice(0, 46).trimEnd()}…` : prompt);
+
+  const startSession = (prompt: string, images: Attachment[] = []) => generate(create(titleOf(prompt)), prompt, null, images);
+
+  /** Play a recorded run back in a new session: the same trace, previews and deliverables, without the model.
+   *  The session then continues on that project, so the next prompt edits the recorded building. */
+  const replaySession = (run: Pick<api.RunSummary, "project" | "version" | "prompt">, speed = REPLAY_SPEED) => {
+    const sid = create(titleOf(run.prompt));
+    const mid = uid();
+    update(sid, (s) => addMessage({ id: mid, role: "user", text: run.prompt })({ ...s, project: { id: run.project, head: null } }));
+    return execute(sid, "", (_, onEvent) => api.replayRun(run.project, run.version, speed, onEvent));
+  };
+
+  const replayFromLaunch = async (spec: string, speed: number | null) => {
+    const [project, n] = spec.split(":");
+    const runs = await api.listRuns();
+    const run = runs.find((r) => r.project === project && (!n || r.version === Number(n)));
+    if (!run) throw new Error(`no recorded run for ${spec}`);
+    return replaySession(run, speed ?? REPLAY_SPEED);
   };
 
   const openSessionWithModel = async (name: string, bytes: Uint8Array, url?: string) => {
@@ -530,10 +548,12 @@ export default function App() {
   useEffect(() => {
     if (!viewerReady || !options) return;
     platform.report({ status: "viewer-ready" });
-    const { autoload, prompt, select, tab: smokeTab, smoke } = options;
+    const { autoload, prompt, select, tab: smokeTab, smoke, replay, speed } = options;
     (async () => {
       if (autoload) await openSessionWithModel(autoload.split("/").pop()!, await api.fetchBytes(autoload), autoload);
-      else if (prompt) {
+      else if (replay) {
+        if (!(await replayFromLaunch(replay, speed))) return;
+      } else if (prompt) {
         if (!(await startSession(prompt))) return;
       } else if (smoke && smokeTab === "reset") {
         // Test hygiene: forget sessions created by earlier smoke runs.
@@ -615,7 +635,7 @@ export default function App() {
           {!active && (
             <div className="home-layer">
               <Home busy={busy} planners={planners} planner={planner} setPlanner={setPlanner}
-                onSubmit={startSession} onAttach={openFile} />
+                onSubmit={startSession} onAttach={openFile} onReplay={(r) => void replaySession(r)} backendUp={backendUp} />
             </div>
           )}
         </div>

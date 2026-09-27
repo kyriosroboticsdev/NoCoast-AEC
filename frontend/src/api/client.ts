@@ -272,6 +272,25 @@ export const sendPrompt = (
 /** The structured BIM instructions behind a version, and its design record (null for imports and pre-design-layer versions). */
 export const getSpec = (id: string, n: number) => getJson<{ spec: unknown; design: Design | null }>(`/projects/${id}/versions/${n}/spec`);
 
+/** A prompt run the backend recorded, which `replayRun` plays back without calling the model. */
+export interface RunSummary {
+  project: string;
+  version: number;
+  prompt: string;
+  llm: string;
+  /** Unix seconds. */
+  recorded: number;
+  /** Seconds the run took live. */
+  duration: number;
+  events: number;
+}
+
+export const listRuns = () => getJson<RunSummary[]>("/runs");
+
+/** The recorded run behind a version, streamed again `speed` times faster (long pauses are capped). */
+export const replayRun = (id: string, n: number, speed: number, onEvent: (e: StageEvent) => void) =>
+  stream(`/projects/${id}/versions/${n}/replay?speed=${speed}`, {}, onEvent);
+
 /** Make an older version the new head (recorded as a new version). */
 export const revert = (id: string, to: number, onEvent: (e: StageEvent) => void) =>
   stream(`/projects/${id}/revert/${to}`, { method: "POST" }, onEvent);
