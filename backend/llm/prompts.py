@@ -299,6 +299,10 @@ ISSUES_INTRO = ("COORDINATION ISSUES (clashes, missing services, unsupported spa
 
 
 SEEN_INTRO = "WHAT YOU SAW IN THE SCREENSHOTS of the model. Emit ONLY steps that fix these:"
+CODE_INTRO = ("CODE REVIEW of the model you built (indicative IBC/IRC 2021 + 2010 ADA screen, measured from the geometry). "
+              "These clauses FAIL. Emit ONLY steps that fix them — add, resize or move what the clause needs — and cite "
+              "the clause in each step's why. Leave a failure alone only if fixing it would break the brief, and say so "
+              "in a note step:")
 
 
 FOCUS_INTRO = "SELECTED IN THE VIEWER: "
@@ -348,7 +352,7 @@ def look_user_message(prompt: str, checklist: list[str], context: str | None, lo
 
 def build_user_message(prompt: str, checklist: list[str], context: str | None, *, focus: str | None = None,
                        toolbox: str | None = None, problems: Sequence[str] = (), unmet: Sequence[str] = (), issues: Sequence[str] = (),
-                       seen: Sequence[str] = (), attached: Sequence[str] = ()) -> str:
+                       seen: Sequence[str] = (), code: Sequence[str] = (), attached: Sequence[str] = ()) -> str:
     parts = []
     if toolbox:
         parts.append("LIBRARY (bricks and skills from your research):\n" + toolbox)
@@ -372,4 +376,6 @@ def build_user_message(prompt: str, checklist: list[str], context: str | None, *
         parts.append(ISSUES_INTRO + "\n- " + "\n- ".join(issues))
     if seen:
         parts.append(SEEN_INTRO + "\n- " + "\n- ".join(seen))
+    if code:
+        parts.append(CODE_INTRO + "\n- " + "\n- ".join(code))
     return "\n\n".join(parts)
