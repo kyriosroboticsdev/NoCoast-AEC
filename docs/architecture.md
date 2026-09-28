@@ -119,7 +119,7 @@ switching provider, model or key takes effect without a restart — only paths a
 | `BIM_CODE_ROUNDS` | pre-issue code screens per prompt: failing IBC/IRC clauses and buildable fix steps go back to the model (default 1; 0 = report only) |
 | `LLM_EFFORT`, `LLM_THINKING` | `claude`: reasoning effort (`low`/`medium`/`high`, default `medium`) and whether its thinking streams into the trace (`summarized`, default, or `omitted`) |
 | `BIM_THINK_EVERY` | seconds between updates of the thinking paragraph still being written (default 0.25) |
-| `LLM_VISION` | `1`/`0`: whether the model is sent screenshots; default on for `claude`, Anthropic's endpoint and `mock` |
+| `LLM_VISION` | `1`/`0`: whether the model is sent images (screenshots and attachments); default on for `claude`, Anthropic's endpoint, `mock`, and `openai`/`ollama` models whose id names a multimodal family (§4.8) |
 | `BIM_OUTPUT_DIR`, `BIM_DB_PATH`, `BIM_PORT` | storage and port |
 | `BIM_BACKEND_URL` (Tauri) or `?backend=` (browser) | backend origin for the UI, default `http://127.0.0.1:8765` |
 | `BIM_NO_BACKEND`, `BIM_BACKEND_DIR` (Tauri) | don't spawn the backend / where `backend/` is |
@@ -444,6 +444,17 @@ Images go after the user text, each introduced by its caption: Anthropic `image`
 data-URL parts (`openai`, `llamacpp`), or the message's `images` list with the captions appended (`ollama`).
 They are screenshots of the model's own work (§4.15) and images the user attached to the prompt (§4.8.1), which
 is why an image carries its own media type rather than being assumed to be a PNG.
+
+Whether a provider is sent images at all is its `vision` flag. `claude`, Anthropic's endpoint and `mock` are
+vision models; on `openai` and `ollama` the model id decides (`llm/base.py::multimodal`: Qwen-VL and
+InternVL, Llama 4 and Llama 3.2 Vision, Gemma 3/4, Pixtral, Mistral Small 3.1+, LLaVA, MiniCPM-V,
+GPT-4o/4.1/5, o3/o4, Gemini, Claude), so `accounts/fireworks/models/qwen2p5-vl-32b-instruct` sees the
+screenshots and attachments while `qwen3p8-max` gets their names only; `llamacpp` stays text-only because a
+`.gguf` needs its projector loaded. `LLM_VISION=1|0` overrides the guess. If a model then answers a request
+with a 4xx that names the images (*"does not support image input"*, *"image_url is only supported by …"*),
+`core/pipeline.py::_call` asks again without them, turns `vision` off for the rest of the run, skips the
+look loop and records *"… refused image input; the text alone was used"* on the version — a wrong guess
+costs one request, not the run.
 
 Every provider receives the schema through `llm/schema.py::strict_schema` (all properties required,
 objects closed, tuples as arrays, `oneOf`→`anyOf`, optionally without numeric bounds). Two prompts exist
