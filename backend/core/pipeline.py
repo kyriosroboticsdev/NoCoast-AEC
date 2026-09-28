@@ -25,7 +25,7 @@ import json
 import os
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable
 
 import ifcopenshell
@@ -47,7 +47,7 @@ from core.review import review
 from core.stream import StepStream, ThoughtStream
 from ifc.builder import GeometryError, compile_ifc, summarize
 from llm import LLM, LLMError, LLMRequest
-from llm.base import EmptyReply, Image, thinking_of, transient_network
+from llm.base import EmptyReply, Image, images_rejected, thinking_of, transient_network
 from llm.prompts import (build_system, build_user_message, look_system, look_user_message, massing_user_message,
                          requirements_system, requirements_user_message, research_system, research_user_message)
 from render import Shot
@@ -91,6 +91,10 @@ class ConflictError(PipelineError):
     """The client edited against a version that is no longer the head."""
 
 
+class ImagesRefused(LLMError):
+    """A look turn was refused for its screenshots; the visual check is skipped, not the run."""
+
+
 def _fmt_validation(exc: ValidationError) -> list[str]:
     return [f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" if e["loc"] else e["msg"] for e in exc.errors()]
 
@@ -128,8 +132,9 @@ def _call(llm: LLM, request: LLMRequest, emit: Emit = _noop, stream: StepStream 
     reasoning = {"on_thinking": thoughts.feed} if "on_thinking" in inspect.signature(llm.complete).parameters else {}
     attempts = max(1, config.NET_RETRIES + 1)
     raw: dict = {}
+    attempt = 0
     try:
-        for attempt in range(attempts):
+        while True:
             try:
                 raw = llm.complete(request, on_text, lambda note: emit("llm", note, None), **reasoning)
                 break
@@ -142,9 +147,20 @@ def _call(llm: LLM, request: LLMRequest, emit: Emit = _noop, stream: StepStream 
                 raw = {"steps": []}
                 break
             except LLMError as exc:
+                kept = stream is not None and bool(stream.accepted)
+                if request.images and not kept and images_rejected(exc):
+                    # Whatever LLM_VISION or the model id suggested, this model does not take images: the
+                    # rest of the run goes text-only, and a look turn (nothing but images) is dropped.
+                    llm.vision = False
+                    log.warning("LLM %s refused image input, continuing without images: %s", llm.name, exc)
+                    emit("llm", f"{llm.name} does not accept images ({exc}); continuing from the text alone",
+                         {"error": str(exc), "vision": False})
+                    if request.schema_name == "look":
+                        raise ImagesRefused(str(exc)) from exc
+                    request = replace(request, images=[])
+                    continue
                 # A dropped connection or a briefly overloaded provider is asked again. Once steps have
                 # already landed, retrying would rebuild them, so the run carries on with what it has.
-                kept = stream is not None and bool(stream.accepted)
                 if not kept and attempt + 1 < attempts and transient_network(exc):
                     wait = min(8.0, 0.5 * 2 ** attempt)
                     log.warning("LLM %s network error (attempt %d/%d), retrying in %.1fs: %s",
@@ -152,6 +168,7 @@ def _call(llm: LLM, request: LLMRequest, emit: Emit = _noop, stream: StepStream 
                     emit("llm", f"the connection failed ({exc}); asking again",
                          {"error": str(exc), "retry": attempt + 1})
                     time.sleep(wait)
+                    attempt += 1
                     continue
                 log.error("LLM %s failed after %.1fs: %s", llm.name, time.perf_counter() - t, exc)
                 if not kept:
@@ -454,8 +471,8 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
         emit("focus", f"selected: {focus_text}", {"id": focus, "text": focus_text})
     # Attachments belong to this prompt only: they are kept with the version, not carried into later edits.
     stored_images = [store.save_attachment(project_id, image) for image in attached]
+    seen = getattr(llm, "vision", False)
     if attached:
-        seen = getattr(llm, "vision", False)
         emit("attachments", f"{len(attached)} image(s) attached: " + ", ".join(i.label() for i in attached)
              + ("" if seen else f" — {llm.name} cannot see images, only their names are in the prompt"),
              {"images": stored_images, "seen": seen})
@@ -524,7 +541,11 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
             return f"/projects/{project_id}/shots/{store.save_shot(project_id, shot.png)}"
 
         for _ in range(rounds):
-            review = look_round(llm, prompt, design, checklist, guids, emit, save)
+            try:
+                review = look_round(llm, prompt, design, checklist, guids, emit, save)
+            except ImagesRefused:
+                emit("look", f"{llm.name} does not accept images; skipping the visual check", {"skipped": True})
+                break
             if not review.problems:
                 break
             fixing = follow_up(llm, prompt, design, checklist, emit, guids=guids, first_index=steps_total,
@@ -561,6 +582,8 @@ def run_prompt(store: Store, llm: LLM, project_id: str, prompt: str, base_versio
         emit("compile", "drawing the construction: walls, slabs, openings and roof, then writing the IFC")
         spec, derive_notes = derive(design)
         model, guids = compile_ifc(spec, guids, design.model_dump_json())
+        if attached and seen and not getattr(llm, "vision", False):
+            notes.append(f"{len(attached)} image(s) attached, but {llm.name} refused image input; the text alone was used")
         notes = design.notes + derive_notes + notes + [r.line() for r in results if r.status != "met"] + [i.line() for i in issues]
         met, total = score(results)
         if total:

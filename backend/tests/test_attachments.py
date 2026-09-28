@@ -8,9 +8,11 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+import config
 from core import pipeline
 from core.pipeline import attached_images
-from llm.base import Image, LLMRequest
+from llm import _build
+from llm.base import Image, LLMError, LLMRequest, images_rejected, multimodal
 from llm.claude import user_content as claude_content
 from llm.mock import MockLLM
 from llm.ollama import user_message as ollama_message
@@ -157,6 +159,86 @@ def test_a_model_that_cannot_see_says_so_instead_of_pretending(tmp_path):
     assert not any(r.images for r in llm.requests)  # the bytes stayed behind …
     assert any("sketch.png" in r.user for r in llm.requests)  # … the name did not
     assert version.images[0]["name"] == "sketch.png"  # and it is still stored with the version
+
+
+class Refuses(Blind):
+    """A provider configured as vision-capable whose model then rejects image parts, as a text-only
+    model behind an OpenAI-compatible host does when LLM_VISION or its name suggested otherwise."""
+    vision = True
+
+    def complete(self, request, on_text=None, on_note=None):
+        if request.images:
+            self.requests.append(request)
+            raise LLMError('chat/completions returned 400: {"error": "this model does not support image input"}')
+        return super().complete(request, on_text, on_note)
+
+
+def test_a_model_that_refuses_images_finishes_from_the_text(tmp_path):
+    llm = Refuses()
+    store = Store(tmp_path / "db.sqlite3", tmp_path / "projects")
+    pid = store.create_project("refused").id
+    seen: list[tuple[str, str, dict]] = []
+    version = pipeline.run_prompt(store, llm, pid, "a one storey cabin",
+                                  emit=lambda stage, msg, data=None: seen.append((stage, msg, data or {})),
+                                  attached=[ImageAttachment(name="sketch.png", data=b64(png()))])
+    assert [r.images != [] for r in llm.requests] == [True] + [False] * (len(llm.requests) - 1)  # asked once with them
+    assert llm.vision is False
+    assert any(d.get("vision") is False for s, _, d in seen if s == "llm")
+    assert any(s == "look" and d.get("skipped") for s, _, d in seen)  # no screenshots for a model that refuses them
+    assert any("refused image input" in n for n in version.notes)
+    assert version.images[0]["name"] == "sketch.png"
+
+
+def test_a_refused_screenshot_skips_the_visual_check_not_the_run(tmp_path):
+    llm = Refuses()
+    store = Store(tmp_path / "db.sqlite3", tmp_path / "projects")
+    pid = store.create_project("no screenshots").id
+    seen: list[tuple[str, str, dict]] = []
+    version = pipeline.run_prompt(store, llm, pid, "a one storey cabin",
+                                  emit=lambda stage, msg, data=None: seen.append((stage, msg, data or {})))
+    assert [r.schema_name for r in llm.requests if r.images] == ["look"]  # the only request that carried images
+    assert any(s == "look" and "does not accept images" in m for s, m, _ in seen)
+    assert version.number == 1 and not any("refused image input" in n for n in version.notes)
+
+
+def test_only_a_refusal_of_the_images_drops_them():
+    assert images_rejected(LLMError("chat/completions returned 400: image_url is only supported by certain models"))
+    assert images_rejected(LLMError("Anthropic rejected the request: Image does not match the provided media type"))
+    assert not images_rejected(LLMError("chat/completions request failed: ReadTimeout: timed out"))  # the network
+    assert not images_rejected(LLMError("chat/completions returned 401: invalid api key"))
+
+
+@pytest.mark.parametrize("model, sees", [
+    ("accounts/fireworks/models/qwen2p5-vl-32b-instruct", True),
+    ("qwen2.5vl:7b", True),
+    ("Qwen/Qwen3-VL-235B-A22B-Instruct", True),
+    ("accounts/fireworks/models/llama4-maverick-instruct-basic", True),
+    ("llama3.2-vision", True),
+    ("gemma3:27b", True),
+    ("pixtral-12b-2409", True),
+    ("gpt-4o-mini", True),
+    ("o4-mini", True),
+    ("gemini-3.8-flash", True),
+    ("claude-opus-5-5", True),
+    ("accounts/fireworks/models/qwen3p8-max", False),
+    ("llama3.1", False),
+    ("qwen3-4b-instruct-2507-q4_k_m.gguf", False),
+    ("deepseek-v3.2", False),
+    ("gpt-oss-120b", False),
+])
+def test_a_model_id_says_whether_it_takes_images(model, sees):
+    assert multimodal(model) is sees
+
+
+def test_openai_and_ollama_providers_guess_vision_from_the_model(monkeypatch):
+    monkeypatch.setattr(config, "LLM_BASE_URL", "https://api.fireworks.ai/inference/v1")
+    monkeypatch.setattr(config, "LLM_MODEL", "accounts/fireworks/models/qwen2p5-vl-32b-instruct")
+    assert _build("openai").vision is True
+    monkeypatch.setattr(config, "LLM_MODEL", "accounts/fireworks/models/qwen3p8-max")
+    assert _build("openai").vision is False
+    monkeypatch.setattr(config, "LLM_BASE_URL", "")
+    monkeypatch.setattr(config, "LLM_MODEL", "llava:13b")
+    assert _build("ollama").vision is True
 
 
 def test_bad_attachments_and_unknown_files_are_refused():

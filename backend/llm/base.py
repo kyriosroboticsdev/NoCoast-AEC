@@ -50,6 +50,34 @@ def transient_network(exc: BaseException) -> bool:
     return any(mark in msg for mark in _TRANSIENT)
 
 
+# A server that answered (not a network failure) and complained about the image parts. Servers word
+# this many ways — "does not support image input", "image_url is not supported", "Invalid content
+# type", "model is missing data required for image input" — but all of them name the image.
+_ANSWERED = ("returned 4", "returned 500", "api error 4", "rejected the request")
+_IMAGE_MARKS = ("image", "vision", "multimodal", "multi-modal", "modalit")
+
+
+def images_rejected(exc: BaseException) -> bool:
+    """The model refused the request because it carried images, so it is asked again without them."""
+    msg = str(exc).lower()
+    return any(m in msg for m in _ANSWERED) and any(m in msg for m in _IMAGE_MARKS)
+
+
+# Model ids of the multimodal families the OpenAI-compatible hosts and Ollama serve: Qwen-VL and
+# InternVL (`qwen2.5-vl`, `qwen2p5-vl-32b-instruct`, `qwen2.5vl:7b`), Llama 4 and Llama 3.2 Vision,
+# Gemma 3/4, Pixtral and Mistral Small 3.1+, LLaVA, MiniCPM-V, Moondream, GPT-4o/4.1/5 and o3/o4,
+# Gemini, and Claude on Anthropic's own or a proxy's endpoint. LLM_VISION overrides the guess.
+_MULTIMODAL = re.compile(
+    r"(?<![a-z])vl|internvl|vision|multimodal|omni|llava|pixtral|minicpm-?v|moondream"
+    r"|llama-?4|gemma-?[34]|mistral-small-3\.[1-9]|gpt-?(4o|4\.1|4\.5|5)|(?<![a-z0-9])o[34](?![0-9])|gemini|claude"
+)
+
+
+def multimodal(model: str) -> bool:
+    """Whether a model id names a family that takes images, so the look loop and attachments reach it."""
+    return bool(_MULTIMODAL.search(model.lower()))
+
+
 class EmptyReply(LLMError):
     """The model returned nothing at all. On a build round that means "no changes"; on a
     checklist it is a failure, so the two are distinguished rather than both being errors."""
