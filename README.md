@@ -7,7 +7,8 @@
 > edges, don't use its output for anything that gets built, and read the code reviews and cost numbers
 > as illustrations rather than advice.
 
-![Tekt building a two-storey house](docs/screenshot.png)
+<img width="1512" height="857" alt="image" src="https://github.com/user-attachments/assets/a6b40f0d-8123-4fa9-ada2-db4147910fd4" />
+
 
 *"Two storey house with a kitchen, living room and three bedrooms, a garage and a front porch."*
 
